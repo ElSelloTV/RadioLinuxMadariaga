@@ -47,6 +47,21 @@ panel, un archivo de género "Pisador" (ver gui/panel_reproductor.py
 Si se avanza a otro tema (fin normal, Siguiente, error, doble
 click) mientras el Pisador todavía está sonando, se corta y el
 volumen se restaura antes de arrancar lo nuevo.
+
+Crossfade (Ventana 2 / Auxiliar)
+---------------------------------
+Con `crossfade_activado` en Configuración → Fade/Transiciones, la
+transición NATURAL entre dos temas (el actual llegando a su fin) se
+superpone en vez de cortar seco: MotorAudio.crossfade_a() ya sabe
+interpolar el volumen entre un motor saliente y uno entrante — acá
+se dispara CON ANTICIPACIÓN (cuando falta `duracion_fade_segundos`
+para el final, vía la señal restante_ms_cambio de MotorAudio, no
+esperando a que termine) y luego self.motor pasa a ser el motor
+entrante (se reconectan las señales). Solo aplica a la transición
+"de fin de tema" — Siguiente manual, error y cascada siguen siendo
+cortes directos. Si el tema entrante tiene su propio Pisador, no se
+dispara (evita que dos rampas de volumen distintas peleen por el
+mismo motor a la vez) — limitación conocida, documentada acá.
 --------------------------------------------------------
 """
 
@@ -70,6 +85,8 @@ class GestorPlaylist:
         reintentos_maximos: int = 3,
         repetir_al_finalizar: bool = True,
         bajada_db_pisador: float = -4.0,
+        crossfade_activado: bool = False,
+        duracion_fade_segundos: float = 3.0,
     ):
         self.panel = panel
         self.motor = MotorAudio(id_dispositivo)
@@ -78,13 +95,15 @@ class GestorPlaylist:
         self.reintentos_maximos = max(1, reintentos_maximos)
         self.repetir_al_finalizar = repetir_al_finalizar
         self.bajada_db_pisador = bajada_db_pisador
+        self.crossfade_activado = crossfade_activado
+        self.duracion_fade_segundos = duracion_fade_segundos
         self._fallos_consecutivos = 0
         self._volumen_base = 100
         self._pisador_activo = False
+        self._crossfade_en_curso = False
+        self._motor_saliente_crossfade = None
 
-        self.motor.posicion_cambiada.connect(self.panel.actualizar_contadores)
-        self.motor.finalizo_item.connect(self._avanzar_al_siguiente)
-        self.motor.error_reproduccion.connect(self._on_error)
+        self._conectar_motor(self.motor)
 
         self.motor_pisador.finalizo_item.connect(self._on_pisador_finalizado)
         self.motor_pisador.error_reproduccion.connect(
@@ -96,6 +115,22 @@ class GestorPlaylist:
         self.panel.solicitud_stop.connect(self.detener)
         self.panel.solicitud_siguiente.connect(self._avanzar_al_siguiente)
         self.panel.item_doble_click.connect(self._on_doble_click)
+
+    # ------------------------------------------------------------------
+    def _conectar_motor(self, motor):
+        motor.posicion_cambiada.connect(self.panel.actualizar_contadores)
+        motor.finalizo_item.connect(self._avanzar_al_siguiente)
+        motor.error_reproduccion.connect(self._on_error)
+        motor.restante_ms_cambio.connect(self._chequear_crossfade)
+
+    def _desconectar_motor(self, motor):
+        try:
+            motor.posicion_cambiada.disconnect(self.panel.actualizar_contadores)
+            motor.finalizo_item.disconnect(self._avanzar_al_siguiente)
+            motor.error_reproduccion.disconnect(self._on_error)
+            motor.restante_ms_cambio.disconnect(self._chequear_crossfade)
+        except (TypeError, RuntimeError):
+            pass
 
     # ------------------------------------------------------------------
     def set_volumen_base(self, volumen: int):
@@ -120,6 +155,10 @@ class GestorPlaylist:
 
     def detener(self):
         self.motor.detener()
+        if self._motor_saliente_crossfade is not None:
+            self._motor_saliente_crossfade.detener()
+            self._motor_saliente_crossfade = None
+        self._crossfade_en_curso = False
         self._cancelar_pisador_en_curso()
         self._fallos_consecutivos = 0
 
@@ -130,6 +169,67 @@ class GestorPlaylist:
         self._cancelar_pisador_en_curso()
         self.motor.reproducir(ruta)
         self._disparar_pisador_si_corresponde(fila)
+
+    # ------------------------------------------------------------------
+    # Crossfade: se dispara CON ANTICIPACIÓN (faltando duracion_fade_
+    # segundos para terminar), no al final — ver nota al inicio del
+    # archivo.
+    # ------------------------------------------------------------------
+    def _chequear_crossfade(self, restante_ms: int):
+        if not self.crossfade_activado or self._crossfade_en_curso or self._pisador_activo:
+            return
+        duracion_ms = int(self.duracion_fade_segundos * 1000)
+        if duracion_ms <= 0:
+            return
+        if 0 < restante_ms <= duracion_ms:
+            self._iniciar_crossfade()
+
+    def _iniciar_crossfade(self):
+        total = self.panel.cantidad_items()
+        if total == 0:
+            return
+
+        fila_actual = self.panel.fila_reproduciendo()
+        fila_siguiente = self.panel.fila_siguiente()
+        if fila_siguiente < 0 or fila_siguiente == fila_actual:
+            fila_siguiente = fila_actual + 1
+        if fila_siguiente >= total:
+            fila_siguiente = 0 if self.repetir_al_finalizar else -1
+        if fila_siguiente < 0:
+            return
+
+        ruta_siguiente = self.panel.ruta_en_fila(fila_siguiente)
+        if not ruta_siguiente:
+            return
+
+        motor_saliente = self.motor
+        entrante = motor_saliente.crossfade_a(ruta_siguiente, self.duracion_fade_segundos)
+        if entrante is None:
+            return
+
+        self._crossfade_en_curso = True
+        self._motor_saliente_crossfade = motor_saliente
+
+        self._desconectar_motor(motor_saliente)
+        self.motor = entrante
+        self._conectar_motor(self.motor)
+
+        self._fallos_consecutivos = 0
+        self.panel.marcar_reproduciendo(fila_siguiente)
+        candidata_siguiente = fila_siguiente + 1
+        if candidata_siguiente >= total:
+            candidata_siguiente = 0 if self.repetir_al_finalizar else -1
+        if candidata_siguiente >= 0:
+            self.panel.marcar_siguiente(candidata_siguiente)
+
+        # El tema entrante no dispara su propio Pisador acá — ver
+        # limitación documentada al inicio del archivo.
+
+        QTimer.singleShot(int(self.duracion_fade_segundos * 1000) + 200, self._liberar_crossfade)
+
+    def _liberar_crossfade(self):
+        self._crossfade_en_curso = False
+        self._motor_saliente_crossfade = None
 
     # ------------------------------------------------------------------
     # Motor "Agregar Pisador"
