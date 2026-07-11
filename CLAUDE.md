@@ -86,9 +86,30 @@ reproductor está detenido, arranca desde ahí (rojo); si está sonando,
 no interrumpe. `GestorPublicidad` en `playlist_manager.py` maneja todo
 esto y el salto en cascada si un ítem falla.
 
-**Pendiente**: el modo AUTOMÁTICO todavía es solo un botón visual — no
-dispara nada por horario todavía. Es el próximo paso grande (ver
-"Pendiente" más abajo).
+**Modo AUTOMÁTICO real (implementado)**: cada bloque guarda su hora
+real como dato (`ROL_HORA_BLOQUE` en `ventana_publicidad.py`, no solo
+como texto en el título). `SchedulerAutomatico`
+(`core/playlist_manager.py`) es un QTimer de 1s que, con el modo
+AUTOMÁTICO activo, dispara el bloque cuya hora ya llegó: pausa
+Emisión (Ventana 2) si estaba sonando, reproduce el bloque completo
+(`GestorPublicidad.disparar_bloque`, que NO cruza hacia el bloque
+siguiente del árbol — se detiene al agotar los ítems de ESE bloque),
+y reanuda Emisión sola al terminar (`pausar()` de `MotorAudio` es un
+TOGGLE de libVLC, se usa la misma llamada para pausar y para
+reanudar). Si el operador interviene a mano (doble click, Stop)
+mientras un bloque automático está en curso, se da por terminado
+igual (no deja Emisión pausada para siempre). Activar el modo a
+mitad de la tarde NO dispara de golpe los bloques que ya pasaron hoy
+(se marcan como "ya emitidos" sin sonar, ver
+`_marcar_bloques_pasados_sin_disparar`).
+
+**Scheduler de medianoche (implementado)**: el mismo
+`SchedulerAutomatico`, al detectar que cambió el día calendario,
+llama a `resolver_programacion_del_dia()` (`config/settings.py`) y
+si hay algo guardado para hoy (vía el Programador), reemplaza los
+bloques de Publicidad con `ventana_publicidad.cargar_bloques(...)`.
+Si no hay nada guardado para el día, no toca lo que ya estaba
+cargado.
 
 ### Ventana 2 — Emisión + Ventana Auxiliar
 Ambas son un envoltorio delgado sobre `PanelReproductor`
@@ -293,14 +314,10 @@ python3 main.py
 
 ## Pendiente (roadmap acordado con Santiago, en orden de prioridad)
 
-1. **Modo AUTOMÁTICO real**: que el botón de Ventana 1 dispare de
-   verdad los bloques de Publicidad por horario, pausando/reanudando
-   Emisión de forma transparente (ver punto 4 del pedido original de
-   arquitectura). Necesita un scheduler (QTimer chequeando cada
-   minuto o segundo contra los bloques cargados).
-2. **Scheduler de medianoche**: a las 00:00 cargar automáticamente la
-   programación resuelta por `resolver_programacion_del_dia()` en la
-   Ventana 1.
+1. ~~Modo AUTOMÁTICO real~~ — implementado (`SchedulerAutomatico`,
+   ver Ventana 1 más arriba). Falta probarlo con horarios reales en
+   la notebook de Santiago (acá se probó simulando el reloj).
+2. ~~Scheduler de medianoche~~ — implementado junto con el punto 1.
 3. **Crossfade real**: `MotorAudio.crossfade_a()` ya existe y
    funciona, pero todavía no se dispara automáticamente entre temas
    de Emisión — falta conectarlo en `GestorPlaylist` usando la

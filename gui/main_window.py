@@ -33,7 +33,7 @@ from gui.dialogo_elegir_pisador import DialogoElegirPisador
 from gui.common_widgets import configurar_columnas_ajustables
 from gui import estado_ui
 
-from core.playlist_manager import GestorPlaylist, GestorPublicidad, GestorExplorador
+from core.playlist_manager import GestorPlaylist, GestorPublicidad, GestorExplorador, SchedulerAutomatico
 from core.audio_engine import obtener_duracion_formateada
 from config.settings import cargar_configuracion
 
@@ -389,6 +389,12 @@ class MainWindow(QMainWindow):
         if reproduccion["modo_automatico_al_iniciar"]:
             self.ventana_publicidad.btn_automatico.setChecked(True)
             self.ventana_publicidad._toggle_automatico()
+
+        if getattr(self, "scheduler_automatico", None) is not None:
+            self.scheduler_automatico.detener()
+        self.scheduler_automatico = SchedulerAutomatico(
+            self.ventana_publicidad, self.gestor_publicidad, self.gestor_emision
+        )
 
         if not self.gestor_emision.motor.esta_disponible():
             self.statusBar().showMessage(

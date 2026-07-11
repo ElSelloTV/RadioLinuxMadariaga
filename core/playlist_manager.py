@@ -25,8 +25,14 @@ Reglas de negocio implementadas acá (a pedido explícito):
   (Ventana 2 - Emisión, y la Ventana Auxiliar). También maneja acá
   el motor "Agregar Pisador": ver más abajo.
 - GestorPublicidad: para la Ventana 1 (árbol jerárquico de
-  bloques). La cola automática disparada por horario (modo
-  AUTOMÁTICO real) queda para una próxima iteración.
+  bloques). Además de la reproducción manual, sabe "disparar" un
+  bloque completo y avisar cuándo termina (disparar_bloque) — lo
+  usa SchedulerAutomatico para el modo AUTOMÁTICO real.
+- SchedulerAutomatico: dispara los bloques de Publicidad por
+  horario cuando el modo AUTOMÁTICO está activo, pausando/
+  reanudando Emisión de forma transparente durante cada bloque, y
+  carga sola a medianoche la programación resuelta del día (si hay
+  alguna guardada desde el Programador). Ver clase más abajo.
 
 Motor "Agregar Pisador" (Ventana 2 / Auxiliar)
 -----------------------------------------------
@@ -44,7 +50,9 @@ volumen se restaura antes de arrancar lo nuevo.
 --------------------------------------------------------
 """
 
-from PySide6.QtCore import Qt
+from datetime import date
+
+from PySide6.QtCore import Qt, QTimer, QTime, QDate
 
 from core.audio_engine import MotorAudio
 from core.analizador_audio import volumen_ajustado_por_ganancia
@@ -208,7 +216,17 @@ class GestorPlaylist:
 class GestorPublicidad:
     """Reproductor para la Ventana 1: soporta elegir manualmente el
     ítem de arranque (doble click) y avanza en cascada por el árbol
-    si un ítem falla."""
+    si un ítem falla.
+
+    También sabe "disparar" un bloque COMPLETO y avisar cuándo
+    termina (disparar_bloque/al_finalizar) — es lo que usa
+    SchedulerAutomatico para el modo AUTOMÁTICO real: mientras hay
+    un bloque disparado por horario en curso, el avance normal
+    (_avanzar) NO cruza hacia el bloque siguiente del árbol, se
+    detiene ahí y avisa. Una interacción manual (doble click, Stop)
+    durante un bloque automático lo da por terminado igual, para no
+    dejar Emisión pausada para siempre si el operador toma control.
+    """
 
     def __init__(
         self,
@@ -222,6 +240,8 @@ class GestorPublicidad:
         self.avanzar_en_error = avanzar_en_error
         self.reintentos_maximos = max(1, reintentos_maximos)
         self._fallos_consecutivos = 0
+        self._bloque_automatico_actual = None
+        self._callback_bloque_finalizado = None
 
         self.motor.posicion_cambiada.connect(self.ventana.actualizar_contadores)
         self.motor.error_reproduccion.connect(self._on_error)
@@ -236,6 +256,8 @@ class GestorPublicidad:
     def _detener(self):
         self.motor.detener()
         self._fallos_consecutivos = 0
+        if self._bloque_automatico_actual is not None:
+            self._finalizar_bloque_automatico()
 
     def _item_valido(self, item) -> bool:
         return item is not None and bool(item.data(0, Qt.ItemDataRole.UserRole))
@@ -257,9 +279,49 @@ class GestorPublicidad:
         self._reproducir_item(item)
 
     # ------------------------------------------------------------------
+    # Modo AUTOMÁTICO: disparar un bloque completo por horario
+    # ------------------------------------------------------------------
+    def disparar_bloque(self, item_bloque, al_finalizar=None):
+        """Arranca el primer ítem reproducible del bloque. Cuando el
+        bloque se termina (último ítem, error irrecuperable, o el
+        operador toma control manualmente), se llama a `al_finalizar`
+        una única vez — SchedulerAutomatico la usa para reanudar
+        Emisión."""
+        self._fallos_consecutivos = 0
+        self._bloque_automatico_actual = item_bloque
+        self._callback_bloque_finalizado = al_finalizar
+
+        primero = None
+        for i in range(item_bloque.childCount()):
+            candidato = item_bloque.child(i)
+            if self._item_valido(candidato):
+                primero = candidato
+                break
+
+        if primero is None:
+            self._finalizar_bloque_automatico()
+            return
+
+        self._reproducir_item(primero)
+
+    def _finalizar_bloque_automatico(self):
+        self.motor.detener()
+        callback = self._callback_bloque_finalizado
+        self._bloque_automatico_actual = None
+        self._callback_bloque_finalizado = None
+        self.ventana.marcar_reproduciendo_item(None)
+        if callback:
+            callback()
+
+    # ------------------------------------------------------------------
     def _on_doble_click(self, item):
         if not self._item_valido(item):
             return  # nodo de bloque (sin ruta), no es reproducible
+        if self._bloque_automatico_actual is not None:
+            # El operador toma control manual: se da por terminado el
+            # bloque automático (y se reanuda Emisión) en vez de
+            # quedar "colgado" esperando un final que no va a llegar.
+            self._finalizar_bloque_automatico()
         # En Publicidad, a diferencia de la Ventana 2, no hay cola con
         # "próximo" separado: doble click siempre define desde dónde
         # arranca (según pedido explícito, poder elegir el punto de inicio).
@@ -274,11 +336,15 @@ class GestorPublicidad:
     def _on_error(self, mensaje: str):
         print(f"[GestorPublicidad] {mensaje}")
         if not self.avanzar_en_error:
+            if self._bloque_automatico_actual is not None:
+                self._finalizar_bloque_automatico()
             return
         self._fallos_consecutivos += 1
         if self._fallos_consecutivos >= self.reintentos_maximos:
             self.motor.detener()
             self._fallos_consecutivos = 0
+            if self._bloque_automatico_actual is not None:
+                self._finalizar_bloque_automatico()
             return
         self._avanzar()
 
@@ -293,11 +359,117 @@ class GestorPublicidad:
         while siguiente is not None and not self._item_valido(siguiente):
             siguiente = self.ventana.tree.itemBelow(siguiente)
 
+        if self._bloque_automatico_actual is not None:
+            # No cruzar hacia el bloque siguiente del árbol: si ya no
+            # queda ningún ítem reproducible DENTRO de este bloque, se
+            # terminó (avisa a SchedulerAutomatico para que reanude
+            # Emisión), no sigue tocando el próximo bloque horario.
+            if siguiente is None or siguiente.parent() is not self._bloque_automatico_actual:
+                self._finalizar_bloque_automatico()
+                return
+
         if siguiente is None:
             self.motor.detener()
             return
 
         self._reproducir_item(siguiente)
+
+
+class SchedulerAutomatico:
+    """Dispara los bloques de Publicidad por horario cuando el modo
+    AUTOMÁTICO (Ventana 1) está activo, pausando/reanudando Emisión
+    (Ventana 2) de forma transparente durante cada bloque. También
+    carga sola, al cambiar el día (medianoche), la programación
+    resuelta para hoy (fecha específica > patrón semanal — ver
+    config/settings.py:resolver_programacion_del_dia), si hay alguna
+    guardada desde el Programador.
+
+    Un QTimer chequea cada segundo. Al activar el modo AUTOMÁTICO (o
+    si ya arranca activado), los bloques cuya hora ya pasó se marcan
+    como "ya emitidos hoy" SIN dispararlos — activar el modo a mitad
+    de la tarde no debe hacer sonar de golpe todo lo que ya pasó.
+    """
+
+    INTERVALO_MS = 1000
+
+    def __init__(self, ventana_publicidad, gestor_publicidad, gestor_emision):
+        self.ventana = ventana_publicidad
+        self.gestor_publicidad = gestor_publicidad
+        self.gestor_emision = gestor_emision
+
+        self._dia_actual = QDate.currentDate()
+        self._horas_disparadas_hoy = set()
+        self._emision_estaba_sonando = False
+
+        self.ventana.automatico_cambiado.connect(self._on_automatico_cambiado)
+
+        self._timer = QTimer()
+        self._timer.setInterval(self.INTERVALO_MS)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+
+        if self.ventana.esta_en_automatico():
+            self._marcar_bloques_pasados_sin_disparar()
+
+    def detener(self):
+        self._timer.stop()
+
+    # ------------------------------------------------------------------
+    def _on_automatico_cambiado(self, activo: bool):
+        if activo:
+            self._marcar_bloques_pasados_sin_disparar()
+
+    def _marcar_bloques_pasados_sin_disparar(self):
+        ahora = QTime.currentTime()
+        marcadas = set()
+        for bloque in self.ventana.bloques():
+            hora_str = self.ventana.hora_de_bloque(bloque)
+            hora_bloque = QTime.fromString(hora_str, "HH:mm:ss") if hora_str else QTime()
+            if hora_bloque.isValid() and hora_bloque <= ahora:
+                marcadas.add(hora_str)
+        self._horas_disparadas_hoy = marcadas
+
+    # ------------------------------------------------------------------
+    def _tick(self):
+        hoy = QDate.currentDate()
+        if hoy != self._dia_actual:
+            self._dia_actual = hoy
+            self._horas_disparadas_hoy = set()
+            self._cargar_programacion_del_dia()
+
+        if not self.ventana.esta_en_automatico():
+            return
+
+        ahora = QTime.currentTime()
+        for bloque in self.ventana.bloques():
+            hora_str = self.ventana.hora_de_bloque(bloque)
+            if not hora_str or hora_str in self._horas_disparadas_hoy:
+                continue
+            hora_bloque = QTime.fromString(hora_str, "HH:mm:ss")
+            if hora_bloque.isValid() and ahora >= hora_bloque:
+                self._horas_disparadas_hoy.add(hora_str)
+                self._disparar_bloque(bloque)
+                break  # un bloque por chequeo alcanza y sobra
+
+    # ------------------------------------------------------------------
+    def _disparar_bloque(self, bloque):
+        self._emision_estaba_sonando = self.gestor_emision.motor.esta_reproduciendo()
+        if self._emision_estaba_sonando:
+            self.gestor_emision.motor.pausar()
+        self.gestor_publicidad.disparar_bloque(bloque, al_finalizar=self._reanudar_emision)
+
+    def _reanudar_emision(self):
+        if self._emision_estaba_sonando and not self.gestor_emision.motor.esta_reproduciendo():
+            self.gestor_emision.motor.pausar()  # pausar() alterna: reanuda lo que estaba pausado
+
+    # ------------------------------------------------------------------
+    def _cargar_programacion_del_dia(self):
+        from config.settings import resolver_programacion_del_dia
+
+        contenido = resolver_programacion_del_dia(date.today())
+        if not contenido:
+            return
+        self.ventana.cargar_bloques(contenido.get("bloques", []))
 
 
 class GestorExplorador:
