@@ -21,6 +21,12 @@ from PySide6.QtGui import QColor, QBrush
 from gui.common_widgets import ArbolConDrop
 from gui.styles import COLOR_REPRODUCIENDO
 
+# Rol de dato propio: hora "HH:mm:ss" guardada en el nodo de bloque
+# (por encima de Qt.UserRole), separado del texto visible del título
+# — lo usa SchedulerAutomatico (core/playlist_manager.py) para saber
+# cuándo disparar cada bloque, sin tener que parsear el string.
+ROL_HORA_BLOQUE = Qt.ItemDataRole.UserRole + 1
+
 
 class VentanaPublicidad(QWidget):
     automatico_cambiado = Signal(bool)
@@ -104,24 +110,44 @@ class VentanaPublicidad(QWidget):
     # ------------------------------------------------------------------
     def _cargar_datos_demo(self):
         bloques_demo = [
-            ("12:00:00 - Bloque Mediodía", [
-                ("Tanda Comercial 1", "00:03:20", "COM00044"),
-                ("FMT Latinos", "00:00:00", "JIN00017"),
-            ]),
-            ("18:00:00 - Bloque Tarde", [
-                ("Tanda Comercial 2", "00:02:45", "COM00012"),
-            ]),
+            {"hora": "12:00:00", "titulo": "Bloque Mediodía", "items": [
+                {"titulo": "Tanda Comercial 1", "duracion": "00:03:20", "codigo": "COM00044", "ruta": ""},
+                {"titulo": "FMT Latinos", "duracion": "00:00:00", "codigo": "JIN00017", "ruta": ""},
+            ]},
+            {"hora": "18:00:00", "titulo": "Bloque Tarde", "items": [
+                {"titulo": "Tanda Comercial 2", "duracion": "00:02:45", "codigo": "COM00012", "ruta": ""},
+            ]},
         ]
-        for titulo_bloque, items in bloques_demo:
-            nodo_bloque = QTreeWidgetItem([titulo_bloque, "", ""])
+        self.cargar_bloques(bloques_demo)
+
+    def cargar_bloques(self, bloques: list):
+        """Reemplaza todo el árbol por `bloques` — lista de dicts
+        {"hora", "titulo", "items": [{"titulo","duracion","codigo","ruta"}]}
+        (mismo formato que arma/guarda el Programador). Lo usa tanto
+        la carga de demo como SchedulerAutomatico al cambiar el día."""
+        self.tree.clear()
+        self._item_reproduciendo = None
+        for bloque in bloques:
+            hora = bloque.get("hora", "00:00:00")
+            titulo = bloque.get("titulo", "")
+            nodo_bloque = QTreeWidgetItem([f"{hora} - {titulo}", "", ""])
             fuente = nodo_bloque.font(0)
             fuente.setBold(True)
             nodo_bloque.setFont(0, fuente)
+            nodo_bloque.setData(0, ROL_HORA_BLOQUE, hora)
             self.tree.addTopLevelItem(nodo_bloque)
-            for titulo, duracion, codigo in items:
-                hijo = QTreeWidgetItem([titulo, duracion, codigo])
+            for item in bloque.get("items", []):
+                hijo = QTreeWidgetItem([item.get("titulo", ""), item.get("duracion", ""), item.get("codigo", "—")])
+                hijo.setData(0, Qt.ItemDataRole.UserRole, item.get("ruta", ""))
                 nodo_bloque.addChild(hijo)
             nodo_bloque.setExpanded(True)
+
+    def bloques(self) -> list:
+        """Lista de los QTreeWidgetItem de bloque (nivel superior)."""
+        return [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+
+    def hora_de_bloque(self, item_bloque) -> str:
+        return item_bloque.data(0, ROL_HORA_BLOQUE) or ""
 
     # ------------------------------------------------------------------
     def _toggle_automatico(self):
@@ -159,6 +185,8 @@ class VentanaPublicidad(QWidget):
         if item is not None:
             self._pintar_item(item, activo=True)
             self.lbl_estado.setText(f"Reproduciendo: {item.text(0)}")
+        else:
+            self.lbl_estado.setText("Modo automático activo" if self._modo_automatico else "Modo manual")
 
     def item_reproduciendo(self):
         return self._item_reproduciendo

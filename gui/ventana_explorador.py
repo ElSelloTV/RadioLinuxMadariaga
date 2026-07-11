@@ -326,6 +326,7 @@ class VentanaExplorador(QWidget):
             return
 
         registro = item.data(0, ROL_REGISTRO)
+        ruta_anterior = registro.get("ruta")
         config = cargar_configuracion()
         tolerancia = config["reproduccion"].get("tolerancia_silencio_segundos", 2.0)
         analisis = analizar_audio(ruta_nueva, tolerancia_silencio_segundos=tolerancia)
@@ -338,7 +339,7 @@ class VentanaExplorador(QWidget):
 
         item.setData(0, Qt.ItemDataRole.UserRole, ruta_nueva)
         item.setData(0, ROL_REGISTRO, registro)
-        self._sincronizar_registro_en_categoria(categoria, registro)
+        self._sincronizar_registro_en_categoria(categoria, ruta_anterior, registro)
 
     def _eliminar_archivo(self):
         item = self.tree_archivos.currentItem()
@@ -356,20 +357,26 @@ class VentanaExplorador(QWidget):
                 return
 
         registro = item.data(0, ROL_REGISTRO)
+        ruta = registro.get("ruta") if registro else None
         indice = self.tree_archivos.indexOfTopLevelItem(item)
         self.tree_archivos.takeTopLevelItem(indice)
 
-        registros = categoria.data(0, ROL_ARCHIVOS) or []
-        registros = [r for r in registros if r is not registro]
-        categoria.setData(0, ROL_ARCHIVOS, registros)
+        if ruta:
+            registros = categoria.data(0, ROL_ARCHIVOS) or []
+            registros = [r for r in registros if r.get("ruta") != ruta]
+            categoria.setData(0, ROL_ARCHIVOS, registros)
+            self.archivo_eliminado.emit(ruta)
 
-        if registro and registro.get("ruta"):
-            self.archivo_eliminado.emit(registro["ruta"])
-
-    def _sincronizar_registro_en_categoria(self, categoria, registro):
+    def _sincronizar_registro_en_categoria(self, categoria, ruta_anterior, registro):
+        """Reemplaza, en la lista persistida de la categoría, la
+        entrada que tenía `ruta_anterior` por el `registro` ya
+        actualizado. NOTA: PySide6 devuelve una COPIA de los objetos
+        guardados en roles custom — comparar por identidad (`is`)
+        contra un dict obtenido en otra llamada nunca matchea, por
+        eso el filtro va por ruta (clave estable antes de mutar)."""
         registros = categoria.data(0, ROL_ARCHIVOS) or []
         for i, r in enumerate(registros):
-            if r is registro:
+            if r.get("ruta") == ruta_anterior:
                 registros[i] = registro
                 break
         categoria.setData(0, ROL_ARCHIVOS, registros)
@@ -393,7 +400,7 @@ class VentanaExplorador(QWidget):
         if registro is None:
             return  # el archivo arrastrado no pertenece a la categoría actualmente vista
 
-        registros_origen = [r for r in registros_origen if r is not registro]
+        registros_origen = [r for r in registros_origen if r.get("ruta") != ruta]
         categoria_origen.setData(0, ROL_ARCHIVOS, registros_origen)
 
         registros_destino = item_categoria_destino.data(0, ROL_ARCHIVOS) or []
@@ -492,6 +499,79 @@ class VentanaExplorador(QWidget):
     def registro_seleccionado(self) -> dict | None:
         item = self.tree_archivos.currentItem()
         return item.data(0, ROL_REGISTRO) if item else None
+
+    # ------------------------------------------------------------------
+    # API pública usada por main_window.py para el motor "Agregar
+    # Pisador" (Ventana 2 / Auxiliar): consultar/borrar registros de
+    # la biblioteca completa sin que esas ventanas necesiten conocer
+    # cómo está armado el árbol de categorías acá adentro.
+    # ------------------------------------------------------------------
+    def _para_cada_categoria(self, funcion, item_padre=None):
+        cantidad = item_padre.childCount() if item_padre else self.tree_categorias.topLevelItemCount()
+        for i in range(cantidad):
+            item = item_padre.child(i) if item_padre else self.tree_categorias.topLevelItem(i)
+            funcion(item)
+            self._para_cada_categoria(funcion, item)
+
+    def listar_registros_por_genero(self, genero: str) -> list:
+        resultado = []
+
+        def visitar(item):
+            for registro in (item.data(0, ROL_ARCHIVOS) or []):
+                if registro.get("genero") == genero:
+                    resultado.append(registro)
+
+        self._para_cada_categoria(visitar)
+        return resultado
+
+    def buscar_registro_por_ruta(self, ruta: str) -> dict | None:
+        hallazgo = {}
+
+        def visitar(item):
+            if "registro" in hallazgo:
+                return
+            for registro in (item.data(0, ROL_ARCHIVOS) or []):
+                if registro.get("ruta") == ruta:
+                    hallazgo["registro"] = registro
+                    return
+
+        self._para_cada_categoria(visitar)
+        return hallazgo.get("registro")
+
+    def eliminar_registro_por_ruta(self, ruta: str) -> bool:
+        """Borra definitivamente el registro de TODA la biblioteca
+        (no solo de una lista). Usado por "Eliminar de la biblioteca"
+        en el menú contextual de Ventana 2 / Auxiliar.
+
+        IMPORTANTE: PySide6 devuelve una COPIA de los objetos Python
+        guardados con setData()/data() en roles custom (no la misma
+        referencia) — comparar por identidad (`is`) contra un dict
+        obtenido en otra llamada nunca matchea. Por eso el filtro acá
+        va por `ruta` (clave estable), no por identidad de objeto.
+        """
+        hallazgo = {}
+
+        def visitar(item):
+            if "categoria" in hallazgo:
+                return
+            registros = item.data(0, ROL_ARCHIVOS) or []
+            if any(r.get("ruta") == ruta for r in registros):
+                hallazgo["categoria"] = item
+
+        self._para_cada_categoria(visitar)
+
+        categoria = hallazgo.get("categoria")
+        if categoria is None:
+            return False
+
+        registros = [r for r in (categoria.data(0, ROL_ARCHIVOS) or []) if r.get("ruta") != ruta]
+        categoria.setData(0, ROL_ARCHIVOS, registros)
+
+        if categoria is self._categoria_actual():
+            self._on_categoria_seleccionada(categoria, None)
+
+        self.archivo_eliminado.emit(ruta)
+        return True
 
     # ------------------------------------------------------------------
     def guardar_disposicion(self):

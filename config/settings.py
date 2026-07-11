@@ -38,6 +38,7 @@ CONFIG_POR_DEFECTO = {
         "repetir_lista_al_finalizar": True,
         "modo_automatico_al_iniciar": False,
         "tolerancia_silencio_segundos": 2.0,
+        "pisador_bajada_db": -4.0,
     },
     "general": {
         "confirmar_antes_de_eliminar": True,
