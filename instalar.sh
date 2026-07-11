@@ -44,15 +44,35 @@ echo "  sudo apt install vlc libvlc-dev ffmpeg"
 echo ""
 
 echo "Instalando lanzador de escritorio..."
+chmod +x "$CARPETA_DESTINO/iniciar.sh"
+
 mkdir -p "$HOME/.local/share/applications"
 sed "s#/home/santiago/RadioLinuxMadariaga#$CARPETA_DESTINO#g" \
     "$CARPETA_DESTINO/assets/radiolinuxmadariaga.desktop" \
     > "$HOME/.local/share/applications/radiolinuxmadariaga.desktop"
 chmod +x "$HOME/.local/share/applications/radiolinuxmadariaga.desktop"
 
-if [ -d "$HOME/Desktop" ]; then
-    cp "$HOME/.local/share/applications/radiolinuxmadariaga.desktop" "$HOME/Desktop/"
-    chmod +x "$HOME/Desktop/radiolinuxmadariaga.desktop"
+# Carpeta de escritorio real: xdg-user-dir respeta el idioma del
+# sistema (en Q4OS en español es "Escritorio", no "Desktop").
+CARPETA_ESCRITORIO="$(xdg-user-dir DESKTOP 2>/dev/null)"
+if [ -z "$CARPETA_ESCRITORIO" ]; then
+    if [ -d "$HOME/Escritorio" ]; then
+        CARPETA_ESCRITORIO="$HOME/Escritorio"
+    elif [ -d "$HOME/Desktop" ]; then
+        CARPETA_ESCRITORIO="$HOME/Desktop"
+    fi
+fi
+
+if [ -n "$CARPETA_ESCRITORIO" ] && [ -d "$CARPETA_ESCRITORIO" ]; then
+    cp "$HOME/.local/share/applications/radiolinuxmadariaga.desktop" "$CARPETA_ESCRITORIO/"
+    chmod +x "$CARPETA_ESCRITORIO/radiolinuxmadariaga.desktop"
+    # Algunos entornos (GNOME/Nautilus) no muestran el ícono como
+    # ejecutable hasta que se marca "confiable".
+    command -v gio >/dev/null 2>&1 && gio set "$CARPETA_ESCRITORIO/radiolinuxmadariaga.desktop" "metadata::trusted" true 2>/dev/null
+    echo "Ícono copiado a: $CARPETA_ESCRITORIO"
+else
+    echo "Aviso: no se encontró una carpeta de Escritorio — el ícono quedó"
+    echo "instalado en el menú de aplicaciones igual."
 fi
 
 echo ""
