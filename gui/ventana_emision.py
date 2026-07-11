@@ -25,6 +25,8 @@ class VentanaEmision(QWidget):
     archivo_soltado = Signal(str, object)
     solicitud_abrir_auxiliar = Signal()
     item_doble_click = Signal(int)
+    solicitud_agregar_pisador = Signal(int)
+    solicitud_eliminar_definitivo = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -42,6 +44,8 @@ class VentanaEmision(QWidget):
         self.panel.archivo_soltado.connect(self.archivo_soltado.emit)
         self.panel.solicitud_abrir_auxiliar.connect(self.solicitud_abrir_auxiliar.emit)
         self.panel.item_doble_click.connect(self.item_doble_click.emit)
+        self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
+        self.panel.solicitud_eliminar_definitivo.connect(self.solicitud_eliminar_definitivo.emit)
 
         self._cargar_datos_demo()
 
@@ -75,6 +79,9 @@ class VentanaEmision(QWidget):
 
     def agregar_item(self, titulo, duracion, codigo, ruta=""):
         return self.panel.agregar_item(titulo, duracion, codigo, ruta)
+
+    def agregar_pisador(self, fila_padre, titulo, duracion, codigo, ruta):
+        return self.panel.agregar_pisador(fila_padre, titulo, duracion, codigo, ruta)
 
     def cantidad_items(self):
         return self.panel.cantidad_items()

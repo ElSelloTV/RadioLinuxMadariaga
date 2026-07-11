@@ -22,16 +22,32 @@ Reglas de negocio implementadas acá (a pedido explícito):
   si está activada, vuelve al ítem 0; si no, se detiene.
 
 - GestorPlaylist: para paneles con cola propia indexada por fila
-  (Ventana 2 - Emisión, y la Ventana Auxiliar).
+  (Ventana 2 - Emisión, y la Ventana Auxiliar). También maneja acá
+  el motor "Agregar Pisador": ver más abajo.
 - GestorPublicidad: para la Ventana 1 (árbol jerárquico de
   bloques). La cola automática disparada por horario (modo
   AUTOMÁTICO real) queda para una próxima iteración.
+
+Motor "Agregar Pisador" (Ventana 2 / Auxiliar)
+-----------------------------------------------
+Un tema musical puede tener anidado, tabulado debajo suyo en el
+panel, un archivo de género "Pisador" (ver gui/panel_reproductor.py
+- agregar_pisador). Cuando ese tema arranca a sonar:
+  1. Se reproduce el Pisador en un segundo MotorAudio en paralelo
+     (self.motor_pisador), superpuesto sobre el inicio del tema.
+  2. El volumen del tema principal baja `bajada_db_pisador` dB
+     (configurable, -4dB por defecto) mientras dura el Pisador.
+  3. Al terminar el Pisador, el tema vuelve a su volumen original.
+Si se avanza a otro tema (fin normal, Siguiente, error, doble
+click) mientras el Pisador todavía está sonando, se corta y el
+volumen se restaura antes de arrancar lo nuevo.
 --------------------------------------------------------
 """
 
 from PySide6.QtCore import Qt
 
 from core.audio_engine import MotorAudio
+from core.analizador_audio import volumen_ajustado_por_ganancia
 
 
 class GestorPlaylist:
@@ -45,25 +61,43 @@ class GestorPlaylist:
         avanzar_en_error: bool = True,
         reintentos_maximos: int = 3,
         repetir_al_finalizar: bool = True,
+        bajada_db_pisador: float = -4.0,
     ):
         self.panel = panel
         self.motor = MotorAudio(id_dispositivo)
+        self.motor_pisador = MotorAudio(id_dispositivo)
         self.avanzar_en_error = avanzar_en_error
         self.reintentos_maximos = max(1, reintentos_maximos)
         self.repetir_al_finalizar = repetir_al_finalizar
+        self.bajada_db_pisador = bajada_db_pisador
         self._fallos_consecutivos = 0
+        self._volumen_base = 100
+        self._pisador_activo = False
 
         self.motor.posicion_cambiada.connect(self.panel.actualizar_contadores)
         self.motor.finalizo_item.connect(self._avanzar_al_siguiente)
         self.motor.error_reproduccion.connect(self._on_error)
 
+        self.motor_pisador.finalizo_item.connect(self._on_pisador_finalizado)
+        self.motor_pisador.error_reproduccion.connect(
+            lambda mensaje: print(f"[GestorPlaylist-Pisador] {mensaje}")
+        )
+
         self.panel.solicitud_play.connect(self.reproducir_actual)
-        self.panel.solicitud_pausa.connect(self.motor.pausar)
+        self.panel.solicitud_pausa.connect(self._pausar)
         self.panel.solicitud_stop.connect(self.detener)
         self.panel.solicitud_siguiente.connect(self._avanzar_al_siguiente)
         self.panel.item_doble_click.connect(self._on_doble_click)
 
     # ------------------------------------------------------------------
+    def set_volumen_base(self, volumen: int):
+        """Volumen 0-100 "normal" del tema principal, al que se vuelve
+        apenas termina un Pisador. Reemplaza a llamar motor.set_volumen()
+        directo para que el Pisador sepa a qué nivel restaurar."""
+        self._volumen_base = volumen
+        if not self._pisador_activo:
+            self.motor.set_volumen(volumen)
+
     def reproducir_actual(self):
         fila = self.panel.fila_reproduciendo()
         if fila < 0 and self.panel.cantidad_items() > 0:
@@ -71,15 +105,44 @@ class GestorPlaylist:
             self.panel.marcar_reproduciendo(0)
         self._reproducir_fila(fila)
 
+    def _pausar(self):
+        self.motor.pausar()
+        if self._pisador_activo:
+            self.motor_pisador.pausar()
+
     def detener(self):
         self.motor.detener()
+        self._cancelar_pisador_en_curso()
         self._fallos_consecutivos = 0
 
     def _reproducir_fila(self, fila: int):
         ruta = self.panel.ruta_en_fila(fila)
         if not ruta:
             return
+        self._cancelar_pisador_en_curso()
         self.motor.reproducir(ruta)
+        self._disparar_pisador_si_corresponde(fila)
+
+    # ------------------------------------------------------------------
+    # Motor "Agregar Pisador"
+    # ------------------------------------------------------------------
+    def _disparar_pisador_si_corresponde(self, fila: int):
+        ruta_pisador = self.panel.ruta_pisador_en_fila(fila) if hasattr(self.panel, "ruta_pisador_en_fila") else ""
+        if not ruta_pisador:
+            return
+        self._pisador_activo = True
+        self.motor.set_volumen(volumen_ajustado_por_ganancia(self._volumen_base, self.bajada_db_pisador))
+        self.motor_pisador.reproducir(ruta_pisador)
+
+    def _on_pisador_finalizado(self):
+        self._pisador_activo = False
+        self.motor.set_volumen(self._volumen_base)
+
+    def _cancelar_pisador_en_curso(self):
+        if self._pisador_activo:
+            self.motor_pisador.detener()
+            self.motor.set_volumen(self._volumen_base)
+            self._pisador_activo = False
 
     # ------------------------------------------------------------------
     # Selección manual por doble click (arranca detenido / encola en reproducción)

@@ -104,6 +104,52 @@ explícita de Santiago, el Auxiliar **comparte la salida de audio
 Master**, no es una salida física separada (aunque `MotorAudio` ya
 soporta múltiples dispositivos si en algún momento se quiere separar).
 
+**Título en reproducción**: `gui/etiqueta_marquesina.py` —
+`EtiquetaMarquesina`, sticker de ancho fijo estilo Winamp
+(`sizeHint()` constante pase lo que pase el texto, así nunca empuja
+el panel/columna). Si el título no entra, se desplaza en marquesina
+con un QTimer; si entra, queda centrado y quieto.
+
+**Lista de reproducción**: `ArbolReproductorConDrop`
+(`gui/common_widgets.py`) combina DOS drag&drop a la vez — acepta
+soltar archivos desde el Explorador (como `ArbolConDrop`) Y permite
+reordenar sus propios ítems arrastrándolos arriba/abajo
+(`event.source() is self` distingue un caso del otro en
+`dropEvent`). Columnas en ajuste LIBRE (`Interactive` en las tres,
+sin Stretch forzado — pedido explícito, a diferencia del Explorador).
+
+La fila "reproduciendo"/"siguiente" en `PanelReproductor` se
+rastrea por **referencia al QTreeWidgetItem**, no por índice entero
+(`self._item_reproduciendo` / `self._item_siguiente`; `fila_x()`
+hace `indexOfTopLevelItem()` al vuelo). Es lo que hace que sobreviva
+sin romperse a una reordenada por arrastre — el índice numérico de
+un ítem cambia en cualquier momento, el objeto no.
+
+Menú contextual (clic derecho) en la lista: **Quitar de la lista**
+(solo saca el ítem de ahí, no toca la biblioteca), **Información**
+(propiedades + ubicación, con bitrate/frecuencia si mutagen puede
+leerlo), **Agregar/Quitar Pisador**, **Eliminar de la biblioteca**
+(definitivo, con advertencia — ver motor de Pisador abajo).
+
+**Motor "Agregar Pisador"** (`core/playlist_manager.py` —
+`GestorPlaylist`): un tema musical puede tener anidado, tabulado
+debajo en el árbol, un archivo de género **Pisador** (como mucho
+uno por tema; agregar otro reemplaza al anterior). Al arrancar ese
+tema: se reproduce el Pisador en un segundo `MotorAudio` en paralelo
+(`self.motor_pisador`) superpuesto sobre el inicio, el tema principal
+baja `pisador_bajada_db` dB (configurable en Configuración →
+Reproducción y Automatización, -4dB por defecto) y vuelve a su
+volumen original apenas termina el Pisador
+(`motor_pisador.finalizo_item` → `_on_pisador_finalizado`). Si se
+avanza a otro tema mientras el Pisador sigue sonando, se corta y el
+volumen se restaura antes de arrancar lo nuevo
+(`_cancelar_pisador_en_curso`). Solo se puede asignar un archivo de
+género "Pisador" (tanto por el diálogo — `gui/dialogo_elegir_pisador.py`,
+que filtra `listar_registros_por_genero("Pisador")` — como al
+soltarlo por drag&drop directo sobre un tema, chequeado por género
+en `MainWindow._on_archivo_soltado_emision`/`_auxiliar`).
+Aplica igual en Ventana 2 y en la Auxiliar (misma clase compartida).
+
 ### Ventana 3 — Explorador (la más elaborada, "terminada" según Santiago)
 - Categorías a la izquierda (`tree_categorias`, ahora `ArbolConDrop`),
   **sin límite de niveles** de subcategoría. Cada categoría guarda su
@@ -280,3 +326,19 @@ python3 main.py
 - El ícono de escritorio no aparecía en Q4OS porque `instalar.sh`
   buscaba `~/Desktop` a mano y el sistema en español usa
   `~/Escritorio` — resuelto con `xdg-user-dir DESKTOP`.
+- **Trampa real de PySide6 (¡importante, puede volver a morder!)**:
+  `QTreeWidgetItem.setData(rol, objeto_python)` /`.data(rol)` para
+  roles custom (por encima de `Qt.UserRole`) devuelve una **COPIA**
+  del objeto Python guardado (probado empíricamente: dos llamadas a
+  `.data()` seguidas dan listas Y dicts con identidad distinta).
+  Cualquier código que compare `algo is registro` / `algo is not
+  registro` contra un dict sacado de `.data()` en otra llamada NUNCA
+  va a matchear — se rompe en silencio (el ítem "parece" borrado en
+  la vista pero sigue en los datos persistidos, reaparece al
+  refrescar la categoría). Esto ya rompía `_eliminar_archivo`,
+  `_sincronizar_registro_en_categoria` (usado por Reemplazar) y
+  `_on_archivo_soltado_en_categoria` en `ventana_explorador.py` —
+  corregido comparando por `ruta` (clave estable), no por identidad
+  de objeto. **Regla**: nunca comparar por identidad (`is`) un dict
+  que salió de `item.data()`; comparar siempre por una clave de
+  contenido estable (acá, `ruta`).

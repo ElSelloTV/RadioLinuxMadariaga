@@ -88,6 +88,64 @@ class ArbolConDrop(QTreeWidget):
         event.acceptProposedAction()
 
 
+class ArbolReproductorConDrop(QTreeWidget):
+    """QTreeWidget de una lista de reproducción (Ventana 2 / Auxiliar):
+    combina DOS comportamientos de Drag&Drop a la vez —
+    - ACEPTA arrastres externos (desde el Explorador) para agregar
+      temas, igual que ArbolConDrop.
+    - Permite REORDENAR sus propios ítems arrastrándolos arriba/abajo
+      dentro de la misma lista (drag&drop interno nativo de Qt).
+
+    La distinción se hace en dropEvent() mirando event.source(): si
+    el arrastre viene de este mismo árbol, es una reordenada interna
+    (se delega en el comportamiento nativo de QTreeWidget); si viene
+    de otro lado, es un archivo externo (se emite archivo_soltado).
+    """
+
+    archivo_soltado = Signal(str, object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.viewport().setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if event.source() is self:
+            # Reordenar dentro de la misma lista: comportamiento nativo.
+            super().dropEvent(event)
+            return
+
+        rutas = []
+        if event.mimeData().hasUrls():
+            rutas = [url.toLocalFile() for url in event.mimeData().urls() if url.toLocalFile()]
+        elif event.mimeData().hasText():
+            rutas = [event.mimeData().text()]
+
+        punto = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        item_destino = self.itemAt(punto)
+
+        for ruta in rutas:
+            if ruta:
+                self.archivo_soltado.emit(ruta, item_destino)
+
+        event.acceptProposedAction()
+
+
 class ArbolOrigenArrastre(QTreeWidget):
     """QTreeWidget que ES ORIGEN de arrastre (DragOnly) hacia otras ventanas.
 

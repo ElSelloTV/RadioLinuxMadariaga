@@ -17,7 +17,8 @@ import os
 
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QWidget, QVBoxLayout, QLabel,
-    QToolBar, QStatusBar, QMenuBar, QSizePolicy, QTreeWidgetItem
+    QToolBar, QStatusBar, QMenuBar, QSizePolicy, QTreeWidgetItem,
+    QMessageBox
 )
 from PySide6.QtCore import Qt, QTimer, QDateTime
 from PySide6.QtGui import QAction, QKeySequence
@@ -28,6 +29,7 @@ from gui.ventana_explorador import VentanaExplorador
 from gui.ventana_auxiliar import VentanaAuxiliar
 from gui.ventana_programador import VentanaProgramador
 from gui.ventana_configuracion import VentanaConfiguracion
+from gui.dialogo_elegir_pisador import DialogoElegirPisador
 from gui.common_widgets import configurar_columnas_ajustables
 from gui import estado_ui
 
@@ -188,10 +190,10 @@ class MainWindow(QMainWindow):
         # Últimas columnas de "Código"/similares más angostas y con
         # protección para que nunca queden tapadas al mover otra
         # columna (setMinimumSectionSize evita que desaparezcan).
+        # Ventana 2 (Emisión) arma sus propias columnas de ajuste
+        # LIBRE en panel_reproductor.py — no se toca acá.
         configurar_columnas_ajustables(self.ventana_publicidad.tree, [200, 90])
         self.ventana_publicidad.tree.header().setMinimumSectionSize(45)
-        configurar_columnas_ajustables(self.ventana_emision.panel.tree, [220, 90])
-        self.ventana_emision.panel.tree.header().setMinimumSectionSize(45)
 
         self._restaurar_disposicion_guardada()
 
@@ -240,6 +242,10 @@ class MainWindow(QMainWindow):
 
         self.ventana_emision.archivo_soltado.connect(self._on_archivo_soltado_emision)
         self.ventana_emision.solicitud_abrir_auxiliar.connect(self.abrir_ventana_auxiliar)
+        self.ventana_emision.solicitud_agregar_pisador.connect(
+            lambda fila: self._abrir_dialogo_pisador(self.ventana_emision, fila)
+        )
+        self.ventana_emision.solicitud_eliminar_definitivo.connect(self._eliminar_definitivo_de_biblioteca)
 
         self.ventana_explorador.archivo_agregado.connect(self._on_archivo_agregado)
         self.ventana_explorador.archivo_movido.connect(self._on_archivo_movido)
@@ -257,10 +263,64 @@ class MainWindow(QMainWindow):
     # Drag & Drop entrante: agrega el archivo soltado a la lista correspondiente
     # ------------------------------------------------------------------
     def _on_archivo_soltado_emision(self, ruta: str, item_destino):
+        # Si es un archivo de género Pisador soltado sobre un tema
+        # musical (no sobre otro Pisador), se anida como el Pisador
+        # de ese tema en vez de agregarse como un tema nuevo.
+        registro = self.ventana_explorador.buscar_registro_por_ruta(ruta)
+        genero = (registro or {}).get("genero")
+        if genero == "Pisador" and item_destino is not None and item_destino.parent() is None:
+            fila = self.ventana_emision.panel.tree.indexOfTopLevelItem(item_destino)
+            duracion = obtener_duracion_formateada(ruta)
+            self.ventana_emision.agregar_pisador(
+                fila, registro.get("titulo", os.path.basename(ruta)),
+                duracion, registro.get("codigo", "—"), ruta,
+            )
+            self.statusBar().showMessage(f"Pisador agregado a: {item_destino.text(0)}", 3000)
+            return
+
         titulo = os.path.splitext(os.path.basename(ruta))[0]
         duracion = obtener_duracion_formateada(ruta)
         self.ventana_emision.agregar_item(titulo, duracion, "—", ruta)
         self.statusBar().showMessage(f"Agregado a Emisión: {titulo}", 3000)
+
+    # ------------------------------------------------------------------
+    # Motor "Agregar Pisador": pide el archivo Pisador a usar (filtrado
+    # por género desde la biblioteca del Explorador) y lo anida en el
+    # tema elegido de la ventana que lo pidió (Emisión o Auxiliar).
+    # ------------------------------------------------------------------
+    def _abrir_dialogo_pisador(self, ventana, fila: int):
+        registros_pisador = self.ventana_explorador.listar_registros_por_genero("Pisador")
+        if not registros_pisador:
+            QMessageBox.information(
+                self, "Agregar Pisador",
+                "No hay archivos de género 'Pisador' cargados en el Explorador todavía.\n"
+                "Agregá alguno ahí (Ventana 3) con ese género antes de asignarlo.",
+            )
+            return
+
+        dialogo = DialogoElegirPisador(registros_pisador, parent=self)
+        if dialogo.exec() != DialogoElegirPisador.DialogCode.Accepted:
+            return
+
+        registro = dialogo.registro_elegido()
+        if not registro:
+            return
+
+        duracion = obtener_duracion_formateada(registro["ruta"])
+        ventana.agregar_pisador(fila, registro.get("titulo", ""), duracion, registro.get("codigo", "—"), registro["ruta"])
+        self.statusBar().showMessage(f"Pisador '{registro.get('titulo', '')}' asignado.", 3000)
+
+    # ------------------------------------------------------------------
+    # "Eliminar de la biblioteca" del menú contextual de Ventana 2 /
+    # Auxiliar: borra el registro completo del Explorador, no solo el
+    # ítem de esa lista puntual (esa parte ya la maneja el panel).
+    # ------------------------------------------------------------------
+    def _eliminar_definitivo_de_biblioteca(self, ruta: str):
+        eliminado = self.ventana_explorador.eliminar_registro_por_ruta(ruta)
+        if eliminado:
+            self.statusBar().showMessage(f"Eliminado de la biblioteca: {os.path.basename(ruta)}", 4000)
+        else:
+            self.statusBar().showMessage("Ese archivo no estaba registrado en la biblioteca del Explorador.", 4000)
 
     def _on_archivo_soltado_publicidad(self, ruta: str, item_destino):
         titulo = os.path.splitext(os.path.basename(ruta))[0]
@@ -282,6 +342,17 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Agregado a Publicidad: {titulo}", 3000)
 
     def _on_archivo_soltado_auxiliar(self, ruta: str, item_destino):
+        registro = self.ventana_explorador.buscar_registro_por_ruta(ruta)
+        genero = (registro or {}).get("genero")
+        if genero == "Pisador" and item_destino is not None and item_destino.parent() is None:
+            fila = self._ventana_auxiliar.panel.tree.indexOfTopLevelItem(item_destino)
+            duracion = obtener_duracion_formateada(ruta)
+            self._ventana_auxiliar.agregar_pisador(
+                fila, registro.get("titulo", os.path.basename(ruta)),
+                duracion, registro.get("codigo", "—"), ruta,
+            )
+            return
+
         titulo = os.path.splitext(os.path.basename(ruta))[0]
         duracion = obtener_duracion_formateada(ruta)
         self._ventana_auxiliar.agregar_item(titulo, duracion, "—", ruta)
@@ -301,6 +372,7 @@ class MainWindow(QMainWindow):
             avanzar_en_error=reproduccion["avanzar_automaticamente_en_error"],
             reintentos_maximos=reproduccion["reintentos_antes_de_detener"],
             repetir_al_finalizar=reproduccion["repetir_lista_al_finalizar"],
+            bajada_db_pisador=reproduccion["pisador_bajada_db"],
         )
         self.gestor_publicidad = GestorPublicidad(
             self.ventana_publicidad,
@@ -309,7 +381,7 @@ class MainWindow(QMainWindow):
             reintentos_maximos=reproduccion["reintentos_antes_de_detener"],
         )
 
-        self.gestor_emision.motor.set_volumen(audio["volumen_master"])
+        self.gestor_emision.set_volumen_base(audio["volumen_master"])
         self.gestor_publicidad.motor.set_volumen(audio["volumen_master"])
 
         self.gestor_explorador = GestorExplorador(self.ventana_explorador, id_dispositivo=id_dispositivo_master)
@@ -343,8 +415,8 @@ class MainWindow(QMainWindow):
             id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
 
             self._ventana_auxiliar = VentanaAuxiliar(self)
-            configurar_columnas_ajustables(self._ventana_auxiliar.panel.tree, [220, 90])
-            self._ventana_auxiliar.panel.tree.header().setMinimumSectionSize(45)
+            # Ventana Auxiliar arma sus propias columnas de ajuste LIBRE
+            # en panel_reproductor.py — solo se restaura lo guardado.
             estado_ui.restaurar_columnas("auxiliar", self._ventana_auxiliar.panel.tree)
             estado_ui.restaurar_geometria_ventana(self._ventana_auxiliar, "auxiliar")
 
@@ -354,8 +426,14 @@ class MainWindow(QMainWindow):
                 avanzar_en_error=reproduccion["avanzar_automaticamente_en_error"],
                 reintentos_maximos=reproduccion["reintentos_antes_de_detener"],
                 repetir_al_finalizar=reproduccion["repetir_lista_al_finalizar"],
+                bajada_db_pisador=reproduccion["pisador_bajada_db"],
             )
+            self._gestor_auxiliar.set_volumen_base(audio["volumen_master"])
             self._ventana_auxiliar.archivo_soltado.connect(self._on_archivo_soltado_auxiliar)
+            self._ventana_auxiliar.solicitud_agregar_pisador.connect(
+                lambda fila: self._abrir_dialogo_pisador(self._ventana_auxiliar, fila)
+            )
+            self._ventana_auxiliar.solicitud_eliminar_definitivo.connect(self._eliminar_definitivo_de_biblioteca)
 
         self._ventana_auxiliar.show()
         self._ventana_auxiliar.raise_()
