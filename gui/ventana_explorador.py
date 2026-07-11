@@ -25,6 +25,15 @@ Cada archivo se guarda como un diccionario (ver `_nuevo_registro`)
 adentro del propio QTreeWidgetItem de su categoría, en el rol
 ROL_ARCHIVOS — así la jerarquía de categorías no tiene límite de
 profundidad ni depende de un diccionario plano por nombre.
+
+PERSISTENCIA (config/data/biblioteca.json, vía config/settings.py):
+toda la biblioteca (categorías + archivos) se guarda en disco ante
+CADA alta, baja, reemplazo o movimiento — no solo al cerrar la app.
+Es a propósito: un corte de luz o un apagado forzoso de la PC no
+debe perder nada de lo cargado. El único borrado real es manual
+(botón Eliminar, con la advertencia correspondiente). El guardado
+usa escritura atómica (archivo temporal + rename) para que un corte
+de luz a mitad de la escritura tampoco deje el archivo corrupto.
 --------------------------------------------------------
 """
 
@@ -44,7 +53,7 @@ from gui.styles import GENERO_COLORES, GENEROS_CON_TEXTO_OSCURO
 from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
 from gui.estado_ui import guardar_columnas, restaurar_columnas
 from core.analizador_audio import analizar_audio
-from config.settings import cargar_configuracion
+from config.settings import cargar_configuracion, cargar_biblioteca, guardar_biblioteca
 
 EXTENSIONES_SOPORTADAS = (".mp3", ".wav", ".mp4", ".m4a")
 
@@ -65,7 +74,7 @@ class VentanaExplorador(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._construir_ui()
-        self._cargar_categorias_demo()
+        self._cargar_biblioteca_inicial()
 
     # ------------------------------------------------------------------
     def _construir_ui(self):
@@ -159,6 +168,49 @@ class VentanaExplorador(QWidget):
         layout_principal.addWidget(grupo)
 
     # ------------------------------------------------------------------
+    # Persistencia (config/data/biblioteca.json) — ver nota al inicio
+    # del archivo. Se guarda ante cada mutación, no solo al cerrar.
+    # ------------------------------------------------------------------
+    def _cargar_biblioteca_inicial(self):
+        categorias_guardadas = cargar_biblioteca()
+        if categorias_guardadas:
+            self._cargar_categorias_desde_datos(categorias_guardadas)
+        else:
+            self._cargar_categorias_demo()
+            self._guardar_biblioteca()  # deja persistida la base inicial
+
+    def _guardar_biblioteca(self):
+        guardar_biblioteca(self._serializar_biblioteca())
+
+    def _serializar_biblioteca(self) -> list:
+        return [
+            self._serializar_categoria(self.tree_categorias.topLevelItem(i))
+            for i in range(self.tree_categorias.topLevelItemCount())
+        ]
+
+    def _serializar_categoria(self, item: QTreeWidgetItem) -> dict:
+        return {
+            "nombre": item.text(0),
+            "archivos": item.data(0, ROL_ARCHIVOS) or [],
+            "subcategorias": [self._serializar_categoria(item.child(i)) for i in range(item.childCount())],
+        }
+
+    def _cargar_categorias_desde_datos(self, categorias: list):
+        self.tree_categorias.clear()
+        for datos_categoria in categorias:
+            self._deserializar_categoria(datos_categoria, None)
+        if self.tree_categorias.topLevelItemCount() > 0:
+            self.tree_categorias.setCurrentItem(self.tree_categorias.topLevelItem(0))
+        self.tree_categorias.expandAll()
+
+    def _deserializar_categoria(self, datos: dict, item_padre) -> QTreeWidgetItem:
+        item = self._crear_item_categoria(item_padre, datos.get("nombre", ""))
+        item.setData(0, ROL_ARCHIVOS, datos.get("archivos", []))
+        for sub in datos.get("subcategorias", []):
+            self._deserializar_categoria(sub, item)
+        return item
+
+    # ------------------------------------------------------------------
     def _cargar_categorias_demo(self):
         raiz_musica = self._crear_item_categoria(None, "Música")
         self._crear_item_categoria(raiz_musica, "Nacional")
@@ -223,6 +275,7 @@ class VentanaExplorador(QWidget):
             return
         item = self._crear_item_categoria(None, nombre.strip())
         self.tree_categorias.setCurrentItem(item)
+        self._guardar_biblioteca()
 
     def _nueva_subcategoria(self):
         padre = self._categoria_actual()
@@ -235,6 +288,7 @@ class VentanaExplorador(QWidget):
         item = self._crear_item_categoria(padre, nombre.strip())
         padre.setExpanded(True)
         self.tree_categorias.setCurrentItem(item)
+        self._guardar_biblioteca()
 
     def _eliminar_categoria(self):
         item = self._categoria_actual()
@@ -256,6 +310,7 @@ class VentanaExplorador(QWidget):
         else:
             indice = self.tree_categorias.indexOfTopLevelItem(item)
             self.tree_categorias.takeTopLevelItem(indice)
+        self._guardar_biblioteca()
 
     # ------------------------------------------------------------------
     # Alta de archivos: diálogo de confirmación + análisis de audio
@@ -306,6 +361,7 @@ class VentanaExplorador(QWidget):
         if item_categoria is self._categoria_actual():
             self._agregar_fila_archivo(registro)
 
+        self._guardar_biblioteca()
         self.archivo_agregado.emit(ruta)
 
     # ------------------------------------------------------------------
@@ -340,6 +396,7 @@ class VentanaExplorador(QWidget):
         item.setData(0, Qt.ItemDataRole.UserRole, ruta_nueva)
         item.setData(0, ROL_REGISTRO, registro)
         self._sincronizar_registro_en_categoria(categoria, ruta_anterior, registro)
+        self._guardar_biblioteca()
 
     def _eliminar_archivo(self):
         item = self.tree_archivos.currentItem()
@@ -365,6 +422,7 @@ class VentanaExplorador(QWidget):
             registros = categoria.data(0, ROL_ARCHIVOS) or []
             registros = [r for r in registros if r.get("ruta") != ruta]
             categoria.setData(0, ROL_ARCHIVOS, registros)
+            self._guardar_biblioteca()
             self.archivo_eliminado.emit(ruta)
 
     def _sincronizar_registro_en_categoria(self, categoria, ruta_anterior, registro):
@@ -411,6 +469,7 @@ class VentanaExplorador(QWidget):
         # pertenece a la categoría que se está mostrando).
         self._on_categoria_seleccionada(categoria_origen, None)
 
+        self._guardar_biblioteca()
         self.archivo_movido.emit(registro.get("titulo", ruta), item_categoria_destino.text(0))
 
     # ------------------------------------------------------------------
@@ -570,6 +629,7 @@ class VentanaExplorador(QWidget):
         if categoria is self._categoria_actual():
             self._on_categoria_seleccionada(categoria, None)
 
+        self._guardar_biblioteca()
         self.archivo_eliminado.emit(ruta)
         return True
 

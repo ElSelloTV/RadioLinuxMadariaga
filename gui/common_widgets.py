@@ -93,13 +93,24 @@ class ArbolReproductorConDrop(QTreeWidget):
     combina DOS comportamientos de Drag&Drop a la vez —
     - ACEPTA arrastres externos (desde el Explorador) para agregar
       temas, igual que ArbolConDrop.
-    - Permite REORDENAR sus propios ítems arrastrándolos arriba/abajo
-      dentro de la misma lista (drag&drop interno nativo de Qt).
+    - Permite REORDENAR sus propios ítems (temas de nivel superior)
+      arrastrándolos arriba/abajo dentro de la misma lista.
 
     La distinción se hace en dropEvent() mirando event.source(): si
-    el arrastre viene de este mismo árbol, es una reordenada interna
-    (se delega en el comportamiento nativo de QTreeWidget); si viene
-    de otro lado, es un archivo externo (se emite archivo_soltado).
+    el arrastre viene de este mismo árbol, es una reordenada interna;
+    si viene de otro lado, es un archivo externo (se emite
+    archivo_soltado).
+
+    IMPORTANTE: la reordenada interna NO usa el dropEvent nativo de
+    QTreeWidget (super().dropEvent) — ese comportamiento nativo, si
+    se suelta justo "sobre" otro ítem (en vez de entre dos filas),
+    lo anida como HIJO del ítem destino. Acá eso está prohibido a
+    propósito: anidar (el ícono "↳" tabulado) es EXCLUSIVO del motor
+    de Pisador (gui/panel_reproductor.py - agregar_pisador), nunca
+    un efecto secundario de reordenar arrastrando. _reordenar_manual
+    calcula la posición a mano y siempre reinserta como hermano de
+    nivel superior (si el tema tenía su propio Pisador anidado, viaja
+    con él intacto — takeTopLevelItem preserva el subárbol).
     """
 
     archivo_soltado = Signal(str, object)
@@ -126,8 +137,7 @@ class ArbolReproductorConDrop(QTreeWidget):
 
     def dropEvent(self, event):
         if event.source() is self:
-            # Reordenar dentro de la misma lista: comportamiento nativo.
-            super().dropEvent(event)
+            self._reordenar_manual(event)
             return
 
         rutas = []
@@ -143,6 +153,50 @@ class ArbolReproductorConDrop(QTreeWidget):
             if ruta:
                 self.archivo_soltado.emit(ruta, item_destino)
 
+        event.acceptProposedAction()
+
+    def _reordenar_manual(self, event):
+        """Mueve el ítem arrastrado (self.currentItem()) a la posición
+        soltada, SIEMPRE como hermano de nivel superior — nunca lo
+        anida como hijo de otro, sin importar dónde exactamente caiga
+        el cursor sobre la fila destino."""
+        item_arrastrado = self.currentItem()
+        if item_arrastrado is None or item_arrastrado.parent() is not None:
+            # Un Pisador anidado no se arrastra (ya no tiene
+            # ItemIsDragEnabled); esto es un resguardo extra.
+            event.ignore()
+            return
+
+        indice_origen = self.indexOfTopLevelItem(item_arrastrado)
+        if indice_origen < 0:
+            event.ignore()
+            return
+
+        punto = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        item_destino = self.itemAt(punto)
+
+        if item_destino is None:
+            indice_destino = self.topLevelItemCount() - 1
+        else:
+            bloque_destino = item_destino
+            while bloque_destino.parent() is not None:
+                bloque_destino = bloque_destino.parent()
+            indice_destino = self.indexOfTopLevelItem(bloque_destino)
+            if self.dropIndicatorPosition() == QAbstractItemView.DropIndicatorPosition.BelowItem:
+                indice_destino += 1
+
+        if indice_destino > indice_origen:
+            indice_destino -= 1  # se saca el origen antes de reinsertar, los índices posteriores corren uno
+
+        indice_destino = max(0, min(indice_destino, self.topLevelItemCount() - 1))
+
+        if indice_destino == indice_origen:
+            event.ignore()
+            return
+
+        item = self.takeTopLevelItem(indice_origen)  # se lleva su Pisador anidado, si tenía
+        self.insertTopLevelItem(indice_destino, item)
+        self.setCurrentItem(item)
         event.acceptProposedAction()
 
 

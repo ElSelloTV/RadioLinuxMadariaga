@@ -31,6 +31,7 @@ MENSAJE_VLC_NO_DISPONIBLE = (
 
 class MotorAudio(QObject):
     posicion_cambiada = Signal(str, str)   # (transcurrido "hh:mm:ss", restante "hh:mm:ss")
+    restante_ms_cambio = Signal(int)       # restante en ms (considera punto_fin_ms) — lo usa el crossfade
     finalizo_item = Signal()
     error_reproduccion = Signal(str)
 
@@ -202,8 +203,10 @@ class MotorAudio(QObject):
             self.finalizo_item.emit()
             return
 
-        restante_ms = max(0, largo_ms - actual_ms)
+        limite_ms = self._punto_fin_ms if self._punto_fin_ms else largo_ms
+        restante_ms = max(0, limite_ms - actual_ms)
         self.posicion_cambiada.emit(self._formatear_ms(actual_ms), self._formatear_ms(restante_ms))
+        self.restante_ms_cambio.emit(restante_ms)
 
     @staticmethod
     def _formatear_ms(ms: int) -> str:

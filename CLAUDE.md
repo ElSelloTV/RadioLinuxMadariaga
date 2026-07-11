@@ -29,6 +29,10 @@ radio, uso diario en producción.
   Santiago valora mucho que las cosas se prueben antes de entregarlas,
   no solo que compilen.
 - Explicaciones breves de qué se hizo, sin relleno.
+- **Pedido explícito: hacer `git push` ante todo cambio.** No dejar
+  trabajo terminado sin subir a `claude/radio-app-design-yu3mcp` (y
+  avisar si hace falta fusionarlo a `main` para que el botón
+  Actualizar de Configuración lo traiga — main no se actualiza sola).
 
 ## Arquitectura (estricta separación GUI / core / config)
 
@@ -146,6 +150,18 @@ hace `indexOfTopLevelItem()` al vuelo). Es lo que hace que sobreviva
 sin romperse a una reordenada por arrastre — el índice numérico de
 un ítem cambia en cualquier momento, el objeto no.
 
+**Reordenar por arrastre NUNCA anida** (`ArbolReproductorConDrop._reordenar_manual`
+en `gui/common_widgets.py`): el `dropEvent` nativo de QTreeWidget, si
+soltás justo "sobre" otra fila (indicador `OnItem`), por defecto la
+anida como HIJA — eso creaba un sub-árbol no deseado. Corregido no
+delegando en `super().dropEvent()` para el caso interno: se calcula
+la posición a mano (usando `dropIndicatorPosition()` solo para
+decidir antes/después) y siempre se reinserta como HERMANO de nivel
+superior con `takeTopLevelItem`/`insertTopLevelItem`. Anidar (el
+"↳" tabulado) es EXCLUSIVO del motor de Pisador, nunca un efecto
+secundario de reordenar. Si el tema arrastrado tenía su propio
+Pisador, viaja con él (`takeTopLevelItem` preserva el subárbol).
+
 Menú contextual (clic derecho) en la lista: **Quitar de la lista**
 (solo saca el ítem de ahí, no toca la biblioteca), **Información**
 (propiedades + ubicación, con bitrate/frecuencia si mutagen puede
@@ -171,7 +187,48 @@ soltarlo por drag&drop directo sobre un tema, chequeado por género
 en `MainWindow._on_archivo_soltado_emision`/`_auxiliar`).
 Aplica igual en Ventana 2 y en la Auxiliar (misma clase compartida).
 
+**Crossfade (implementado)**: con `crossfade_activado` en
+Configuración → Fade/Transiciones, la transición NATURAL entre dos
+temas (llegando al final, no Siguiente manual ni error/cascada) se
+superpone en vez de cortar seco. Se dispara CON ANTICIPACIÓN —
+`MotorAudio.restante_ms_cambio` (nueva señal, considera
+`punto_fin_ms` si el tema fue analizado) avisa a `GestorPlaylist`
+cuando falta `duracion_fade_segundos` para el final, y ahí se llama
+`MotorAudio.crossfade_a()`. Como el motor "entrante" que arma
+`crossfade_a()` es una instancia NUEVA, `GestorPlaylist.motor` se
+reemplaza por ese entrante a mitad de la rampa (`_desconectar_motor`/
+`_conectar_motor` reenganchan `posicion_cambiada`/`finalizo_item`/
+`error_reproduccion`/`restante_ms_cambio` al motor correcto) — el
+motor saliente sigue fundiéndose solo en paralelo hasta apagarse.
+**Limitación conocida**: si el tema ENTRANTE por crossfade tiene su
+propio Pisador, no se dispara (dos rampas de volumen peleando por el
+mismo motor a la vez) — pendiente de resolver si hace falta.
+
 ### Ventana 3 — Explorador (la más elaborada, "terminada" según Santiago)
+
+**Persistencia (implementado, pedido explícito de Santiago)**: toda
+la biblioteca (categorías + archivos, recursivo) se guarda en
+`config/data/biblioteca.json` vía `config/settings.py:
+cargar_biblioteca()`/`guardar_biblioteca()`. Se guarda ante CADA
+alta, baja, reemplazo o movimiento — no solo al cerrar la app
+(`VentanaExplorador._guardar_biblioteca()`, llamado al final de
+`_dar_de_alta_archivo`, `_reemplazar_archivo`, `_eliminar_archivo`,
+`_on_archivo_soltado_en_categoria`, `eliminar_registro_por_ruta`,
+`_nueva_categoria`/`_nueva_subcategoria`/`_eliminar_categoria`). El
+único borrado real es manual. Al arrancar, si `biblioteca.json` no
+existe todavía, se cargan las categorías demo y se persisten como
+base inicial (`_cargar_biblioteca_inicial`).
+
+**Escritura atómica ante corte de luz**: `config/settings.py:
+_guardar_json_atomico()` escribe a un `.tmp` y lo renombra encima
+del archivo definitivo con `os.replace()` (atómico en Linux) — así
+un corte de luz o apagado forzoso a mitad de la escritura nunca deja
+un JSON corrupto/truncado: o queda la versión anterior completa, o
+la nueva completa. La usan `guardar_configuracion()`,
+`guardar_programaciones()` Y `guardar_biblioteca()` — probado
+matando el archivo `.tmp` a mitad de escribir y confirmando que el
+definitivo no se toca hasta que el `.tmp` está completo.
+
 - Categorías a la izquierda (`tree_categorias`, ahora `ArbolConDrop`),
   **sin límite de niveles** de subcategoría. Cada categoría guarda su
   lista de archivos directamente en el propio `QTreeWidgetItem`
@@ -318,10 +375,9 @@ python3 main.py
    ver Ventana 1 más arriba). Falta probarlo con horarios reales en
    la notebook de Santiago (acá se probó simulando el reloj).
 2. ~~Scheduler de medianoche~~ — implementado junto con el punto 1.
-3. **Crossfade real**: `MotorAudio.crossfade_a()` ya existe y
-   funciona, pero todavía no se dispara automáticamente entre temas
-   de Emisión — falta conectarlo en `GestorPlaylist` usando la
-   configuración de Fade (duración, on/off).
+3. ~~Crossfade real~~ — implementado (ver Ventana 2 más arriba).
+   Falta probarlo con audio real: acá se probó con motores
+   simulados (sin VLC), verificar que se escuche bien en la práctica.
 4. Sistema FMT (archivos de programación especial que cargan una
    playlist musical pregrabada) — mencionado en el pedido original,
    todavía no empezado.
@@ -329,6 +385,9 @@ python3 main.py
    `MotorAudio` (`listar_dispositivos`, `set_dispositivo_salida`) y
    el combo en Configuración, pero no se probó contra hardware real
    (el sandbox no tiene tarjeta de sonido).
+6. Integrar crossfade + Pisador para cuando el tema ENTRANTE de un
+   crossfade tiene su propio Pisador (limitación conocida, ver nota
+   en Ventana 2).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

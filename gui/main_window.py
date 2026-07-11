@@ -363,6 +363,7 @@ class MainWindow(QMainWindow):
     def _inicializar_motores_audio(self):
         audio = self._config["audio"]
         reproduccion = self._config["reproduccion"]
+        fade = self._config["fade"]
 
         id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
 
@@ -373,6 +374,8 @@ class MainWindow(QMainWindow):
             reintentos_maximos=reproduccion["reintentos_antes_de_detener"],
             repetir_al_finalizar=reproduccion["repetir_lista_al_finalizar"],
             bajada_db_pisador=reproduccion["pisador_bajada_db"],
+            crossfade_activado=fade["crossfade_activado"],
+            duracion_fade_segundos=fade["duracion_fade_segundos"],
         )
         self.gestor_publicidad = GestorPublicidad(
             self.ventana_publicidad,
@@ -418,6 +421,7 @@ class MainWindow(QMainWindow):
         if self._ventana_auxiliar is None:
             audio = self._config["audio"]
             reproduccion = self._config["reproduccion"]
+            fade = self._config["fade"]
             id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
 
             self._ventana_auxiliar = VentanaAuxiliar(self)
@@ -433,6 +437,8 @@ class MainWindow(QMainWindow):
                 reintentos_maximos=reproduccion["reintentos_antes_de_detener"],
                 repetir_al_finalizar=reproduccion["repetir_lista_al_finalizar"],
                 bajada_db_pisador=reproduccion["pisador_bajada_db"],
+                crossfade_activado=fade["crossfade_activado"],
+                duracion_fade_segundos=fade["duracion_fade_segundos"],
             )
             self._gestor_auxiliar.set_volumen_base(audio["volumen_master"])
             self._ventana_auxiliar.archivo_soltado.connect(self._on_archivo_soltado_auxiliar)

@@ -14,6 +14,7 @@ import os
 DIRECTORIO_CONFIG = os.path.join(os.path.dirname(__file__), "data")
 ARCHIVO_CONFIG_GENERAL = os.path.join(DIRECTORIO_CONFIG, "config_general.json")
 ARCHIVO_PROGRAMACION = os.path.join(DIRECTORIO_CONFIG, "programacion.json")
+ARCHIVO_BIBLIOTECA = os.path.join(DIRECTORIO_CONFIG, "biblioteca.json")
 ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_emision.txt")
 
 CONFIG_POR_DEFECTO = {
@@ -52,6 +53,23 @@ def _asegurar_directorio():
     os.makedirs(DIRECTORIO_CONFIG, exist_ok=True)
 
 
+def _guardar_json_atomico(ruta: str, datos):
+    """Escribe a un archivo temporal y lo renombra ENCIMA del
+    definitivo (os.replace es atómico en Linux) — así un corte de luz
+    o un apagado forzoso a mitad de la escritura nunca deja el
+    archivo corrupto/truncado: o queda la versión anterior completa,
+    o la nueva completa, nunca algo a medio escribir. Toda la
+    persistencia de la app (config, biblioteca, programaciones) pasa
+    por acá."""
+    _asegurar_directorio()
+    archivo_temporal = f"{ruta}.tmp"
+    with open(archivo_temporal, "w", encoding="utf-8") as f:
+        json.dump(datos, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(archivo_temporal, ruta)
+
+
 def _fusionar_con_defecto(config_guardada: dict) -> dict:
     """Completa con los valores por defecto cualquier clave/sección nueva
     que no exista todavía en un config_general.json guardado con una
@@ -79,9 +97,7 @@ def cargar_configuracion() -> dict:
 
 
 def guardar_configuracion(config: dict):
-    _asegurar_directorio()
-    with open(ARCHIVO_CONFIG_GENERAL, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+    _guardar_json_atomico(ARCHIVO_CONFIG_GENERAL, config)
 
 
 def registrar_error(mensaje: str):
@@ -136,9 +152,7 @@ def cargar_programaciones() -> dict:
 
 
 def guardar_programaciones(datos: dict):
-    _asegurar_directorio()
-    with open(ARCHIVO_PROGRAMACION, "w", encoding="utf-8") as f:
-        json.dump(datos, f, indent=2, ensure_ascii=False)
+    _guardar_json_atomico(ARCHIVO_PROGRAMACION, datos)
 
 
 def guardar_programacion(nombre: str, bloques: list, dias_semana: list = None, fecha_especifica: str = None):
@@ -203,3 +217,30 @@ def resolver_programacion_del_dia(fecha) -> dict | None:
 
     nombre_dia = NOMBRES_DIAS_SEMANA[fecha.weekday()]
     return datos["dias_semana"].get(nombre_dia)
+
+
+# ----------------------------------------------------------------------
+# Biblioteca (Ventana 3 - Explorador): categorías + archivos
+# ----------------------------------------------------------------------
+# Estructura de config/data/biblioteca.json: lista de categorías de
+# primer nivel, cada una:
+#   {"nombre": str, "archivos": [registro, ...], "subcategorias": [categoría, ...]}
+# (recursivo, sin límite de niveles — mismo modelo que el árbol de
+# gui/ventana_explorador.py). Se guarda ante CADA alta/baja/cambio,
+# no solo al cerrar la app: un corte de luz o apagado forzoso no debe
+# perder nada de lo cargado.
+
+def cargar_biblioteca() -> list:
+    _asegurar_directorio()
+    if not os.path.exists(ARCHIVO_BIBLIOTECA):
+        return []
+    try:
+        with open(ARCHIVO_BIBLIOTECA, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as error:
+        registrar_error(f"Error leyendo biblioteca: {error}")
+        return []
+
+
+def guardar_biblioteca(categorias: list):
+    _guardar_json_atomico(ARCHIVO_BIBLIOTECA, categorias)
