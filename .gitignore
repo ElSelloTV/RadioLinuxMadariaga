@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+
+# Datos locales de cada instalación (configuración, biblioteca,
+# programaciones, logs, layout de ventanas) — no se versionan,
+# cada instalación tiene los suyos.
+config/data/*.json
+config/data/*.ini
+config/data/*.txt
+
+.vscode/
+.idea/

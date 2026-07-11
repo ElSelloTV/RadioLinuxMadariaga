@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Automatización Radial (Dinesat Clon)
+Comment=Automatización radial estilo Dinesat 9 para Linux
+Exec=bash -c "cd /home/santiago/RadioLinuxMadariaga && ./venv/bin/python3 main.py"
+Icon=/home/santiago/RadioLinuxMadariaga/assets/icono.png
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+StartupNotify=true
