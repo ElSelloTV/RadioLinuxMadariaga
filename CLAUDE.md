@@ -249,6 +249,23 @@ terminar) y el corte del Pisador si se interrumpe ya NO son saltos
 de volumen bruscos, son fades de `DURACION_FADE_PISADOR_SEGUNDOS`
 (0.8s, constante en `core/gestor_emision.py`).
 
+**Bug real corregido — "a veces el Pisador no se dispara"**: pasar
+de tema en tema rápido (Siguiente varias veces seguidas, o una
+cascada de errores) cancelaba un Pisador en curso y programaba su
+detención DIFERIDA (`QTimer.singleShot`, para dejarlo terminar el
+fade-out) — pero si un Pisador NUEVO arrancaba en el mismo
+`motor_pisador` antes de que ese timer disparara, el timer viejo
+terminaba cortando al Pisador nuevo (recién arrancado o ni
+arrancado del todo) sin ningún error visible. Corregido con
+`_generacion_pisador`, un contador que se incrementa en cada
+cancelación/disparo nuevo: la detención diferida
+(`_detener_pisador_si_generacion_vigente`) solo se ejecuta si la
+generación no cambió mientras tanto — si cambió, ya hay un Pisador
+más nuevo en curso y no hay que tocarlo. Probado simulando avance
+rápido por 3 temas con Pisador cada uno: el último en sonar siempre
+es el correcto, nunca uno de los intermedios cortado por un timer
+viejo.
+
 **Selección múltiple + arrastre múltiple (implementado)**: lista con
 `ExtendedSelection`; Quitar/Eliminar en el menú contextual operan
 sobre toda la selección. El reordenar por arrastre se DESHABILITA a
@@ -259,11 +276,36 @@ para reordenar.
 
 **Barra de progreso / seek (implementado, SOLO Ventana 2, no
 Auxiliar)**: `PanelReproductor(mostrar_barra_progreso=True)` agrega
-un QSlider 0-1000‰. `GestorPlaylist` lo alimenta desde
-`restante_ms_cambio` + `MotorAudio.duracion_total_ms()`, y al soltar
-el slider llama `MotorAudio.buscar_posicion_ms()`. La gating de
-"solo Ventana 2" es por `hasattr(self.panel, "solicitud_buscar_posicion")`
-— `VentanaAuxiliar` a propósito NO expone esa señal/método.
+un `SliderBusqueda` 0-1000‰ (ver más abajo). `GestorPlaylist` lo
+alimenta desde `restante_ms_cambio` + `MotorAudio.duracion_total_ms()`,
+y al soltar el slider llama `MotorAudio.buscar_posicion_ms()`. La
+gating de "solo Ventana 2" es por
+`hasattr(self.panel, "solicitud_buscar_posicion")` — `VentanaAuxiliar`
+a propósito NO expone esa señal/método.
+
+**Click directo en la barra de progreso (implementado, pedido
+explícito "si hay clic más adelante, la barra avance a ese
+momento")**: antes solo arrastrar el mango adelantaba — un click en
+cualquier otro punto del surco solo movía un "page step" (comportamiento
+por defecto de `QSlider`), no saltaba al punto exacto. `SliderBusqueda`
+(`gui/common_widgets.py`) sobrescribe `mousePressEvent`: si el click
+no fue directo sobre el mango, calcula la posición con
+`QStyle.sliderValueFromPosition` y hace `setValue()` ahí mismo antes
+de dejar que Qt siga con su manejo normal (así arrastrar desde ese
+punto nuevo sigue funcionando igual que siempre). La reutilizan tanto
+la barra de Ventana 2 (`slider_progreso`) como la del previo de
+Ventana 3 (`slider_preview`) — mismo widget, un solo lugar con la
+lógica.
+
+**Etiquetas "Ahora"/"Luego" (implementado, pedido explícito "le
+falta robustez a la selección de los ítems")**: además del color de
+fila (rojo/verde), `PanelReproductor` ahora muestra el título en
+texto plano — `lbl_titulo_actual` ("Ahora:", ya existía) y
+`lbl_titulo_siguiente` ("Luego:", nuevo), actualizados desde
+`marcar_reproduciendo()`/`marcar_siguiente()` y limpiados a texto
+vacío si no hay ítem marcado. Da una segunda confirmación textual de
+qué está sonando y qué viene después, sin depender solo de ubicar la
+fila coloreada en la lista.
 
 **Motor de Ventana 2 en archivo aparte (implementado, pedido
 explícito de cara a la futura programación automática)**: `GestorPlaylist`
@@ -481,6 +523,25 @@ un objetivo de -16 dBFS). `MotorAudio.reproducir()` acepta estos
 parámetros y los aplica al reproducir (seek + volumen ajustado). Si
 no hay pydub/ffmpeg instalados, degrada limpio (valores neutros, no
 rompe el alta del archivo) — mismo patrón que MotorAudio con libvlc.
+
+**Umbral de silencio configurable (implementado, pedido explícito
+"que no haya baches, poner el valor en dB del silencio")**:
+`config_general.json → reproduccion.umbral_silencio_dbfs` (-40 dBFS
+por defecto), editable en Configuración → Reproducción y
+Automatización junto a la tolerancia ya existente. **Por qué esto
+nunca corta un silencio del MEDIO de la canción** (preocupación
+explícita de Santiago): se usa `pydub.silence.detect_leading_silence`,
+que escanea desde un extremo hacia adentro y se DETIENE en la primera
+muestra no silenciosa — nunca llega a mirar la mitad del tema, sin
+importar qué tan agresivo sea el umbral. El silencio de salida usa el
+mismo escaneo sobre el audio invertido (`audio.reverse()`), misma
+garantía. Además, `LIMITE_RECORTE_SILENCIO_SEGUNDOS` (20s, constante
+en `analizador_audio.py`) pone un techo duro de cada lado, por si el
+umbral queda mal calibrado contra un intro/outro largo y ambient que
+no es realmente silencio. Probado con audio sintético (pydub +
+`Sine`, sin necesitar ffmpeg): silencio inicial/final se recortan
+bien, un "bache" de 300ms a mitad del tema queda intacto, y un
+silencio de 30s pegado a un extremo se limita a los 20s del techo.
 
 ### Ventana Programador
 Editor de programaciones: arrastrás desde el Explorador, armás
@@ -738,6 +799,21 @@ python3 main.py
     rojo/verde/seleccionado se ve bien en su pantalla, y confirmar que
     el próximo "no respondía" (si vuelve a pasar) ahora quede
     registrado en el log para poder diagnosticarlo sin acceso a su PC.
+12. ~~Pisador intermitente + robustez de selección + seek por click +
+    umbral de silencio configurable~~ — bug real de condición de
+    carrera corregido (`_generacion_pisador`, ver Ventana 2 más
+    arriba) para cuando se avanza de tema en tema rápido; etiquetas
+    "Ahora"/"Luego" con el título en texto plano además del color de
+    fila; `SliderBusqueda` con click directo (no solo arrastre) en
+    ambas barras de progreso (Ventana 2 y previo de Ventana 3); umbral
+    de silencio en dBFS configurable en Reproducción y Automatización,
+    con techo de seguridad de 20s y garantía de que nunca recorta un
+    silencio breve a mitad de la canción (solo mira los extremos) —
+    implementado y probado con audio sintético real (pydub + tonos
+    generados, sin necesitar ffmpeg). Falta que Santiago confirme con
+    música real de su biblioteca: si el Pisador ahora dispara siempre
+    al pasar de tema rápido, y si el umbral por defecto (-40 dBFS)
+    necesita ajuste para sus archivos.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

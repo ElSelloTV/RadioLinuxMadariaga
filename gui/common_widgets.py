@@ -17,11 +17,37 @@ el resto de la GUI las usa por composición.
 --------------------------------------------------------
 """
 
-from PySide6.QtWidgets import QTreeWidget, QAbstractItemView, QHeaderView
+from PySide6.QtWidgets import QTreeWidget, QAbstractItemView, QHeaderView, QSlider, QStyle, QStyleOptionSlider
 from PySide6.QtCore import Qt, Signal, QMimeData, QUrl, QDateTime
 from PySide6.QtGui import QDrag
 
 from gui.styles import ROL_ESTADO_ITEM, ESTADO_REPRODUCIENDO
+
+
+class SliderBusqueda(QSlider):
+    """QSlider que salta DIRECTAMENTE a la posición clickeada en la
+    barra — pedido explícito: "si hay clic más adelante, la barra y
+    reproducción avance a ese momento", antes un click en el surco
+    solo movía un 'page step' (comportamiento por defecto de Qt), no
+    saltaba al punto exacto; solo arrastrar el mango adelantaba de
+    verdad. Usado en la barra de progreso de Ventana 2 y en la del
+    previo de Ventana 3."""
+
+    def mousePressEvent(self, evento):
+        if evento.button() == Qt.MouseButton.LeftButton:
+            opcion = QStyleOptionSlider()
+            self.initStyleOption(opcion)
+            rect_mango = self.style().subControlRect(
+                QStyle.ComplexControl.CC_Slider, opcion,
+                QStyle.SubControl.SC_SliderHandle, self,
+            )
+            if not rect_mango.contains(evento.pos()):
+                punto = evento.position().toPoint() if hasattr(evento, "position") else evento.pos()
+                posicion = punto.x() if self.orientation() == Qt.Orientation.Horizontal else punto.y()
+                largo = self.width() if self.orientation() == Qt.Orientation.Horizontal else self.height()
+                valor = QStyle.sliderValueFromPosition(self.minimum(), self.maximum(), posicion, largo)
+                self.setValue(valor)
+        super().mousePressEvent(evento)
 
 
 def configurar_columnas_ajustables(tree: QTreeWidget, anchos_iniciales: list):
