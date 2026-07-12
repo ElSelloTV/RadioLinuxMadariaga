@@ -21,6 +21,8 @@ from PySide6.QtWidgets import QTreeWidget, QAbstractItemView, QHeaderView
 from PySide6.QtCore import Qt, Signal, QMimeData, QUrl, QDateTime
 from PySide6.QtGui import QDrag
 
+from gui.styles import ROL_ESTADO_ITEM, ESTADO_REPRODUCIENDO
+
 
 def configurar_columnas_ajustables(tree: QTreeWidget, anchos_iniciales: list):
     """Deja todas las columnas redimensionables a mano (Interactive) y
@@ -162,6 +164,50 @@ class ArbolReproductorConDrop(QTreeWidget):
                 self.archivo_soltado.emit(ruta, item_destino)
 
         event.acceptProposedAction()
+
+    def startDrag(self, supportedActions):
+        """Override necesario (bug real: "los ítems desaparecen" al
+        reordenar). QAbstractItemView.startDrag(), al terminar un
+        arrastre aceptado con MoveAction, borra las filas ORIGINALES
+        del modelo salvo que dragDropMode sea InternalMove — pero acá
+        también hace falta aceptar arrastres EXTERNOS (DragDrop, no
+        InternalMove sólo), así que ese borrado automático se disparaba
+        TAMBIÉN en la reordenada interna, después de que
+        _reordenar_manual ya había reinsertado el ítem a mano: el
+        resultado visible era que el ítem recién reordenado "desaparecía"
+        de la lista. Haciendo el drag acá mismo, sin llamar a
+        super().startDrag(), evitamos ese borrado automático posterior
+        por completo — _reordenar_manual sigue siendo la única lógica
+        que mueve ítems de posición."""
+        item = self.currentItem()
+        if item is None or item.parent() is not None:
+            return
+        if item.data(0, ROL_ESTADO_ITEM) == ESTADO_REPRODUCIENDO:
+            # El ítem en el aire (rojo) no se puede mover mientras suena
+            # — pedido explícito, se libera solo al elegir otro o al
+            # terminar su reproducción.
+            return
+        indices = self.selectedIndexes()
+        if not indices:
+            return
+        mime_data = self.model().mimeData(indices)
+        if mime_data is None:
+            return
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            item = self.currentItem()
+            if item is not None and item.parent() is None:
+                # Mismo camino que el doble click (PanelReproductor.
+                # _on_doble_click_item -> GestorPlaylist._on_doble_click):
+                # arma "en punta" (rojo) si está en silencio, o encola
+                # (verde) si ya está sonando algo.
+                self.itemDoubleClicked.emit(item, 0)
+                return
+        super().keyPressEvent(event)
 
     def _reordenar_manual(self, event):
         """Mueve el ítem arrastrado (self.currentItem()) a la posición

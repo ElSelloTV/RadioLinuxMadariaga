@@ -16,17 +16,21 @@ necesario para emitir publicidad y música de forma automática.
 --------------------------------------------------------
 """
 
+import os
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget, QWidget,
     QComboBox, QSlider, QCheckBox, QDoubleSpinBox, QSpinBox, QLineEdit,
     QPushButton, QLabel, QDialogButtonBox, QFileDialog, QApplication,
-    QMessageBox
+    QMessageBox, QColorDialog
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices
 
-from config.settings import cargar_configuracion, guardar_configuracion
+from config.settings import cargar_configuracion, guardar_configuracion, ARCHIVO_LOG
 from core.audio_engine import MotorAudio
 from core import actualizador
+from gui.styles import LISTA_GENEROS
 
 
 class VentanaConfiguracion(QDialog):
@@ -53,7 +57,9 @@ class VentanaConfiguracion(QDialog):
         self.tabs.addTab(self._crear_tab_rutas(), "Rutas")
         self.tabs.addTab(self._crear_tab_reproduccion(), "Reproducción y Automatización")
         self.tabs.addTab(self._crear_tab_general(), "General")
+        self.tabs.addTab(self._crear_tab_apariencia(), "Apariencia")
         self.tabs.addTab(self._crear_tab_actualizaciones(), "Actualizaciones")
+        self.tabs.addTab(self._crear_tab_diagnostico(), "Diagnóstico")
         layout.addWidget(self.tabs)
 
         botones = QDialogButtonBox(
@@ -241,6 +247,145 @@ class VentanaConfiguracion(QDialog):
         return widget
 
     # ------------------------------------------------------------------
+    # Tab: Apariencia — color por género (Ventana 3 + Pisador anidado
+    # en Ventana 2/Auxiliar), incluyendo "sin color" (pedido explícito).
+    # ------------------------------------------------------------------
+    def _crear_tab_apariencia(self) -> QWidget:
+        widget = QWidget()
+        form = QFormLayout(widget)
+
+        nota = QLabel(
+            "Color de fondo por género en la columna \"Categoría\" de la\n"
+            "Ventana 3 (y del Pisador anidado en Ventana 2/Auxiliar)."
+        )
+        nota.setObjectName("lblTituloBloqueActivo")
+        form.addRow(nota)
+
+        self._botones_color_genero = {}
+        self._chk_sin_color_genero = {}
+        for genero in LISTA_GENEROS:
+            fila = QHBoxLayout()
+            boton = QPushButton("")
+            boton.setFixedSize(48, 22)
+            boton.clicked.connect(lambda _checked=False, g=genero: self._elegir_color_genero(g))
+            chk_sin_color = QCheckBox("Sin color")
+            chk_sin_color.toggled.connect(lambda activo, g=genero: self._on_sin_color_toggled(g, activo))
+            fila.addWidget(boton)
+            fila.addWidget(chk_sin_color)
+            fila.addStretch()
+            self._botones_color_genero[genero] = boton
+            self._chk_sin_color_genero[genero] = chk_sin_color
+            form.addRow(f"{genero}:", self._envolver_layout(fila))
+
+        return widget
+
+    def _envolver_layout(self, layout) -> QWidget:
+        contenedor = QWidget()
+        layout.setContentsMargins(0, 0, 0, 0)
+        contenedor.setLayout(layout)
+        return contenedor
+
+    def _elegir_color_genero(self, genero: str):
+        boton = self._botones_color_genero[genero]
+        color_actual = boton.property("color_hex") or "#808080"
+        color = QColorDialog.getColor(QColor(color_actual), self, f"Color para {genero}")
+        if color.isValid():
+            self._chk_sin_color_genero[genero].setChecked(False)
+            self._pintar_boton_color(genero, color.name())
+
+    def _on_sin_color_toggled(self, genero: str, sin_color: bool):
+        self._botones_color_genero[genero].setEnabled(not sin_color)
+
+    def _pintar_boton_color(self, genero: str, color_hex: str):
+        boton = self._botones_color_genero[genero]
+        boton.setProperty("color_hex", color_hex)
+        boton.setStyleSheet(f"background-color: {color_hex}; border: 1px solid #555;")
+
+    # ------------------------------------------------------------------
+    # Tab: Diagnóstico — log de errores/funcionamiento (pedido
+    # explícito: sin acceso directo a la PC, subir el log a GitHub
+    # a mano para poder depurar).
+    # ------------------------------------------------------------------
+    def _crear_tab_diagnostico(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        nota = QLabel(
+            "El programa registra en este archivo todo tipo de error y de\n"
+            "funcionamiento (play/pausa/stop, errores de reproducción, etc.)\n"
+            "para poder depurar problemas después de que ocurran, incluso\n"
+            "sin acceso directo a esta PC."
+        )
+        nota.setObjectName("lblTituloBloqueActivo")
+        nota.setWordWrap(True)
+        layout.addWidget(nota)
+
+        self.lbl_ruta_log = QLabel(f"Archivo: {ARCHIVO_LOG}")
+        self.lbl_ruta_log.setWordWrap(True)
+        layout.addWidget(self.lbl_ruta_log)
+
+        self.lbl_tamaño_log = QLabel()
+        layout.addWidget(self.lbl_tamaño_log)
+        self._actualizar_info_log()
+
+        barra_botones = QHBoxLayout()
+        btn_ver_log = QPushButton("📄 Ver log")
+        btn_ver_log.clicked.connect(self._ver_log)
+        self.btn_subir_log = QPushButton("⬆ Subir log a GitHub")
+        self.btn_subir_log.clicked.connect(self._subir_log)
+        barra_botones.addWidget(btn_ver_log)
+        barra_botones.addWidget(self.btn_subir_log)
+        layout.addLayout(barra_botones)
+
+        self.lbl_estado_log = QLabel("")
+        self.lbl_estado_log.setWordWrap(True)
+        layout.addWidget(self.lbl_estado_log)
+
+        nota_subida = QLabel(
+            "\"Subir log a GitHub\" hace un commit + push manual de este\n"
+            "archivo a la rama actual del repositorio — NO se sube solo en\n"
+            "cada cierre. Usalo cuando quieras que se pueda revisar un\n"
+            "problema que reportaste."
+        )
+        nota_subida.setObjectName("lblTituloBloqueActivo")
+        nota_subida.setWordWrap(True)
+        layout.addWidget(nota_subida)
+        layout.addStretch()
+
+        if not actualizador.es_instalacion_git():
+            self.btn_subir_log.setEnabled(False)
+            self.lbl_estado_log.setText(
+                "Esta copia no es una instalación por git, así que no se puede subir el log."
+            )
+
+        return widget
+
+    def _actualizar_info_log(self):
+        if os.path.exists(ARCHIVO_LOG):
+            tamaño_kb = os.path.getsize(ARCHIVO_LOG) / 1024
+            self.lbl_tamaño_log.setText(f"Tamaño actual: {tamaño_kb:.1f} KB")
+        else:
+            self.lbl_tamaño_log.setText("Todavía no se generó ningún log en esta instalación.")
+
+    def _ver_log(self):
+        if not os.path.exists(ARCHIVO_LOG):
+            QMessageBox.information(self, "Ver log", "Todavía no se generó ningún log en esta instalación.")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(ARCHIVO_LOG)):
+            QMessageBox.information(
+                self, "Ver log",
+                f"No se pudo abrir un visor de texto automáticamente.\nRuta del log:\n{ARCHIVO_LOG}",
+            )
+
+    def _subir_log(self):
+        self.lbl_estado_log.setText("Subiendo log a GitHub...")
+        QApplication.processEvents()
+        exito, mensaje = actualizador.subir_log_a_git(ARCHIVO_LOG)
+        self.lbl_estado_log.setText(mensaje)
+        if not exito:
+            QMessageBox.warning(self, "Subir log", mensaje)
+
+    # ------------------------------------------------------------------
     # Tab: Actualizaciones
     # ------------------------------------------------------------------
     def _crear_tab_actualizaciones(self) -> QWidget:
@@ -351,6 +496,16 @@ class VentanaConfiguracion(QDialog):
         if indice_tema >= 0:
             self.combo_tema.setCurrentIndex(indice_tema)
 
+        colores_genero = self._config["apariencia"]["colores_genero"]
+        for genero in LISTA_GENEROS:
+            color_hex = colores_genero.get(genero)
+            if color_hex:
+                self._pintar_boton_color(genero, color_hex)
+                self._chk_sin_color_genero[genero].setChecked(False)
+            else:
+                self._pintar_boton_color(genero, "#808080")
+                self._chk_sin_color_genero[genero].setChecked(True)
+
     def _seleccionar_en_combo(self, combo: QComboBox, valor: str):
         indice = combo.findData(valor)
         if indice >= 0:
@@ -383,6 +538,14 @@ class VentanaConfiguracion(QDialog):
         self._config["general"]["confirmar_antes_de_eliminar"] = self.chk_confirmar_eliminar.isChecked()
         self._config["general"]["mostrar_segundos_en_reloj"] = self.chk_mostrar_segundos.isChecked()
         self._config["general"]["tema"] = self.combo_tema.currentData()
+
+        colores_genero = {}
+        for genero in LISTA_GENEROS:
+            if self._chk_sin_color_genero[genero].isChecked():
+                colores_genero[genero] = None
+            else:
+                colores_genero[genero] = self._botones_color_genero[genero].property("color_hex")
+        self._config["apariencia"]["colores_genero"] = colores_genero
 
         guardar_configuracion(self._config)
         self.accept()

@@ -51,24 +51,6 @@ class VentanaEmision(QWidget):
         self.panel.solicitud_eliminar_definitivo.connect(self.solicitud_eliminar_definitivo.emit)
         self.panel.solicitud_buscar_posicion.connect(self.solicitud_buscar_posicion.emit)
 
-        self._cargar_datos_demo()
-
-    def _cargar_datos_demo(self):
-        items_demo = [
-            ("Soy aquel", "00:04:04", "VIE0109"),
-            ("VUELA", "00:00:00", "—"),
-            ("Amarte (Feat Bethliza...)", "00:04:09", "VIE0282"),
-            ("RADIO CONTACTO F...", "00:00:11", "JIN0033"),
-            ("Perdóname", "00:04:11", "VIE0166"),
-        ]
-        for titulo, duracion, codigo in items_demo:
-            self.panel.agregar_item(titulo, duracion, codigo)
-
-        if self.panel.cantidad_items() > 0:
-            self.panel.marcar_reproduciendo(0)
-        if self.panel.cantidad_items() > 1:
-            self.panel.marcar_siguiente(1)
-
     # ------------------------------------------------------------------
     # Delegación: API pública usada por core/playlist_manager.py
     # ------------------------------------------------------------------
@@ -107,3 +89,11 @@ class VentanaEmision(QWidget):
 
     def actualizar_progreso(self, permille: int):
         self.panel.actualizar_progreso(permille)
+
+    @property
+    def tree(self):
+        # core/gestor_emision.py (persistencia) necesita el árbol
+        # directo para poder escuchar su modelo interno — regla del
+        # proyecto: delegar TODO lo que el core necesita, nunca dejar
+        # un método a mitad de camino.
+        return self.panel.tree

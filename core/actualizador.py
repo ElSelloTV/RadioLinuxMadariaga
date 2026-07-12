@@ -25,6 +25,7 @@ Flujo:
 import os
 import sys
 import subprocess
+from datetime import datetime
 
 REPO_URL = "https://github.com/ElSelloTV/RadioLinuxMadariaga"
 
@@ -112,6 +113,52 @@ def aplicar_actualizacion() -> tuple[bool, str]:
 
     except (subprocess.TimeoutExpired, OSError) as error:
         return False, f"Error aplicando la actualización: {error}"
+
+
+def subir_log_a_git(ruta_log: str) -> tuple[bool, str]:
+    """Sube el archivo de log a la rama actual del repositorio (git
+    add + commit + push) — SOLO a pedido manual del operador desde
+    Configuración → Diagnóstico, nunca automático en cada cierre.
+    config/data/*.txt está en .gitignore a propósito (los datos de
+    cada instalación no se versionan solos); acá se usa `git add -f`
+    para saltear ESE ignore puntualmente, solo cuando el operador lo
+    pide de forma explícita. Devuelve (éxito, mensaje)."""
+    if not es_instalacion_git():
+        return False, "Esta copia no es una instalación por git."
+    if not os.path.isfile(ruta_log):
+        return False, "Todavía no se generó ningún log en esta instalación."
+
+    try:
+        rama_actual = _ejecutar_git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if not rama_actual or rama_actual == "HEAD":
+            return False, "No se pudo determinar la rama actual del repositorio."
+
+        ruta_relativa = os.path.relpath(ruta_log, _raiz_app())
+
+        resultado_add = _ejecutar_git("add", "-f", ruta_relativa)
+        if resultado_add.returncode != 0:
+            return False, f"No se pudo agregar el log: {resultado_add.stderr.strip()}"
+
+        resultado_status = _ejecutar_git("status", "--porcelain", "--", ruta_relativa)
+        if not resultado_status.stdout.strip():
+            return True, "El log ya estaba actualizado en el repositorio (sin cambios nuevos)."
+
+        marca_tiempo = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        resultado_commit = _ejecutar_git("commit", "-m", f"Log de la aplicación ({marca_tiempo})")
+        if resultado_commit.returncode != 0:
+            return False, f"No se pudo confirmar el commit: {resultado_commit.stderr.strip()}"
+
+        resultado_push = _ejecutar_git("push", "origin", rama_actual, timeout=60)
+        if resultado_push.returncode != 0:
+            return False, (
+                "El log se guardó en un commit local, pero no se pudo subir a "
+                f"GitHub (revisá conexión/credenciales): {resultado_push.stderr.strip()}"
+            )
+
+        return True, f"Log subido correctamente a la rama '{rama_actual}'."
+
+    except (subprocess.TimeoutExpired, OSError) as error:
+        return False, f"Error subiendo el log: {error}"
 
 
 def reiniciar_aplicacion(app):

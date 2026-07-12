@@ -33,9 +33,10 @@ from gui.dialogo_elegir_pisador import DialogoElegirPisador
 from gui.common_widgets import configurar_columnas_ajustables
 from gui import estado_ui
 
-from core.playlist_manager import GestorPlaylist, GestorPublicidad, GestorExplorador, SchedulerAutomatico
+from core.playlist_manager import GestorPublicidad, GestorExplorador, SchedulerAutomatico
+from core.gestor_emision import GestorPlaylist
 from core.audio_engine import obtener_duracion_formateada
-from config.settings import cargar_configuracion
+from config.settings import cargar_configuracion, registrar_evento
 
 
 class MainWindow(QMainWindow):
@@ -261,6 +262,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.No,
             )
             if respuesta != QMessageBox.StandardButton.Yes:
+                registrar_evento("Cierre cancelado por el operador: había emisión en curso")
                 evento.ignore()
                 return
 
@@ -426,6 +428,7 @@ class MainWindow(QMainWindow):
             bajada_db_pisador=reproduccion["pisador_bajada_db"],
             crossfade_activado=fade["crossfade_activado"],
             duracion_fade_segundos=fade["duracion_fade_segundos"],
+            persistir=True,
         )
         self.gestor_publicidad = GestorPublicidad(
             self.ventana_publicidad,
@@ -501,6 +504,8 @@ class MainWindow(QMainWindow):
 
         if self.gestor_explorador.motor.id_dispositivo() != id_dispositivo_master:
             self.gestor_explorador.motor.set_dispositivo_salida(id_dispositivo_master)
+
+        self.ventana_explorador.repintar_colores_genero()
 
     # ------------------------------------------------------------------
     # Ventana auxiliar flotante (preescucha / reproducción secundaria)

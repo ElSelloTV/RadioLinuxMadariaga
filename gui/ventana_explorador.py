@@ -63,7 +63,7 @@ from PySide6.QtGui import QColor, QBrush, QDesktopServices
 
 from gui.common_widgets import ArbolOrigenArrastre, ArbolConDrop, configurar_columnas_ajustables
 from gui.indicador_en_vivo import IndicadorEnVivo
-from gui.styles import GENERO_COLORES, GENEROS_CON_TEXTO_OSCURO, GENERO_PREFIJOS_CODIGO
+from gui.styles import GENERO_COLORES, GENERO_PREFIJOS_CODIGO, color_texto_legible
 from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
 from gui.dialogo_agregar_archivos_masivo import DialogoAgregarArchivosMasivo
 from gui.estado_ui import guardar_columnas, restaurar_columnas
@@ -98,6 +98,7 @@ class VentanaExplorador(QWidget):
         super().__init__(parent)
         self._en_busqueda = False
         self._arrastrando_slider_preview = False
+        self._colores_genero = dict(GENERO_COLORES)
         self._construir_ui()
         self._cargar_biblioteca_inicial()
 
@@ -315,9 +316,12 @@ class VentanaExplorador(QWidget):
         categorias_guardadas = cargar_biblioteca()
         if categorias_guardadas:
             self._cargar_categorias_desde_datos(categorias_guardadas)
-        else:
-            self._cargar_categorias_demo()
-            self._guardar_biblioteca()  # deja persistida la base inicial
+        # Si no hay biblioteca.json todavía (instalación nueva), arranca
+        # vacío — antes se cargaban categorías de ejemplo (Música,
+        # Publicidad, etc.), pero eran solo para probar la app durante
+        # el desarrollo; a pedido explícito ya no se crean solas, el
+        # operador arma sus propias categorías desde cero con archivos
+        # reales. Una biblioteca.json YA EXISTENTE nunca se toca acá.
 
     def _guardar_biblioteca(self):
         guardar_biblioteca(self._serializar_biblioteca())
@@ -351,18 +355,6 @@ class VentanaExplorador(QWidget):
         return item
 
     # ------------------------------------------------------------------
-    def _cargar_categorias_demo(self):
-        raiz_musica = self._crear_item_categoria(None, "Música")
-        self._crear_item_categoria(raiz_musica, "Nacional")
-        self._crear_item_categoria(raiz_musica, "Internacional")
-        self._crear_item_categoria(None, "Publicidad")
-        self._crear_item_categoria(None, "Separadores")
-        self._crear_item_categoria(None, "Sin categorizar")
-
-        if self.tree_categorias.topLevelItemCount() > 0:
-            self.tree_categorias.setCurrentItem(self.tree_categorias.topLevelItem(0))
-        self.tree_categorias.expandAll()
-
     def _crear_item_categoria(self, item_padre, nombre: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([nombre])
         item.setData(0, ROL_ARCHIVOS, [])
@@ -407,14 +399,30 @@ class VentanaExplorador(QWidget):
         return item
 
     def _pintar_por_genero(self, item: QTreeWidgetItem, genero: str):
-        color_hex = GENERO_COLORES.get(genero)
+        color_hex = self._colores_genero.get(genero)
         if not color_hex:
+            # Sin color asignado (opción explícita en Configuración) o
+            # género desconocido: fondo/texto por defecto del tema.
+            for columna in range(item.columnCount()):
+                item.setBackground(columna, QBrush())
+                item.setForeground(columna, QBrush())
             return
         fondo = QBrush(QColor(color_hex))
-        texto = QBrush(QColor("black")) if genero in GENEROS_CON_TEXTO_OSCURO else QBrush(QColor("white"))
+        texto = QBrush(QColor(color_texto_legible(color_hex)))
         for columna in range(item.columnCount()):
             item.setBackground(columna, fondo)
             item.setForeground(columna, texto)
+
+    def repintar_colores_genero(self):
+        """Refresca la paleta desde Configuración y repinta todas las
+        filas visibles — llamado tras guardar Configuración (pedido
+        explícito: colores por género editables, incluso "sin color")."""
+        self._colores_genero = cargar_configuracion()["apariencia"]["colores_genero"]
+        raiz = self.tree_archivos.invisibleRootItem()
+        for i in range(raiz.childCount()):
+            item = raiz.child(i)
+            registro = item.data(0, ROL_REGISTRO) or {}
+            self._pintar_por_genero(item, registro.get("genero", ""))
 
     # ------------------------------------------------------------------
     # Gestión de categorías (sin límite de niveles)

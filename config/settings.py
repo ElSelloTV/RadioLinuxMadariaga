@@ -15,7 +15,9 @@ DIRECTORIO_CONFIG = os.path.join(os.path.dirname(__file__), "data")
 ARCHIVO_CONFIG_GENERAL = os.path.join(DIRECTORIO_CONFIG, "config_general.json")
 ARCHIVO_PROGRAMACION = os.path.join(DIRECTORIO_CONFIG, "programacion.json")
 ARCHIVO_BIBLIOTECA = os.path.join(DIRECTORIO_CONFIG, "biblioteca.json")
-ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_emision.txt")
+ARCHIVO_PLAYLIST_EMISION = os.path.join(DIRECTORIO_CONFIG, "playlist_emision.json")
+ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
+TAMAÑO_MAXIMO_LOG_BYTES = 2 * 1024 * 1024  # 2 MB — más allá de esto, rota a .anterior.txt
 
 CONFIG_POR_DEFECTO = {
     "audio": {
@@ -45,6 +47,18 @@ CONFIG_POR_DEFECTO = {
         "confirmar_antes_de_eliminar": True,
         "mostrar_segundos_en_reloj": True,
         "tema": "oscuro",
+    },
+    "apariencia": {
+        # Colores por género (Ventana 3, columna "Categoría", y el
+        # Pisador anidado en Ventana 2/Auxiliar). None = sin color.
+        # Editable desde Configuración → Apariencia (pedido explícito).
+        "colores_genero": {
+            "Musica": "#2e7d32",
+            "Publicidad": "#f9a825",
+            "Separador": "#e65100",
+            "Pisador": "#6a1b9a",
+            "Artistica": "#1565c0",
+        },
     },
 }
 
@@ -100,13 +114,46 @@ def guardar_configuracion(config: dict):
     _guardar_json_atomico(ARCHIVO_CONFIG_GENERAL, config)
 
 
-def registrar_error(mensaje: str):
-    """Log simple de errores a texto plano (config/data/log_emision.txt)."""
+def _rotar_log_si_corresponde():
+    """Si el log ya pasó TAMAÑO_MAXIMO_LOG_BYTES, lo archiva como
+    .anterior.txt (pisando la rotación previa) y arranca uno nuevo —
+    para poder dejar el log de "todo tipo de error y funcionamiento"
+    activado siempre sin que crezca sin límite en una notebook con
+    disco modesto."""
+    try:
+        if os.path.exists(ARCHIVO_LOG) and os.path.getsize(ARCHIVO_LOG) > TAMAÑO_MAXIMO_LOG_BYTES:
+            archivo_anterior = ARCHIVO_LOG.replace(".txt", ".anterior.txt")
+            os.replace(ARCHIVO_LOG, archivo_anterior)
+    except OSError:
+        pass
+
+
+def _escribir_log(nivel: str, mensaje: str):
     _asegurar_directorio()
+    _rotar_log_si_corresponde()
     from datetime import datetime
     marca_tiempo = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(ARCHIVO_LOG, "a", encoding="utf-8") as f:
-        f.write(f"[{marca_tiempo}] {mensaje}\n")
+    try:
+        with open(ARCHIVO_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{marca_tiempo}] [{nivel}] {mensaje}\n")
+    except OSError:
+        pass  # si ni el log se puede escribir, no hay nada más que hacer acá
+
+
+def registrar_error(mensaje: str):
+    """Log de errores (config/data/log_aplicacion.txt) — pensado para
+    poder depurar sin acceso directo a la PC de Santiago: rotativo,
+    con nivel y timestamp. Se puede subir manualmente a GitHub desde
+    Configuración → Diagnóstico (core/actualizador.subir_log_a_git)."""
+    _escribir_log("ERROR", mensaje)
+
+
+def registrar_evento(mensaje: str):
+    """Log de funcionamiento normal (play/pausa/stop/config aplicada,
+    etc.), mismo archivo que registrar_error pero nivel INFO — para
+    poder reconstruir la secuencia de acciones previa a un problema
+    reportado (ej. "el play no respondía")."""
+    _escribir_log("INFO", mensaje)
 
 
 # ----------------------------------------------------------------------
@@ -244,3 +291,34 @@ def cargar_biblioteca() -> list:
 
 def guardar_biblioteca(categorias: list):
     _guardar_json_atomico(ARCHIVO_BIBLIOTECA, categorias)
+
+
+# ----------------------------------------------------------------------
+# Playlist de Ventana 2 (Emisión): antes era efímera y se perdía al
+# cerrar o ante un corte de luz — pedido explícito de Santiago para
+# poder ir probando con música real sin perder el armado cada vez.
+# ----------------------------------------------------------------------
+# Estructura de config/data/playlist_emision.json:
+#   {"items": [{"titulo", "duracion", "codigo", "ruta", "pisador_ruta"}, ...],
+#    "fila_armada": int, "fila_siguiente": int}
+# Se guarda ante cada alta/baja/reordenada/marcado, igual que la
+# biblioteca — no solo al cerrar la app.
+
+PLAYLIST_EMISION_VACIA = {"items": [], "fila_armada": -1, "fila_siguiente": -1}
+
+
+def cargar_playlist_emision() -> dict:
+    _asegurar_directorio()
+    if not os.path.exists(ARCHIVO_PLAYLIST_EMISION):
+        return dict(PLAYLIST_EMISION_VACIA)
+    try:
+        with open(ARCHIVO_PLAYLIST_EMISION, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+            return {**PLAYLIST_EMISION_VACIA, **datos}
+    except (json.JSONDecodeError, OSError) as error:
+        registrar_error(f"Error leyendo playlist de Emisión: {error}")
+        return dict(PLAYLIST_EMISION_VACIA)
+
+
+def guardar_playlist_emision(datos: dict):
+    _guardar_json_atomico(ARCHIVO_PLAYLIST_EMISION, datos)

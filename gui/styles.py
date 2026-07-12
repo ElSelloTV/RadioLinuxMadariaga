@@ -138,6 +138,17 @@ QTreeWidget#tree_publicidad::item, QTreeWidget#tree_reproductor::item {{
     padding: 1px;
 }}
 
+/* Ventana 2 (Emisión): el resaltado de selección de Qt (azul sólido,
+   regla ::item:selected de más arriba) tapaba el rojo/verde de "en
+   punta"/"en cola" — pedido explícito, tiene que quedar siempre a la
+   vista. Acá la selección deja de pintar un relleno propio (queda
+   transparente) y se marca solo con un borde, así el fondo rojo/verde
+   del ítem nunca se cubre, esté seleccionado o no. */
+QTreeWidget#tree_reproductor::item:selected {{
+    background-color: transparent;
+    border: 1px solid #f1c40f;
+}}
+
 /* ---------- Botones de transporte ---------- */
 QPushButton {{
     background-color: #3d3d3d;
@@ -256,3 +267,20 @@ GENERO_PREFIJOS_CODIGO = {
 }
 
 LISTA_GENEROS = ["Musica", "Publicidad", "Separador", "Pisador", "Artistica"]
+
+
+def color_texto_legible(color_hex: str) -> str:
+    """Negro o blanco según la luminancia del color de fondo. Antes
+    GENEROS_CON_TEXTO_OSCURO era una lista fija (solo Publicidad); con
+    los colores por género ahora editables desde Configuración, el
+    usuario puede asignarle amarillo a cualquier género, así que el
+    contraste se calcula en vez de asumirlo."""
+    color_hex = (color_hex or "").lstrip("#")
+    if len(color_hex) != 6:
+        return "white"
+    try:
+        r, g, b = (int(color_hex[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return "white"
+    luminancia = 0.299 * r + 0.587 * g + 0.114 * b
+    return "black" if luminancia > 150 else "white"
