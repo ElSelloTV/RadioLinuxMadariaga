@@ -27,13 +27,16 @@ class VentanaEmision(QWidget):
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)
     solicitud_eliminar_definitivo = Signal(str)
+    solicitud_buscar_posicion = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.panel = PanelReproductor("EMISIÓN MUSICAL ACTUAL", mostrar_boton_auxiliar=True)
+        self.panel = PanelReproductor(
+            "EMISIÓN MUSICAL ACTUAL", mostrar_boton_auxiliar=True, mostrar_barra_progreso=True
+        )
         layout.addWidget(self.panel)
 
         self.panel.solicitud_play.connect(self.solicitud_play.emit)
@@ -46,6 +49,7 @@ class VentanaEmision(QWidget):
         self.panel.item_doble_click.connect(self.item_doble_click.emit)
         self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
         self.panel.solicitud_eliminar_definitivo.connect(self.solicitud_eliminar_definitivo.emit)
+        self.panel.solicitud_buscar_posicion.connect(self.solicitud_buscar_posicion.emit)
 
         self._cargar_datos_demo()
 
@@ -83,6 +87,9 @@ class VentanaEmision(QWidget):
     def agregar_pisador(self, fila_padre, titulo, duracion, codigo, ruta):
         return self.panel.agregar_pisador(fila_padre, titulo, duracion, codigo, ruta)
 
+    def ruta_pisador_en_fila(self, fila):
+        return self.panel.ruta_pisador_en_fila(fila)
+
     def cantidad_items(self):
         return self.panel.cantidad_items()
 
@@ -94,3 +101,9 @@ class VentanaEmision(QWidget):
 
     def fila_siguiente(self):
         return self.panel.fila_siguiente()
+
+    def set_indicador_en_vivo(self, activo: bool):
+        self.panel.set_indicador_en_vivo(activo)
+
+    def actualizar_progreso(self, permille: int):
+        self.panel.actualizar_progreso(permille)

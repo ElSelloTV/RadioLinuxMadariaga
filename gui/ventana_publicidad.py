@@ -13,12 +13,13 @@ Ventana 1 (Izquierda): Publicidad.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidgetItem,
-    QPushButton, QLabel
+    QPushButton, QLabel, QAbstractItemView, QMenu
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QBrush
 
 from gui.common_widgets import ArbolConDrop
+from gui.indicador_en_vivo import IndicadorEnVivo
 from gui.styles import COLOR_REPRODUCIENDO
 
 # Rol de dato propio: hora "HH:mm:ss" guardada en el nodo de bloque
@@ -52,8 +53,10 @@ class VentanaPublicidad(QWidget):
         grupo = QGroupBox("PUBLICIDAD")
         layout_grupo = QVBoxLayout(grupo)
 
-        # --- Barra superior: estado + automático ---
+        # --- Barra superior: indicador + estado + automático ---
         barra_superior = QHBoxLayout()
+        self.indicador_en_vivo = IndicadorEnVivo()
+        barra_superior.addWidget(self.indicador_en_vivo)
         self.lbl_estado = QLabel("Modo manual")
         self.lbl_estado.setObjectName("lblTituloBloqueActivo")
         self.btn_automatico = QPushButton("AUTOMÁTICO: OFF")
@@ -96,12 +99,16 @@ class VentanaPublicidad(QWidget):
 
         # --- 3) Árbol de bloques horarios (al final) ---
         self.tree = ArbolConDrop()
+        self.tree.setObjectName("tree_publicidad")
         self.tree.setColumnCount(3)
         self.tree.setHeaderLabels(["Título", "Duración", "Código"])
         self.tree.setAlternatingRowColors(True)
         self.tree.setColumnWidth(0, 220)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.archivo_soltado.connect(self.archivo_soltado.emit)
         self.tree.itemDoubleClicked.connect(lambda item, columna: self.item_doble_click.emit(item))
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._mostrar_menu_contextual)
         layout_grupo.addWidget(self.tree)
 
         layout_principal.addWidget(grupo)
@@ -171,6 +178,42 @@ class VentanaPublicidad(QWidget):
     def actualizar_contadores(self, transcurrido: str, restante: str):
         self.lbl_tiempo_transcurrido.setText(transcurrido)
         self.lbl_tiempo_restante.setText(restante)
+
+    def set_indicador_en_vivo(self, activo: bool):
+        self.indicador_en_vivo.set_activo(activo)
+
+    # ------------------------------------------------------------------
+    # Menú contextual: quitar bloques/tandas seleccionados del árbol
+    # (no toca la biblioteca del Explorador, solo esta lista).
+    # ------------------------------------------------------------------
+    def _mostrar_menu_contextual(self, posicion):
+        item_bajo_cursor = self.tree.itemAt(posicion)
+        seleccionados = self.tree.selectedItems()
+        if item_bajo_cursor is not None and item_bajo_cursor not in seleccionados:
+            self.tree.setCurrentItem(item_bajo_cursor)
+            seleccionados = [item_bajo_cursor]
+        if not seleccionados:
+            return
+
+        menu = QMenu(self)
+        texto = "✕ Quitar de la lista" if len(seleccionados) == 1 else f"✕ Quitar {len(seleccionados)} de la lista"
+        accion_quitar = menu.addAction(texto)
+
+        elegida = menu.exec(self.tree.viewport().mapToGlobal(posicion))
+        if elegida == accion_quitar:
+            for item in list(seleccionados):
+                self._quitar_item(item)
+
+    def _quitar_item(self, item):
+        if item is self._item_reproduciendo:
+            self._item_reproduciendo = None
+        padre = item.parent()
+        if padre is not None:
+            padre.removeChild(item)
+        else:
+            indice = self.tree.indexOfTopLevelItem(item)
+            if indice >= 0:
+                self.tree.takeTopLevelItem(indice)
 
     # ------------------------------------------------------------------
     # Resaltado del ítem en reproducción (rojo). A diferencia de la

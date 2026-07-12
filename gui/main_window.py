@@ -50,6 +50,8 @@ class MainWindow(QMainWindow):
         self._gestor_auxiliar = None
         self._ventana_programador = None
         self._ventana_configuracion = None
+        self._explorador_expandido = False
+        self._tamaños_splitter_previos = None
 
         self._config = cargar_configuracion()
 
@@ -187,15 +189,39 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self.splitter_principal)
 
-        # Últimas columnas de "Código"/similares más angostas y con
-        # protección para que nunca queden tapadas al mover otra
-        # columna (setMinimumSectionSize evita que desaparezcan).
+        # Modo compacto (pedido explícito): anchos por defecto más
+        # angostos y un mínimo de columna bajo — antes el mínimo de
+        # 45px no dejaba achicar más la columna de Publicidad.
         # Ventana 2 (Emisión) arma sus propias columnas de ajuste
         # LIBRE en panel_reproductor.py — no se toca acá.
-        configurar_columnas_ajustables(self.ventana_publicidad.tree, [200, 90])
-        self.ventana_publicidad.tree.header().setMinimumSectionSize(45)
+        configurar_columnas_ajustables(self.ventana_publicidad.tree, [150, 70])
+        self.ventana_publicidad.tree.header().setMinimumSectionSize(24)
+
+        self.ventana_explorador.solicitud_alternar_expansion.connect(self._alternar_expansion_explorador)
+        self.ventana_explorador.busqueda_realizada.connect(self._on_busqueda_realizada)
 
         self._restaurar_disposicion_guardada()
+
+    # ------------------------------------------------------------------
+    # Ventana 3 "desmontable": expandir dentro de la ventana principal
+    # (colapsa Publicidad y Emisión a un costado) y volver a su lugar.
+    # ------------------------------------------------------------------
+    def _alternar_expansion_explorador(self):
+        if not self._explorador_expandido:
+            self._tamaños_splitter_previos = self.splitter_principal.sizes()
+            total = sum(self._tamaños_splitter_previos) or 1200
+            self.splitter_principal.setSizes([1, 1, total])
+        elif self._tamaños_splitter_previos:
+            self.splitter_principal.setSizes(self._tamaños_splitter_previos)
+
+        self._explorador_expandido = not self._explorador_expandido
+        self.ventana_explorador.set_expandido(self._explorador_expandido)
+
+    def _on_busqueda_realizada(self, cantidad: int):
+        if cantidad == 0:
+            self.statusBar().showMessage("Sin resultados para esa búsqueda.", 4000)
+        else:
+            self.statusBar().showMessage(f"{cantidad} resultado(s) encontrado(s).", 4000)
 
     def _restaurar_disposicion_guardada(self):
         estado_ui.restaurar_geometria_ventana(self)
