@@ -13,18 +13,25 @@ archivo debe permanecer siempre mínimo.
 --------------------------------------------------------
 """
 
+import os
 import sys
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
 
 from gui.main_window import MainWindow
 from gui.styles import QSS_APLICACION
 from config.settings import cargar_configuracion, registrar_error
 
+RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
+
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Automatización Radial (Clon Dinesat 9)")
+    app.setApplicationName("Auto-Radio Tuyú")
+    app.setApplicationDisplayName("Auto-Radio Tuyú")
+    if os.path.exists(RUTA_ICONO):
+        app.setWindowIcon(QIcon(RUTA_ICONO))
     app.setStyleSheet(QSS_APLICACION)
 
     try:

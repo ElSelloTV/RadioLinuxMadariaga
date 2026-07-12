@@ -7,10 +7,22 @@ tener que redescubrir nada.
 
 ## Qué es esto
 
-**RadioLinuxMadariaga**: automatización radial para Linux, clon
-funcional de Dinesat 9. Python + PySide6 (GUI) + python-vlc (audio) +
-pydub/ffmpeg (análisis de audio) + JSON/QSettings (persistencia).
+**Auto-Radio Tuyú** (nombre de la app; el repo sigue llamándose
+`RadioLinuxMadariaga`, no se renombró la carpeta/repo, solo lo que ve
+el usuario): automatización radial para Linux, clon funcional de
+Dinesat 9. Python + PySide6 (GUI) + python-vlc (audio) + pydub/ffmpeg
+(análisis de audio) + JSON/QSettings (persistencia).
 Repo: https://github.com/ElSelloTV/RadioLinuxMadariaga
+
+Título de ventana / nombre de aplicación: "Automatizador Radio Linux -
+by Santiago M. Escobar - Radio Tuyú Gral. Madariaga" (`gui/main_window.py`
+`setWindowTitle`, `main.py` `setApplicationName`/`setApplicationDisplayName`).
+Ícono (`assets/icono.png`) regenerado con Pillow — antes era un
+placeholder que se veía como una cruz; ahora es una torre de
+transmisión con ondas de radio sobre medallón oscuro con anillo rojo.
+`assets/radiolinuxmadariaga.desktop` actualizado a juego (`Name=`/
+`Comment=`). El nombre del repo/carpeta/instalador (`RadioLinuxMadariaga`)
+NO cambió — Santiago no lo pidió, solo el nombre visible de la app.
 
 Usuario: Santiago Martín Escobar — abogado, músico, operador de medios
 (ElSelloTV/LU28 Radio Tuyú). Notebook con **Q4OS Linux**, hardware
@@ -341,6 +353,52 @@ definitivo no se toca hasta que el `.tmp` está completo.
   `common_widgets.py`) — esto fue un bug reportado explícitamente por
   Santiago y ya está resuelto.
 
+**Indicador de previo + guard contra reproducción accidental por
+arrastre (implementado)**: Santiago reportó que el previo "se dispara
+sin querer" al arrastrar un archivo hacia otra ventana. Causa: el
+`itemDoubleClicked` del árbol de archivos se disparaba también al
+soltar un arrastre en ciertos casos. Solución de dos partes —
+1) `ArbolOrigenArrastre.acaba_de_arrastrar(margen_ms=400)`
+(`gui/common_widgets.py`) guarda `self._ultimo_arrastre_ms` al
+iniciar cada `startDrag` y expone si pasó menos de 400ms desde el
+último arrastre; `VentanaExplorador._on_doble_click_preview`
+(reemplaza el lambda directo a `solicitud_play_preview.emit()`)
+ignora el doble click si `acaba_de_arrastrar()` da True.
+2) `IndicadorEnVivo` (el mismo círculo titilante ya usado en
+Ventana 1/2) agregado junto al botón "▶ Previo"
+(`ventana3.indicador_preview`, `set_indicador_en_vivo()`), así
+además de evitar el disparo accidental, ahora hay señal visual clara
+de "estoy escuchando el previo". `GestorExplorador`
+(`core/playlist_manager.py`) quedó reescrito para actualizarlo desde
+`posicion_cambiada`/`finalizo_item`, igual patrón que
+`GestorPlaylist` en Ventana 2.
+
+**Barra de progreso/seek del previo (implementado, pedido explícito
+"la misma barra de reproducción en la ventana 3")**: `slider_preview`
+(QSlider 0-1000‰) debajo de los botones Previo/Stop.
+`GestorExplorador._actualizar_progreso` lo alimenta desde
+`restante_ms_cambio` + `duracion_total_ms()`, y al soltar llama
+`MotorAudio.buscar_posicion_ms()` vía la señal nueva
+`solicitud_buscar_posicion_preview`. Mismo patrón de
+"no pisar mientras el operador arrastra" que ya existía en Ventana 2
+(`self._arrastrando_slider_preview`).
+
+**Confirmación antes de reemplazar/eliminar/mover de categoría
+(implementado, pedido explícito)**: Santiago pidió que "básicamente
+casi todas las funciones (excepto reproducir y parar la emisión del
+previo)" avisen antes de actuar, incluyendo mover un archivo de
+categoría por drag&drop. Ya existía confirmación para Eliminar;
+se agregó también en `_reemplazar_archivo()` (antes de pisar el
+archivo de audio y volver a analizarlo) y en
+`_on_archivos_soltados_en_categoria()` (antes de mover uno o varios
+archivos ya conocidos de la biblioteca a otra categoría por
+arrastre — la importación de archivos NUEVOS desde afuera sigue su
+propio diálogo, no este). Todo gateado por el mismo flag existente
+`config_general.json → general.confirmar_antes_de_eliminar`
+(checkbox en Configuración, texto ampliado para reflejar que ahora
+cubre más que "eliminar"). A propósito, reproducir/detener el previo
+NUNCA piden confirmación (son acciones reversibles e inmediatas).
+
 ### Motor de agregado de tema musical (`core/analizador_audio.py`)
 No destructivo: nunca reescribe el archivo original. Analiza con
 pydub y guarda como metadata del registro:
@@ -529,6 +587,22 @@ python3 main.py
 8. Ítems básicos de UI (selección múltiple, Ventana 3 expandible,
    import masivo, búsqueda, indicador en vivo, barra de progreso,
    modo compacto) — implementados, ver cada ventana más arriba.
+9. ~~4 bugs urgentes de UX~~ — botón Expandir sin efecto visible,
+   ventana maximizada se iba de pantalla, guardar Configuración
+   cortaba la reproducción, columnas de Ventana 1/2 que no achicaban
+   — los cuatro corregidos (ver notas en Ventana 1/2/Explorador y en
+   `gui/estado_ui.py` más arriba).
+10. ~~Ajustes de Ventana 3 + rebranding~~ — indicador de previo +
+    guard contra reproducción accidental por arrastre, confirmación
+    antes de reemplazar/eliminar/mover de categoría, barra de
+    progreso/seek del previo, nombre de la app a "Auto-Radio Tuyú" /
+    "Automatizador Radio Linux - by Santiago M. Escobar - Radio Tuyú
+    Gral. Madariaga", ícono nuevo — implementado (ver Ventana 3 y
+    encabezado más arriba). Falta que Santiago confirme en su
+    notebook real cómo se ve/siente el ícono nuevo, si el margen de
+    400ms del guard anti-arrastre es suficiente, y probar la barra
+    de seek del previo con audio real (acá VLC no está disponible en
+    el sandbox).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

@@ -56,12 +56,13 @@ import shutil
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidget,
     QTreeWidgetItem, QPushButton, QFileDialog, QSplitter, QLineEdit,
-    QMessageBox, QInputDialog, QMenu, QAbstractItemView
+    QMessageBox, QInputDialog, QMenu, QAbstractItemView, QSlider
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QProcess
 from PySide6.QtGui import QColor, QBrush, QDesktopServices
 
 from gui.common_widgets import ArbolOrigenArrastre, ArbolConDrop, configurar_columnas_ajustables
+from gui.indicador_en_vivo import IndicadorEnVivo
 from gui.styles import GENERO_COLORES, GENEROS_CON_TEXTO_OSCURO, GENERO_PREFIJOS_CODIGO
 from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
 from gui.dialogo_agregar_archivos_masivo import DialogoAgregarArchivosMasivo
@@ -89,12 +90,14 @@ class VentanaExplorador(QWidget):
     archivo_movido = Signal(str, str)   # (titulo, nombre_categoria_destino)
     solicitud_play_preview = Signal()
     solicitud_stop_preview = Signal()
+    solicitud_buscar_posicion_preview = Signal(int)   # 0-1000 (por mil)
     solicitud_alternar_expansion = Signal()
     busqueda_realizada = Signal(int)    # cantidad de resultados encontrados
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._en_busqueda = False
+        self._arrastrando_slider_preview = False
         self._construir_ui()
         self._cargar_biblioteca_inicial()
 
@@ -180,7 +183,7 @@ class VentanaExplorador(QWidget):
 
         self.tree_archivos.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_archivos.customContextMenuRequested.connect(self._mostrar_menu_contextual)
-        self.tree_archivos.itemDoubleClicked.connect(lambda item, columna: self.solicitud_play_preview.emit())
+        self.tree_archivos.itemDoubleClicked.connect(self._on_doble_click_preview)
 
         layout_archivos.addWidget(self.tree_archivos)
 
@@ -197,6 +200,8 @@ class VentanaExplorador(QWidget):
 
         # --- Previo (preescucha, Play/Stop) ---
         barra_preview = QHBoxLayout()
+        self.indicador_preview = IndicadorEnVivo()
+        self.indicador_preview.setToolTip("Sin previo")
         self.btn_play_preview = QPushButton("▶ Previo")
         self.btn_play_preview.setObjectName("btnPlay")
         self.btn_play_preview.setToolTip("Escuchar el archivo seleccionado (no sale al aire)")
@@ -204,9 +209,18 @@ class VentanaExplorador(QWidget):
         self.btn_stop_preview.setObjectName("btnStop")
         self.btn_play_preview.clicked.connect(self.solicitud_play_preview.emit)
         self.btn_stop_preview.clicked.connect(self.solicitud_stop_preview.emit)
+        barra_preview.addWidget(self.indicador_preview)
         barra_preview.addWidget(self.btn_play_preview)
         barra_preview.addWidget(self.btn_stop_preview)
         layout_archivos.addLayout(barra_preview)
+
+        # --- Barra de progreso del previo (buscar posición) ---
+        self.slider_preview = QSlider(Qt.Orientation.Horizontal)
+        self.slider_preview.setRange(0, 1000)
+        self.slider_preview.setToolTip("Arrastrar para adelantar/retroceder el previo")
+        self.slider_preview.sliderPressed.connect(self._on_slider_preview_presionado)
+        self.slider_preview.sliderReleased.connect(self._on_slider_preview_soltado)
+        layout_archivos.addWidget(self.slider_preview)
 
         self.splitter.addWidget(panel_categorias)
         self.splitter.addWidget(panel_archivos)
@@ -216,6 +230,32 @@ class VentanaExplorador(QWidget):
 
         layout_grupo.addWidget(self.splitter)
         layout_principal.addWidget(grupo)
+
+    # ------------------------------------------------------------------
+    # Previo (preescucha): indicador "en vivo" + guardia contra el
+    # doble click accidental que dispara arrastrar seguido hacia otras
+    # ventanas + barra de progreso.
+    # ------------------------------------------------------------------
+    def _on_doble_click_preview(self, item, columna):
+        if self.tree_archivos.acaba_de_arrastrar():
+            return  # esto es la cola de un arrastre, no un doble click de verdad
+        self.solicitud_play_preview.emit()
+
+    def set_indicador_en_vivo(self, activo: bool):
+        self.indicador_preview.set_activo(activo)
+        self.indicador_preview.setToolTip("Escuchando el previo" if activo else "Sin previo")
+
+    def _on_slider_preview_presionado(self):
+        self._arrastrando_slider_preview = True
+
+    def _on_slider_preview_soltado(self):
+        self._arrastrando_slider_preview = False
+        self.solicitud_buscar_posicion_preview.emit(self.slider_preview.value())
+
+    def actualizar_progreso_preview(self, permille: int):
+        if self._arrastrando_slider_preview:
+            return
+        self.slider_preview.setValue(max(0, min(1000, permille)))
 
     # ------------------------------------------------------------------
     # Expandir/Restaurar (lo maneja MainWindow, que es dueña del
@@ -547,6 +587,19 @@ class VentanaExplorador(QWidget):
         if not ruta_nueva:
             return
 
+        config = cargar_configuracion()
+        if config["general"]["confirmar_antes_de_eliminar"]:
+            respuesta = QMessageBox.question(
+                self, "Reemplazar",
+                f"¿Reemplazar el archivo de '{item.text(COL_TITULO)}' por:\n"
+                f"{os.path.basename(ruta_nueva)}?\n\n"
+                "El título/artista/código se mantienen, pero el archivo de\n"
+                "audio y su análisis (duración, silencios, volumen) cambian.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if respuesta != QMessageBox.StandardButton.Yes:
+                return
+
         registro = item.data(0, ROL_REGISTRO)
         ruta_anterior = registro.get("ruta")
         config = cargar_configuracion()
@@ -637,7 +690,18 @@ class VentanaExplorador(QWidget):
                 rutas_externas.append(ruta)
 
         if rutas_conocidas:
-            self._mover_archivos_a_categoria(rutas_conocidas, item_categoria_destino)
+            config = cargar_configuracion()
+            if config["general"]["confirmar_antes_de_eliminar"]:
+                descripcion = "1 archivo" if len(rutas_conocidas) == 1 else f"{len(rutas_conocidas)} archivos"
+                respuesta = QMessageBox.question(
+                    self, "Cambiar de categoría",
+                    f"¿Mover {descripcion} a la categoría '{item_categoria_destino.text(0)}'?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if respuesta == QMessageBox.StandardButton.Yes:
+                    self._mover_archivos_a_categoria(rutas_conocidas, item_categoria_destino)
+            else:
+                self._mover_archivos_a_categoria(rutas_conocidas, item_categoria_destino)
 
         if len(rutas_externas) == 1:
             self._dar_de_alta_archivo(rutas_externas[0], item_categoria_destino)

@@ -18,7 +18,7 @@ el resto de la GUI las usa por composición.
 """
 
 from PySide6.QtWidgets import QTreeWidget, QAbstractItemView, QHeaderView
-from PySide6.QtCore import Qt, Signal, QMimeData, QUrl
+from PySide6.QtCore import Qt, Signal, QMimeData, QUrl, QDateTime
 from PySide6.QtGui import QDrag
 
 
@@ -226,17 +226,26 @@ class ArbolOrigenArrastre(QTreeWidget):
     selección múltiple activa, arrastra TODOS los seleccionados de
     una vez (varios archivos en el mismo mimeData) — quien reciba el
     drop en la otra punta ya recorre la lista completa.
+
+    Registra CUÁNDO fue el último arrastre (acaba_de_arrastrar) para
+    que quien escuche itemDoubleClicked pueda ignorar un "doble click"
+    que en realidad es el resto de un gesto de arrastre — pedido
+    explícito: la preescucha ("Previo") se disparaba sola al arrastrar
+    seguido hacia otras ventanas.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self._ultimo_arrastre_ms = 0
 
     def startDrag(self, supportedActions):
         items = [item for item in self.selectedItems() if item.data(0, Qt.ItemDataRole.UserRole)]
         if not items:
             return  # nada seleccionado, o son nodos de categoría sin ruta
+
+        self._ultimo_arrastre_ms = QDateTime.currentMSecsSinceEpoch()
 
         rutas = [item.data(0, Qt.ItemDataRole.UserRole) for item in items]
         mime_data = QMimeData()
@@ -246,3 +255,6 @@ class ArbolOrigenArrastre(QTreeWidget):
         drag = QDrag(self)
         drag.setMimeData(mime_data)
         drag.exec(Qt.DropAction.CopyAction)
+
+    def acaba_de_arrastrar(self, margen_ms: int = 400) -> bool:
+        return (QDateTime.currentMSecsSinceEpoch() - self._ultimo_arrastre_ms) < margen_ms
