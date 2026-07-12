@@ -49,6 +49,13 @@ class EtiquetaMarquesina(QWidget):
     def sizeHint(self) -> QSize:
         return QSize(220, 30)
 
+    def minimumSizeHint(self) -> QSize:
+        # Ancho "ideal" 220px (sizeHint) pero el mínimo real es chico
+        # a propósito: así el panel entero (Ventana 2) puede achicarse
+        # de verdad — con marquesina, el texto igual se sigue viendo
+        # completo desplazándose, no hace falta ancho fijo grande.
+        return QSize(40, 30)
+
     def resizeEvent(self, evento):
         super().resizeEvent(evento)
         self._recalcular_scroll()

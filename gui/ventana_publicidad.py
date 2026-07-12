@@ -12,7 +12,7 @@ Ventana 1 (Izquierda): Publicidad.
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidgetItem,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QTreeWidgetItem,
     QPushButton, QLabel, QAbstractItemView, QMenu
 )
 from PySide6.QtCore import Qt, Signal
@@ -82,7 +82,11 @@ class VentanaPublicidad(QWidget):
         layout_grupo.addLayout(layout_contadores)
 
         # --- 2) Controles de reproducción (debajo del tiempo) ---
-        barra_botones = QHBoxLayout()
+        # En GRILLA de 2 columnas (no una fila larga): una fila de 4
+        # botones en línea fijaba un ancho mínimo grande y no dejaba
+        # achicar el panel ni notar el botón "Expandir" de Ventana 3.
+        barra_botones = QGridLayout()
+        barra_botones.setSpacing(4)
         self.btn_play = QPushButton("▶ PLAY")
         self.btn_play.setObjectName("btnPlay")
         self.btn_pausa = QPushButton("❚❚ PAUSA")
@@ -93,8 +97,10 @@ class VentanaPublicidad(QWidget):
         self.btn_pausa.clicked.connect(self.solicitud_pausa.emit)
         self.btn_stop.clicked.connect(self.solicitud_stop.emit)
         self.btn_siguiente.clicked.connect(self.solicitud_siguiente.emit)
-        for btn in (self.btn_play, self.btn_pausa, self.btn_stop, self.btn_siguiente):
-            barra_botones.addWidget(btn)
+        barra_botones.addWidget(self.btn_play, 0, 0)
+        barra_botones.addWidget(self.btn_pausa, 0, 1)
+        barra_botones.addWidget(self.btn_stop, 1, 0)
+        barra_botones.addWidget(self.btn_siguiente, 1, 1)
         layout_grupo.addLayout(barra_botones)
 
         # --- 3) Árbol de bloques horarios (al final) ---

@@ -34,7 +34,7 @@ sigue siendo el mismo.
 import os
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QLabel, QPushButton,
     QTreeWidgetItem, QHeaderView, QMenu, QMessageBox, QAbstractItemView, QSlider
 )
 from PySide6.QtCore import Qt, Signal
@@ -105,8 +105,12 @@ class PanelReproductor(QWidget):
         fila_titulo.addWidget(self.lbl_titulo_actual)
         layout_grupo.addLayout(fila_titulo)
 
-        # 2) Controles de reproducción (debajo del tiempo, arriba de la lista)
-        barra_botones = QHBoxLayout()
+        # 2) Controles de reproducción (debajo del tiempo, arriba de la
+        # lista). En GRILLA de 2 columnas (no una fila larga): una fila
+        # de 4-5 botones en línea es lo que fijaba un ancho mínimo
+        # grande y no dejaba achicar el panel ni notar "Expandir".
+        barra_botones = QGridLayout()
+        barra_botones.setSpacing(4)
         self.btn_play = QPushButton("▶ PLAY")
         self.btn_play.setObjectName("btnPlay")
         self.btn_pausa = QPushButton("❚❚ PAUSA")
@@ -119,13 +123,15 @@ class PanelReproductor(QWidget):
         self.btn_stop.clicked.connect(self.solicitud_stop.emit)
         self.btn_siguiente.clicked.connect(self.solicitud_siguiente.emit)
 
-        for btn in (self.btn_play, self.btn_pausa, self.btn_stop, self.btn_siguiente):
-            barra_botones.addWidget(btn)
+        barra_botones.addWidget(self.btn_play, 0, 0)
+        barra_botones.addWidget(self.btn_pausa, 0, 1)
+        barra_botones.addWidget(self.btn_stop, 1, 0)
+        barra_botones.addWidget(self.btn_siguiente, 1, 1)
 
         if mostrar_boton_auxiliar:
             self.btn_auxiliar = QPushButton("🎧 Auxiliar")
             self.btn_auxiliar.clicked.connect(self.solicitud_abrir_auxiliar.emit)
-            barra_botones.addWidget(self.btn_auxiliar)
+            barra_botones.addWidget(self.btn_auxiliar, 2, 0, 1, 2)
 
         layout_grupo.addLayout(barra_botones)
 

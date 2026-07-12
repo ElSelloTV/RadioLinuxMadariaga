@@ -193,6 +193,9 @@ class MotorAudio(QObject):
         if self._disponible:
             self._player.audio_output_device_set(None, id_dispositivo)
 
+    def id_dispositivo(self) -> str:
+        return self._id_dispositivo
+
     def listar_dispositivos(self):
         """[(id, descripcion), ...] de las salidas de audio disponibles."""
         if not self._disponible:
