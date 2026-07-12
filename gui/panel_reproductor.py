@@ -35,12 +35,12 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QLabel, QPushButton,
-    QTreeWidgetItem, QHeaderView, QMenu, QMessageBox, QAbstractItemView, QSlider
+    QTreeWidgetItem, QHeaderView, QMenu, QMessageBox, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QBrush
 
-from gui.common_widgets import ArbolReproductorConDrop
+from gui.common_widgets import ArbolReproductorConDrop, SliderBusqueda
 from gui.etiqueta_marquesina import EtiquetaMarquesina
 from gui.indicador_en_vivo import IndicadorEnVivo
 from gui.styles import (
@@ -98,13 +98,27 @@ class PanelReproductor(QWidget):
 
         # Indicador "en vivo" (titila mientras hay audio sonando de
         # verdad) + título del tema: "sticker" de ancho fijo estilo
-        # Winamp, nunca empuja el tamaño del panel/columna.
+        # Winamp, nunca empuja el tamaño del panel/columna. Pedido
+        # explícito: además del nombre que suena AHORA, mostrar el
+        # nombre del que viene LUEGO (ítem marcado en verde) — más
+        # robusto que depender solo del color de la fila en la lista.
         fila_titulo = QHBoxLayout()
         self.indicador_en_vivo = IndicadorEnVivo()
         fila_titulo.addWidget(self.indicador_en_vivo)
+        lbl_ahora = QLabel("Ahora:")
+        lbl_ahora.setObjectName("lblEtiquetaAhoraLuego")
+        fila_titulo.addWidget(lbl_ahora)
         self.lbl_titulo_actual = EtiquetaMarquesina()
         fila_titulo.addWidget(self.lbl_titulo_actual)
         layout_grupo.addLayout(fila_titulo)
+
+        fila_siguiente = QHBoxLayout()
+        lbl_luego = QLabel("Luego:")
+        lbl_luego.setObjectName("lblEtiquetaAhoraLuego")
+        fila_siguiente.addWidget(lbl_luego)
+        self.lbl_titulo_siguiente = EtiquetaMarquesina()
+        fila_siguiente.addWidget(self.lbl_titulo_siguiente)
+        layout_grupo.addLayout(fila_siguiente)
 
         # 2) Controles de reproducción (debajo del tiempo, arriba de la
         # lista). En GRILLA de 2 columnas (no una fila larga): una fila
@@ -138,9 +152,9 @@ class PanelReproductor(QWidget):
 
         # 2.1) Barra de progreso (buscar posición) — solo Ventana 2
         if mostrar_barra_progreso:
-            self.slider_progreso = QSlider(Qt.Orientation.Horizontal)
+            self.slider_progreso = SliderBusqueda(Qt.Orientation.Horizontal)
             self.slider_progreso.setRange(0, 1000)
-            self.slider_progreso.setToolTip("Arrastrar para adelantar/retroceder")
+            self.slider_progreso.setToolTip("Arrastrar o hacer clic para adelantar/retroceder")
             self.slider_progreso.sliderPressed.connect(self._on_slider_presionado)
             self.slider_progreso.sliderReleased.connect(self._on_slider_soltado)
             layout_grupo.addWidget(self.slider_progreso)
@@ -193,8 +207,7 @@ class PanelReproductor(QWidget):
         item = self.tree.topLevelItem(fila)
         self._item_reproduciendo = item
         self._pintar_item(item, ESTADO_REPRODUCIENDO)
-        if item:
-            self.lbl_titulo_actual.setText(item.text(0))
+        self.lbl_titulo_actual.setText(item.text(0) if item else "")
 
     def marcar_siguiente(self, fila: int):
         estado_previo = ESTADO_REPRODUCIENDO if self._item_siguiente is self._item_reproduciendo else ESTADO_NORMAL
@@ -202,6 +215,7 @@ class PanelReproductor(QWidget):
         item = self.tree.topLevelItem(fila)
         self._item_siguiente = item
         self._pintar_item(item, ESTADO_SIGUIENTE)
+        self.lbl_titulo_siguiente.setText(item.text(0) if item else "")
         self.item_marcado_como_siguiente.emit(fila)
 
     def actualizar_contadores(self, transcurrido: str, restante: str):

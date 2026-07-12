@@ -56,12 +56,12 @@ import shutil
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidget,
     QTreeWidgetItem, QPushButton, QFileDialog, QSplitter, QLineEdit,
-    QMessageBox, QInputDialog, QMenu, QAbstractItemView, QSlider
+    QMessageBox, QInputDialog, QMenu, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QProcess
 from PySide6.QtGui import QColor, QBrush, QDesktopServices
 
-from gui.common_widgets import ArbolOrigenArrastre, ArbolConDrop, configurar_columnas_ajustables
+from gui.common_widgets import ArbolOrigenArrastre, ArbolConDrop, configurar_columnas_ajustables, SliderBusqueda
 from gui.indicador_en_vivo import IndicadorEnVivo
 from gui.styles import GENERO_COLORES, GENERO_PREFIJOS_CODIGO, color_texto_legible
 from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
@@ -216,9 +216,9 @@ class VentanaExplorador(QWidget):
         layout_archivos.addLayout(barra_preview)
 
         # --- Barra de progreso del previo (buscar posición) ---
-        self.slider_preview = QSlider(Qt.Orientation.Horizontal)
+        self.slider_preview = SliderBusqueda(Qt.Orientation.Horizontal)
         self.slider_preview.setRange(0, 1000)
-        self.slider_preview.setToolTip("Arrastrar para adelantar/retroceder el previo")
+        self.slider_preview.setToolTip("Arrastrar o hacer clic para adelantar/retroceder el previo")
         self.slider_preview.sliderPressed.connect(self._on_slider_preview_presionado)
         self.slider_preview.sliderReleased.connect(self._on_slider_preview_soltado)
         layout_archivos.addWidget(self.slider_preview)
@@ -503,7 +503,8 @@ class VentanaExplorador(QWidget):
 
         config = cargar_configuracion()
         tolerancia = config["reproduccion"].get("tolerancia_silencio_segundos", 2.0)
-        analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia)
+        umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
+        analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio)
 
         registro = {
             "titulo": datos["titulo"],
@@ -544,13 +545,14 @@ class VentanaExplorador(QWidget):
         genero = datos["genero"]
         config = cargar_configuracion()
         tolerancia = config["reproduccion"].get("tolerancia_silencio_segundos", 2.0)
+        umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
 
         registros = item_categoria.data(0, ROL_ARCHIVOS) or []
         siguiente_numero = len(registros) + 1
         prefijo = GENERO_PREFIJOS_CODIGO.get(genero, "GEN")
 
         for ruta in rutas:
-            analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia)
+            analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio)
             registro = {
                 "titulo": os.path.splitext(os.path.basename(ruta))[0],
                 "artista": "",
@@ -612,7 +614,8 @@ class VentanaExplorador(QWidget):
         ruta_anterior = registro.get("ruta")
         config = cargar_configuracion()
         tolerancia = config["reproduccion"].get("tolerancia_silencio_segundos", 2.0)
-        analisis = analizar_audio(ruta_nueva, tolerancia_silencio_segundos=tolerancia)
+        umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
+        analisis = analizar_audio(ruta_nueva, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio)
 
         registro["ruta"] = ruta_nueva
         registro["duracion"] = obtener_duracion_formateada(ruta_nueva)

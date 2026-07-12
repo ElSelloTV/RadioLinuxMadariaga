@@ -121,6 +121,7 @@ class GestorPlaylist:
         self._fallos_consecutivos = 0
         self._volumen_base = 100
         self._pisador_activo = False
+        self._generacion_pisador = 0
         self._crossfade_en_curso = False
         self._motor_saliente_crossfade = None
         self._restaurando = False
@@ -299,11 +300,26 @@ class GestorPlaylist:
     # Motor "Agregar Pisador": toda subida/bajada de volumen es un
     # fade suave (DURACION_FADE_PISADOR_SEGUNDOS), nunca un salto
     # brusco — pedido explícito.
+    #
+    # Bug real corregido — "a veces no se dispara": pasar de tema en
+    # tema rápido (Siguiente varias veces seguidas, o una cascada de
+    # errores) podía cancelar un Pisador, programar su detención
+    # DIFERIDA (QTimer.singleShot, para dejarlo terminar el fade-out),
+    # y ANTES de que ese timer disparara ya se había arrancado un
+    # Pisador NUEVO en el mismo motor_pisador para el tema siguiente
+    # — cuando el timer viejo finalmente se ejecutaba, cortaba el
+    # Pisador nuevo (recién arrancado o ni siquiera arrancado del
+    # todo), sin ningún error visible. `_generacion_pisador` es un
+    # contador que se incrementa en cada cancelación/disparo nuevo; el
+    # `detener()` diferido solo se ejecuta si la generación no cambió
+    # mientras tanto (si cambió, significa que ya hay un Pisador más
+    # nuevo en curso y no hay que tocarlo).
     # ------------------------------------------------------------------
     def _disparar_pisador_si_corresponde(self, fila: int):
         ruta_pisador = self.panel.ruta_pisador_en_fila(fila)
         if not ruta_pisador:
             return
+        self._generacion_pisador += 1
         self._pisador_activo = True
         volumen_pisado = volumen_ajustado_por_ganancia(self._volumen_base, self.bajada_db_pisador)
         self.motor.fade_volumen_a(volumen_pisado, DURACION_FADE_PISADOR_SEGUNDOS)
@@ -315,12 +331,19 @@ class GestorPlaylist:
 
     def _cancelar_pisador_en_curso(self):
         if self._pisador_activo:
+            self._generacion_pisador += 1
+            generacion_al_cancelar = self._generacion_pisador
             self.motor_pisador.fade_volumen_a(0, DURACION_FADE_PISADOR_SEGUNDOS)
             QTimer.singleShot(
-                int(DURACION_FADE_PISADOR_SEGUNDOS * 1000) + 100, self.motor_pisador.detener
+                int(DURACION_FADE_PISADOR_SEGUNDOS * 1000) + 100,
+                lambda: self._detener_pisador_si_generacion_vigente(generacion_al_cancelar),
             )
             self.motor.fade_volumen_a(self._volumen_base, DURACION_FADE_PISADOR_SEGUNDOS)
             self._pisador_activo = False
+
+    def _detener_pisador_si_generacion_vigente(self, generacion: int):
+        if generacion == self._generacion_pisador:
+            self.motor_pisador.detener()
 
     # ------------------------------------------------------------------
     # Selección manual por doble click / Enter (arma en punta / encola)

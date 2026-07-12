@@ -201,6 +201,11 @@ class VentanaConfiguracion(QDialog):
         self.spin_tolerancia_silencio.setSingleStep(0.5)
         self.spin_tolerancia_silencio.setSuffix(" s")
 
+        self.spin_umbral_silencio = QDoubleSpinBox()
+        self.spin_umbral_silencio.setRange(-60.0, -10.0)
+        self.spin_umbral_silencio.setSingleStep(1.0)
+        self.spin_umbral_silencio.setSuffix(" dBFS")
+
         self.spin_bajada_pisador = QDoubleSpinBox()
         self.spin_bajada_pisador.setRange(-24.0, 0.0)
         self.spin_bajada_pisador.setSingleStep(0.5)
@@ -211,7 +216,16 @@ class VentanaConfiguracion(QDialog):
         form.addRow(self.chk_repetir_lista)
         form.addRow(self.chk_modo_automatico_inicio)
         form.addRow("Tolerancia de silencio al recortar (Ventana 3):", self.spin_tolerancia_silencio)
+        form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
         form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
+
+        nota_silencio = QLabel(
+            "El recorte de silencio SOLO mira el principio y el final de\n"
+            "cada tema, nunca el medio — una pausa breve a mitad de una\n"
+            "canción nunca se corta, sin importar el umbral elegido."
+        )
+        nota_silencio.setObjectName("lblTituloBloqueActivo")
+        form.addRow(nota_silencio)
 
         nota_pisador = QLabel(
             "Mientras suena el Pisador superpuesto al inicio de un tema\n"
@@ -487,6 +501,7 @@ class VentanaConfiguracion(QDialog):
         self.chk_repetir_lista.setChecked(reproduccion["repetir_lista_al_finalizar"])
         self.chk_modo_automatico_inicio.setChecked(reproduccion["modo_automatico_al_iniciar"])
         self.spin_tolerancia_silencio.setValue(reproduccion["tolerancia_silencio_segundos"])
+        self.spin_umbral_silencio.setValue(reproduccion["umbral_silencio_dbfs"])
         self.spin_bajada_pisador.setValue(reproduccion["pisador_bajada_db"])
 
         general = self._config["general"]
@@ -533,6 +548,7 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["repetir_lista_al_finalizar"] = self.chk_repetir_lista.isChecked()
         self._config["reproduccion"]["modo_automatico_al_iniciar"] = self.chk_modo_automatico_inicio.isChecked()
         self._config["reproduccion"]["tolerancia_silencio_segundos"] = self.spin_tolerancia_silencio.value()
+        self._config["reproduccion"]["umbral_silencio_dbfs"] = self.spin_umbral_silencio.value()
         self._config["reproduccion"]["pisador_bajada_db"] = self.spin_bajada_pisador.value()
 
         self._config["general"]["confirmar_antes_de_eliminar"] = self.chk_confirmar_eliminar.isChecked()

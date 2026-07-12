@@ -206,6 +206,13 @@ QLabel#lblTituloBloqueActivo {{
     color: {COLOR_TEXTO_SECUNDARIO};
     font-style: italic;
 }}
+/* "Ahora:"/"Luego:" junto al título en Ventana 2/Auxiliar — pedido
+   explícito, más robusto que depender solo del color de fila. */
+QLabel#lblEtiquetaAhoraLuego {{
+    color: {COLOR_TEXTO_SECUNDARIO};
+    font-size: 8pt;
+    font-weight: bold;
+}}
 
 /* ---------- Barra de estado ---------- */
 QStatusBar {{
