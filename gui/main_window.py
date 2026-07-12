@@ -239,7 +239,29 @@ class MainWindow(QMainWindow):
         estado_ui.guardar_columnas("emision", self.ventana_emision.panel.tree)
         self.ventana_explorador.guardar_disposicion()
 
+    def _hay_emision_en_curso(self) -> bool:
+        motores = [self.gestor_emision.motor, self.gestor_publicidad.motor]
+        if self._gestor_auxiliar is not None:
+            motores.append(self._gestor_auxiliar.motor)
+        return any(motor.esta_reproduciendo() for motor in motores)
+
     def closeEvent(self, evento):
+        # Pedido explícito: la música no se corta sola por nada salvo
+        # Stop o cerrar el programa — y cerrar el programa avisa antes,
+        # porque eso SÍ va a interrumpir la emisión al aire.
+        if self._hay_emision_en_curso():
+            respuesta = QMessageBox.question(
+                self, "Hay una emisión en curso",
+                "Se está reproduciendo audio ahora mismo (Publicidad, Emisión y/o "
+                "Auxiliar).\n\nCerrar el programa va a interrumpir la emisión al aire.\n"
+                "¿Confirmás que querés cerrar de todos modos?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if respuesta != QMessageBox.StandardButton.Yes:
+                evento.ignore()
+                return
+
         self._guardar_disposicion_actual()
         if self._ventana_auxiliar is not None:
             estado_ui.guardar_columnas("auxiliar", self._ventana_auxiliar.panel.tree)
@@ -432,13 +454,51 @@ class MainWindow(QMainWindow):
                 8000,
             )
 
-    def _reinicializar_motores_audio(self):
-        """Recrea los gestores de audio con la configuración recién
-        guardada (dispositivo, reintentos, repetición, etc.)."""
-        self.gestor_emision.detener()
-        self.gestor_publicidad._detener()
+    def _aplicar_configuracion_en_vivo(self):
+        """Aplica la configuración recién guardada SIN recrear ni
+        detener nada — pedido explícito: la música no se interrumpe
+        por guardar Configuración, solo por Stop o cerrar el programa.
+
+        Antes esto llamaba _inicializar_motores_audio() de nuevo, que
+        creaba objetos MotorAudio NUEVOS (silenciosos) y de paso
+        llamaba .detener() a los que estaban sonando — cortaba
+        cualquier reproducción en curso. Ahora se actualizan los
+        atributos de los gestores YA EXISTENTES en caliente, y el
+        dispositivo de salida se cambia con
+        MotorAudio.set_dispositivo_salida() sobre el motor que ya
+        está reproduciendo (sin recrearlo) — libVLC tolera cambiar de
+        dispositivo sin cortar la reproducción."""
         self._config = cargar_configuracion()
-        self._inicializar_motores_audio()
+        audio = self._config["audio"]
+        reproduccion = self._config["reproduccion"]
+        fade = self._config["fade"]
+        id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
+
+        for gestor in (self.gestor_emision, self._gestor_auxiliar):
+            if gestor is None:
+                continue
+            gestor.avanzar_en_error = reproduccion["avanzar_automaticamente_en_error"]
+            gestor.reintentos_maximos = max(1, reproduccion["reintentos_antes_de_detener"])
+            gestor.repetir_al_finalizar = reproduccion["repetir_lista_al_finalizar"]
+            gestor.bajada_db_pisador = reproduccion["pisador_bajada_db"]
+            gestor.crossfade_activado = fade["crossfade_activado"]
+            gestor.duracion_fade_segundos = fade["duracion_fade_segundos"]
+            for motor in (gestor.motor, gestor.motor_pisador):
+                if motor.id_dispositivo() != id_dispositivo_master:
+                    motor.set_dispositivo_salida(id_dispositivo_master)
+
+        self.gestor_emision.set_volumen_base(audio["volumen_master"])
+        if self._gestor_auxiliar is not None:
+            self._gestor_auxiliar.set_volumen_base(audio["volumen_master"])
+
+        self.gestor_publicidad.avanzar_en_error = reproduccion["avanzar_automaticamente_en_error"]
+        self.gestor_publicidad.reintentos_maximos = max(1, reproduccion["reintentos_antes_de_detener"])
+        if self.gestor_publicidad.motor.id_dispositivo() != id_dispositivo_master:
+            self.gestor_publicidad.motor.set_dispositivo_salida(id_dispositivo_master)
+        self.gestor_publicidad.motor.set_volumen(audio["volumen_master"])
+
+        if self.gestor_explorador.motor.id_dispositivo() != id_dispositivo_master:
+            self.gestor_explorador.motor.set_dispositivo_salida(id_dispositivo_master)
 
     # ------------------------------------------------------------------
     # Ventana auxiliar flotante (preescucha / reproducción secundaria)
@@ -498,5 +558,5 @@ class MainWindow(QMainWindow):
     def abrir_configuracion(self, pestaña: int = 0):
         dialogo = VentanaConfiguracion(self, pestaña_inicial=pestaña)
         if dialogo.exec() == VentanaConfiguracion.DialogCode.Accepted:
-            self._reinicializar_motores_audio()
-            self.statusBar().showMessage("Configuración guardada y aplicada.", 4000)
+            self._aplicar_configuracion_en_vivo()
+            self.statusBar().showMessage("Configuración guardada y aplicada (sin cortar la reproducción).", 4000)

@@ -15,6 +15,7 @@ ventana.
 
 import os
 from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QApplication
 
 from config.settings import DIRECTORIO_CONFIG
 
@@ -65,3 +66,33 @@ def restaurar_geometria_ventana(widget, nombre: str = "ventana_principal"):
     valor = _settings().value(f"geometria/{nombre}")
     if valor:
         widget.restoreGeometry(valor)
+    _asegurar_dentro_de_pantalla(widget)
+
+
+def _asegurar_dentro_de_pantalla(widget):
+    """Si la geometría (restaurada de una sesión anterior, quizás con
+    otro monitor/resolución) queda parcial o totalmente fuera de la
+    pantalla actual, la reacomoda para que entre entera. Esto es lo
+    que causaba perder de vista los controles de la derecha al
+    maximizar: la ventana arrancaba mal posicionada y el gestor de
+    ventanas maximizaba en base a esa posición inválida."""
+    pantalla = widget.screen() or QApplication.primaryScreen()
+    if pantalla is None:
+        return
+
+    disponible = pantalla.availableGeometry()
+    geometria = widget.frameGeometry()
+
+    if disponible.contains(geometria):
+        return  # ya entra entera, no hay nada que corregir
+
+    ancho = min(geometria.width(), disponible.width())
+    alto = min(geometria.height(), disponible.height())
+    # OJO: QRect.right()/.bottom() devuelven x+width-1 (no x+width), así
+    # que el límite derecho/inferior válido es left()+width()-ancho, NO
+    # right()-ancho (eso da un valor de más, corta la ventana 1px afuera
+    # cuando ancho == disponible.width()).
+    x = min(max(geometria.x(), disponible.left()), disponible.left() + disponible.width() - ancho)
+    y = min(max(geometria.y(), disponible.top()), disponible.top() + disponible.height() - alto)
+
+    widget.setGeometry(x, y, ancho, alto)

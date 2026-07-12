@@ -375,6 +375,29 @@ abajo). Todo persiste en `config/data/config_general.json`.
 Deliberadamente **sin nada de satelital/RDS** — Santiago fue
 explícito en que no lo necesita.
 
+**Bug real corregido — guardar Configuración cortaba la
+reproducción**: `MainWindow._reinicializar_motores_audio()` (ya no
+existe) recreaba los `GestorPlaylist`/`GestorPublicidad` con
+`MotorAudio` NUEVOS y de paso llamaba `.detener()` a los que estaban
+sonando — cualquier música al aire se cortaba solo con tocar
+Configuración. Reemplazado por
+`MainWindow._aplicar_configuracion_en_vivo()`: actualiza los
+atributos (reintentos, crossfade, dB del Pisador, volumen) de los
+gestores YA EXISTENTES en caliente, sin recrear nada; el dispositivo
+de salida se cambia con `MotorAudio.set_dispositivo_salida()` sobre
+el motor que ya está reproduciendo (solo si de verdad cambió,
+comparando con el nuevo `MotorAudio.id_dispositivo()`). **Regla**:
+la reproducción NUNCA se debe interrumpir salvo Stop manual o cerrar
+el programa — cualquier acción futura sobre "aplicar configuración"
+tiene que seguir este mismo patrón (mutar objetos vivos, jamás
+recrear el `MotorAudio` que está sonando).
+
+**Aviso al cerrar con audio al aire (implementado)**:
+`MainWindow.closeEvent` chequea `motor.esta_reproduciendo()` en
+Emisión/Publicidad/Auxiliar antes de cerrar; si hay algo sonando,
+pregunta con Sí/No y cancela el cierre (`evento.ignore()`) si el
+operador dice que no.
+
 ### Actualizador (`core/actualizador.py`)
 `git fetch` + comparar HEAD local contra `origin/main` (o `master`),
 `git pull --ff-only` para aplicar, y reinicio del proceso
@@ -401,6 +424,35 @@ Anchos de columna y posiciones de splitter (principal + interno del
 Explorador) se guardan en `config/data/ui_state.ini` (QSettings
 formato INI) al cerrar (`MainWindow.closeEvent`) y se restauran al
 abrir. Ya probado entre "sesiones" (cerrar y reabrir el proceso).
+
+**Bug real corregido — la ventana se iba de pantalla al maximizar**:
+`restaurar_geometria_ventana()` hacía `widget.restoreGeometry(valor)`
+a ciegas, sin validar contra la pantalla ACTUAL. Si la geometría
+guardada venía de otro monitor/resolución, la ventana podía arrancar
+parcialmente fuera de pantalla — y ahí el gestor de ventanas
+maximizaba en base a esa posición inválida, perdiendo de vista los
+controles de la derecha. Corregido con `_asegurar_dentro_de_pantalla()`,
+que se llama siempre después de restaurar (o de la geometría inicial
+por defecto) y reacomoda el rectángulo para que entre completo en
+`screen().availableGeometry()`. **Ojo con el off-by-one**: el límite
+derecho/inferior válido es `disponible.left() + disponible.width() -
+ancho`, NO `disponible.right() - ancho` (`QRect.right()` devuelve
+`x + width - 1`, no `x + width` — usar `right()` ahí corta la ventana
+un píxel de más).
+
+**Ventana 1/2 rediseñadas más compactas (pedido explícito, "otro
+skin")**: los botones de transporte (Play/Pausa/Stop/Siguiente[/
+Auxiliar]) pasaron de una fila horizontal larga a una **grilla de 2
+columnas** (`QGridLayout` en `panel_reproductor.py` y
+`ventana_publicidad.py`) — una fila de 4-5 botones en línea fijaba
+un ancho mínimo grande que no dejaba achicar el panel NI notar el
+botón "Expandir" de Ventana 3 (Publicidad/Emisión se negaban a
+bajar de ~350-450px). Los relojes bajaron de 26pt a 14pt
+(`gui/styles.py`), y `EtiquetaMarquesina` (el sticker del título en
+Ventana 2) ahora tiene `minimumSizeHint()` propio de 40px en vez de
+heredar los 220px de `sizeHint()` como mínimo real. Resultado medido:
+`PanelReproductor.minimumSizeHint()` bajó a ~213px de ancho,
+`VentanaPublicidad` a ~269px (antes ninguna bajaba de ~350-450px).
 
 ## Testing — cómo probar cambios sin display real
 

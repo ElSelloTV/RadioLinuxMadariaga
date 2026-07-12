@@ -176,16 +176,20 @@ QPushButton#btnAutomatico[activo="false"] {{
     color: #cccccc;
 }}
 
-/* ---------- Contadores de tiempo (estilo display grande) ---------- */
+/* ---------- Contadores de tiempo (estilo display) ----------
+   Antes 26pt: ese tamaño solo, con 2 contadores lado a lado, ya
+   imponía un ancho mínimo de ~300-350px al panel entero (Ventana 1
+   y 2) — era lo que impedía achicar columnas de verdad y lo que
+   hacía invisible al botón "Expandir" de Ventana 3. Bajado a 14pt. */
 QLabel#lblTiempoTranscurrido, QLabel#lblTiempoRestante {{
     background-color: #101010;
     color: #f5f5f5;
     border: 1px solid {COLOR_BORDE};
     border-radius: 4px;
     font-family: "DejaVu Sans Mono", monospace;
-    font-size: 26pt;
+    font-size: 14pt;
     font-weight: bold;
-    padding: 2px 8px;
+    padding: 1px 4px;
 }}
 QLabel#lblTituloBloqueActivo {{
     color: {COLOR_TEXTO_SECUNDARIO};
