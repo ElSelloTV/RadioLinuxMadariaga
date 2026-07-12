@@ -72,6 +72,8 @@ from PySide6.QtCore import Qt, QTimer, QTime, QDate
 from core.audio_engine import MotorAudio
 from core.analizador_audio import volumen_ajustado_por_ganancia
 
+DURACION_FADE_PISADOR_SEGUNDOS = 0.8
+
 
 class GestorPlaylist:
     """Bridge entre un panel tipo PanelReproductor (o VentanaEmision /
@@ -115,22 +117,51 @@ class GestorPlaylist:
         self.panel.solicitud_stop.connect(self.detener)
         self.panel.solicitud_siguiente.connect(self._avanzar_al_siguiente)
         self.panel.item_doble_click.connect(self._on_doble_click)
+        if hasattr(self.panel, "solicitud_buscar_posicion"):
+            self.panel.solicitud_buscar_posicion.connect(self._buscar_posicion)
 
     # ------------------------------------------------------------------
     def _conectar_motor(self, motor):
         motor.posicion_cambiada.connect(self.panel.actualizar_contadores)
+        motor.posicion_cambiada.connect(self._actualizar_indicador)
         motor.finalizo_item.connect(self._avanzar_al_siguiente)
         motor.error_reproduccion.connect(self._on_error)
         motor.restante_ms_cambio.connect(self._chequear_crossfade)
+        motor.restante_ms_cambio.connect(self._actualizar_progreso)
 
     def _desconectar_motor(self, motor):
         try:
             motor.posicion_cambiada.disconnect(self.panel.actualizar_contadores)
+            motor.posicion_cambiada.disconnect(self._actualizar_indicador)
             motor.finalizo_item.disconnect(self._avanzar_al_siguiente)
             motor.error_reproduccion.disconnect(self._on_error)
             motor.restante_ms_cambio.disconnect(self._chequear_crossfade)
+            motor.restante_ms_cambio.disconnect(self._actualizar_progreso)
         except (TypeError, RuntimeError):
             pass
+
+    # ------------------------------------------------------------------
+    # Indicador "en vivo" y barra de progreso (Ventana 2 solamente,
+    # vía hasattr — Auxiliar no tiene solicitud_buscar_posicion).
+    # ------------------------------------------------------------------
+    def _actualizar_indicador(self, *_args):
+        self.panel.set_indicador_en_vivo(self.motor.esta_reproduciendo())
+
+    def _actualizar_progreso(self, restante_ms: int):
+        if not hasattr(self.panel, "actualizar_progreso"):
+            return
+        total_ms = self.motor.duracion_total_ms()
+        if total_ms <= 0:
+            return
+        transcurrido_ms = max(0, total_ms - restante_ms)
+        permille = int(1000 * transcurrido_ms / total_ms)
+        self.panel.actualizar_progreso(max(0, min(1000, permille)))
+
+    def _buscar_posicion(self, permille: int):
+        total_ms = self.motor.duracion_total_ms()
+        if total_ms <= 0:
+            return
+        self.motor.buscar_posicion_ms(int(total_ms * permille / 1000))
 
     # ------------------------------------------------------------------
     def set_volumen_base(self, volumen: int):
@@ -152,6 +183,7 @@ class GestorPlaylist:
         self.motor.pausar()
         if self._pisador_activo:
             self.motor_pisador.pausar()
+        self._actualizar_indicador()
 
     def detener(self):
         self.motor.detener()
@@ -161,6 +193,7 @@ class GestorPlaylist:
         self._crossfade_en_curso = False
         self._cancelar_pisador_en_curso()
         self._fallos_consecutivos = 0
+        self.panel.set_indicador_en_vivo(False)
 
     def _reproducir_fila(self, fila: int):
         ruta = self.panel.ruta_en_fila(fila)
@@ -168,6 +201,7 @@ class GestorPlaylist:
             return
         self._cancelar_pisador_en_curso()
         self.motor.reproducir(ruta)
+        self.panel.set_indicador_en_vivo(True)
         self._disparar_pisador_si_corresponde(fila)
 
     # ------------------------------------------------------------------
@@ -232,24 +266,30 @@ class GestorPlaylist:
         self._motor_saliente_crossfade = None
 
     # ------------------------------------------------------------------
-    # Motor "Agregar Pisador"
+    # Motor "Agregar Pisador": toda subida/bajada de volumen es un
+    # fade suave (DURACION_FADE_PISADOR_SEGUNDOS), nunca un salto
+    # brusco — pedido explícito.
     # ------------------------------------------------------------------
     def _disparar_pisador_si_corresponde(self, fila: int):
-        ruta_pisador = self.panel.ruta_pisador_en_fila(fila) if hasattr(self.panel, "ruta_pisador_en_fila") else ""
+        ruta_pisador = self.panel.ruta_pisador_en_fila(fila)
         if not ruta_pisador:
             return
         self._pisador_activo = True
-        self.motor.set_volumen(volumen_ajustado_por_ganancia(self._volumen_base, self.bajada_db_pisador))
+        volumen_pisado = volumen_ajustado_por_ganancia(self._volumen_base, self.bajada_db_pisador)
+        self.motor.fade_volumen_a(volumen_pisado, DURACION_FADE_PISADOR_SEGUNDOS)
         self.motor_pisador.reproducir(ruta_pisador)
 
     def _on_pisador_finalizado(self):
         self._pisador_activo = False
-        self.motor.set_volumen(self._volumen_base)
+        self.motor.fade_volumen_a(self._volumen_base, DURACION_FADE_PISADOR_SEGUNDOS)
 
     def _cancelar_pisador_en_curso(self):
         if self._pisador_activo:
-            self.motor_pisador.detener()
-            self.motor.set_volumen(self._volumen_base)
+            self.motor_pisador.fade_volumen_a(0, DURACION_FADE_PISADOR_SEGUNDOS)
+            QTimer.singleShot(
+                int(DURACION_FADE_PISADOR_SEGUNDOS * 1000) + 100, self.motor_pisador.detener
+            )
+            self.motor.fade_volumen_a(self._volumen_base, DURACION_FADE_PISADOR_SEGUNDOS)
             self._pisador_activo = False
 
     # ------------------------------------------------------------------
@@ -344,18 +384,27 @@ class GestorPublicidad:
         self._callback_bloque_finalizado = None
 
         self.motor.posicion_cambiada.connect(self.ventana.actualizar_contadores)
+        self.motor.posicion_cambiada.connect(self._actualizar_indicador)
         self.motor.error_reproduccion.connect(self._on_error)
 
         self.ventana.solicitud_play.connect(self._reproducir_seleccion_o_actual)
-        self.ventana.solicitud_pausa.connect(self.motor.pausar)
+        self.ventana.solicitud_pausa.connect(self._pausar)
         self.ventana.solicitud_stop.connect(self._detener)
         self.ventana.solicitud_siguiente.connect(self._avanzar_al_siguiente)
         self.ventana.item_doble_click.connect(self._on_doble_click)
 
     # ------------------------------------------------------------------
+    def _pausar(self):
+        self.motor.pausar()
+        self._actualizar_indicador()
+
+    def _actualizar_indicador(self, *_args):
+        self.ventana.set_indicador_en_vivo(self.motor.esta_reproduciendo())
+
     def _detener(self):
         self.motor.detener()
         self._fallos_consecutivos = 0
+        self.ventana.set_indicador_en_vivo(False)
         if self._bloque_automatico_actual is not None:
             self._finalizar_bloque_automatico()
 
@@ -369,6 +418,7 @@ class GestorPublicidad:
         self.ventana.marcar_reproduciendo_item(item)
         ruta = item.data(0, Qt.ItemDataRole.UserRole)
         self.motor.reproducir(ruta)
+        self.ventana.set_indicador_en_vivo(True)
 
     def _reproducir_seleccion_o_actual(self):
         # Prioridad: si ya hay algo marcado como "en reproducción",
@@ -406,6 +456,7 @@ class GestorPublicidad:
 
     def _finalizar_bloque_automatico(self):
         self.motor.detener()
+        self.ventana.set_indicador_en_vivo(False)
         callback = self._callback_bloque_finalizado
         self._bloque_automatico_actual = None
         self._callback_bloque_finalizado = None

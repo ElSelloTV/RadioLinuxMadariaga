@@ -43,6 +43,7 @@ class MotorAudio(QObject):
         self._instancia = None
         self._player = None
         self._punto_fin_ms = None
+        self._timer_fade_volumen = None
 
         try:
             self._instancia = vlc.Instance()
@@ -125,6 +126,67 @@ class MotorAudio(QObject):
         if not self._disponible:
             return
         self._player.audio_set_volume(max(0, min(100, volumen_0_a_100)))
+
+    def obtener_volumen(self) -> int:
+        if not self._disponible:
+            return 0
+        volumen = self._player.audio_get_volume()
+        return volumen if volumen >= 0 else 0
+
+    def fade_volumen_a(self, volumen_objetivo: int, duracion_segundos: float = 0.8):
+        """Rampa suave de volumen hacia `volumen_objetivo` (0-100) en
+        `duracion_segundos`, en vez de un salto brusco — pedido
+        explícito: "toda subida y bajada de audio debe ser mediante
+        Fade". La usa el ducking del Pisador (bajar/subir el tema
+        principal), pero sirve para cualquier cambio de volumen que
+        no deba notarse como un corte.
+        """
+        if not self._disponible:
+            self.set_volumen(volumen_objetivo)
+            return
+
+        if self._timer_fade_volumen is not None:
+            self._timer_fade_volumen.stop()
+
+        volumen_objetivo = max(0, min(100, volumen_objetivo))
+        volumen_inicial = self.obtener_volumen()
+
+        if duracion_segundos <= 0 or volumen_inicial == volumen_objetivo:
+            self.set_volumen(volumen_objetivo)
+            return
+
+        pasos = 20
+        intervalo_ms = max(20, int((duracion_segundos * 1000) / pasos))
+        contador = {"paso": 0}
+
+        timer = QTimer(self)
+        self._timer_fade_volumen = timer
+        timer.setInterval(intervalo_ms)
+
+        def _paso():
+            contador["paso"] += 1
+            fraccion = contador["paso"] / pasos
+            volumen_actual = int(volumen_inicial + (volumen_objetivo - volumen_inicial) * fraccion)
+            self.set_volumen(volumen_actual)
+            if contador["paso"] >= pasos:
+                timer.stop()
+                self.set_volumen(volumen_objetivo)
+
+        timer.timeout.connect(_paso)
+        timer.start()
+
+    # ------------------------------------------------------------------
+    # Posición / seek (barra de progreso de Ventana 2)
+    # ------------------------------------------------------------------
+    def duracion_total_ms(self) -> int:
+        if not self._disponible:
+            return 0
+        return max(0, self._player.get_length())
+
+    def buscar_posicion_ms(self, ms: int):
+        if not self._disponible:
+            return
+        self._player.set_time(max(0, ms))
 
     def set_dispositivo_salida(self, id_dispositivo: str):
         self._id_dispositivo = id_dispositivo

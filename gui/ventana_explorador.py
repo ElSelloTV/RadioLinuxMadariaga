@@ -7,19 +7,32 @@ Ventana 3 (Derecha): Explorador de Medios.
   niveles (cada categoría puede tener hijas, y esas hijas más
   hijas, etc.).
 - Derecha: archivos de la categoría seleccionada — columnas
-  Título / Artista / Género / Código, pintadas según el color del
-  género (Música=verde, Publicidad=amarillo, Separador=naranja,
-  Pisador=violeta, Artística=azul). Es el ORIGEN real del Drag &
-  Drop hacia Ventana 1, Ventana 2, la Auxiliar y el Programador.
-- Al agregar un archivo se abre DialogoAgregarArchivo para elegir
-  categoría, nombre editorial, artista y género; el código
-  correlativo se asigna solo. Ahí mismo se dispara el análisis de
-  audio (core/analizador_audio.py): recorte de silencios de
+  Duración / Título / Artista / Categoría / Código (movibles),
+  pintadas según el color del género (Música=verde,
+  Publicidad=amarillo, Separador=naranja, Pisador=violeta,
+  Artística=azul). Es el ORIGEN real del Drag & Drop hacia
+  Ventana 1, Ventana 2, la Auxiliar y el Programador.
+- Al agregar UN archivo se abre DialogoAgregarArchivo para elegir
+  categoría, nombre editorial, artista y género. Al agregar VARIOS
+  de una (selección múltiple o arrastre masivo) se abre
+  DialogoAgregarArchivosMasivo: una categoría y un género para todo
+  el lote, título derivado del nombre de archivo. El código
+  correlativo se asigna solo. En ambos casos se dispara el análisis
+  de audio (core/analizador_audio.py): recorte de silencios de
   entrada/salida y nivelado de volumen, guardado como metadata no
   destructiva del registro.
 - Menú contextual (botón derecho): Importar, Exportar, Reemplazar,
-  Eliminar, Editar (abre el editor de audio del sistema).
-- Botones Play/Stop para preescuchar el archivo seleccionado.
+  Eliminar (en lote si hay selección múltiple), Editar (abre el
+  editor de audio del sistema).
+- Barra de búsqueda (por título/artista) debajo del título, con lupa
+  y Enter — filtra la biblioteca completa y muestra los resultados
+  acá mismo, sin importar en qué categoría estén.
+- Botón "Expandir"/"Restaurar": esta ventana puede ocupar casi toda
+  la pantalla principal para tener más lugar de trabajo, y volver a
+  su reparto de 3 columnas de siempre con el mismo botón.
+- Botones Previo/Stop para preescuchar el archivo seleccionado (se
+  llama "Previo" y no "Play" para no confundirlo con la reproducción
+  real al aire de Ventana 1/2).
 
 Cada archivo se guarda como un diccionario (ver `_nuevo_registro`)
 adentro del propio QTreeWidgetItem de su categoría, en el rol
@@ -42,17 +55,19 @@ import shutil
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidget,
-    QTreeWidgetItem, QPushButton, QFileDialog, QSplitter,
-    QMessageBox, QInputDialog, QMenu
+    QTreeWidgetItem, QPushButton, QFileDialog, QSplitter, QLineEdit,
+    QMessageBox, QInputDialog, QMenu, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QProcess
 from PySide6.QtGui import QColor, QBrush, QDesktopServices
 
 from gui.common_widgets import ArbolOrigenArrastre, ArbolConDrop, configurar_columnas_ajustables
-from gui.styles import GENERO_COLORES, GENEROS_CON_TEXTO_OSCURO
+from gui.styles import GENERO_COLORES, GENEROS_CON_TEXTO_OSCURO, GENERO_PREFIJOS_CODIGO
 from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
+from gui.dialogo_agregar_archivos_masivo import DialogoAgregarArchivosMasivo
 from gui.estado_ui import guardar_columnas, restaurar_columnas
 from core.analizador_audio import analizar_audio
+from core.audio_engine import obtener_duracion_formateada
 from config.settings import cargar_configuracion, cargar_biblioteca, guardar_biblioteca
 
 EXTENSIONES_SOPORTADAS = (".mp3", ".wav", ".mp4", ".m4a")
@@ -60,6 +75,10 @@ EXTENSIONES_SOPORTADAS = (".mp3", ".wav", ".mp4", ".m4a")
 # Roles de datos propios (por encima de Qt.ItemDataRole.UserRole)
 ROL_ARCHIVOS = Qt.ItemDataRole.UserRole + 20     # en ítem de categoría: list[dict]
 ROL_REGISTRO = Qt.ItemDataRole.UserRole + 21     # en ítem de archivo: dict completo
+
+# Orden de columnas de tree_archivos (pedido explícito): Duración
+# primero, después Título/Artista/Categoría/Código.
+COL_DURACION, COL_TITULO, COL_ARTISTA, COL_CATEGORIA, COL_CODIGO = range(5)
 
 
 class VentanaExplorador(QWidget):
@@ -70,9 +89,12 @@ class VentanaExplorador(QWidget):
     archivo_movido = Signal(str, str)   # (titulo, nombre_categoria_destino)
     solicitud_play_preview = Signal()
     solicitud_stop_preview = Signal()
+    solicitud_alternar_expansion = Signal()
+    busqueda_realizada = Signal(int)    # cantidad de resultados encontrados
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._en_busqueda = False
         self._construir_ui()
         self._cargar_biblioteca_inicial()
 
@@ -84,6 +106,28 @@ class VentanaExplorador(QWidget):
 
         grupo = QGroupBox("EXPLORADOR DE MEDIOS")
         layout_grupo = QVBoxLayout(grupo)
+
+        # --- Barra de búsqueda (por título/artista) + Expandir/Restaurar ---
+        barra_superior = QHBoxLayout()
+        self.txt_busqueda = QLineEdit()
+        self.txt_busqueda.setPlaceholderText("Buscar por título o artista...")
+        self.txt_busqueda.returnPressed.connect(self._buscar)
+        self.btn_buscar = QPushButton("🔍")
+        self.btn_buscar.setToolTip("Buscar")
+        self.btn_buscar.setFixedWidth(36)
+        self.btn_buscar.clicked.connect(self._buscar)
+        self.btn_limpiar_busqueda = QPushButton("✕")
+        self.btn_limpiar_busqueda.setToolTip("Limpiar búsqueda y volver a la categoría")
+        self.btn_limpiar_busqueda.setFixedWidth(36)
+        self.btn_limpiar_busqueda.clicked.connect(self._limpiar_busqueda)
+        self.btn_expandir = QPushButton("⤢ Expandir")
+        self.btn_expandir.setToolTip("Expandir esta ventana para trabajar con más visibilidad")
+        self.btn_expandir.clicked.connect(self.solicitud_alternar_expansion.emit)
+        barra_superior.addWidget(self.txt_busqueda)
+        barra_superior.addWidget(self.btn_buscar)
+        barra_superior.addWidget(self.btn_limpiar_busqueda)
+        barra_superior.addWidget(self.btn_expandir)
+        layout_grupo.addLayout(barra_superior)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
@@ -98,7 +142,7 @@ class VentanaExplorador(QWidget):
         self.tree_categorias.setHeaderLabels(["Categoría"])
         self.tree_categorias.setColumnCount(1)
         self.tree_categorias.currentItemChanged.connect(self._on_categoria_seleccionada)
-        self.tree_categorias.archivo_soltado.connect(self._on_archivo_soltado_en_categoria)
+        self.tree_categorias.archivos_soltados.connect(self._on_archivos_soltados_en_categoria)
         layout_categorias.addWidget(self.tree_categorias)
 
         barra_categorias = QHBoxLayout()
@@ -123,11 +167,16 @@ class VentanaExplorador(QWidget):
 
         self.tree_archivos = ArbolOrigenArrastre()
         self.tree_archivos.setObjectName("tree_archivos")
-        self.tree_archivos.setHeaderLabels(["Título", "Artista", "Género", "Código"])
-        self.tree_archivos.setColumnCount(4)
+        self.tree_archivos.setHeaderLabels(["Duración", "Título", "Artista", "Categoría", "Código"])
+        self.tree_archivos.setColumnCount(5)
         self.tree_archivos.setRootIsDecorated(False)
-        configurar_columnas_ajustables(self.tree_archivos, [180, 110, 85])
-        self.tree_archivos.header().setMinimumSectionSize(45)
+        self.tree_archivos.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # Columnas movibles (pedido explícito: orden editable por el
+        # usuario), con Duración/Título/Artista/Categoría anchas fijas
+        # y Código en Stretch para no quedar nunca tapada.
+        configurar_columnas_ajustables(self.tree_archivos, [70, 170, 110, 90])
+        self.tree_archivos.header().setSectionsMovable(True)
+        self.tree_archivos.header().setMinimumSectionSize(40)
 
         self.tree_archivos.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_archivos.customContextMenuRequested.connect(self._mostrar_menu_contextual)
@@ -146,10 +195,11 @@ class VentanaExplorador(QWidget):
             barra_archivos.addWidget(btn)
         layout_archivos.addLayout(barra_archivos)
 
-        # --- Preview (Play/Stop) ---
+        # --- Previo (preescucha, Play/Stop) ---
         barra_preview = QHBoxLayout()
-        self.btn_play_preview = QPushButton("▶ Play")
+        self.btn_play_preview = QPushButton("▶ Previo")
         self.btn_play_preview.setObjectName("btnPlay")
+        self.btn_play_preview.setToolTip("Escuchar el archivo seleccionado (no sale al aire)")
         self.btn_stop_preview = QPushButton("■ Stop")
         self.btn_stop_preview.setObjectName("btnStop")
         self.btn_play_preview.clicked.connect(self.solicitud_play_preview.emit)
@@ -166,6 +216,56 @@ class VentanaExplorador(QWidget):
 
         layout_grupo.addWidget(self.splitter)
         layout_principal.addWidget(grupo)
+
+    # ------------------------------------------------------------------
+    # Expandir/Restaurar (lo maneja MainWindow, que es dueña del
+    # splitter principal de las 3 ventanas).
+    # ------------------------------------------------------------------
+    def set_expandido(self, expandido: bool):
+        self.btn_expandir.setText("⤡ Restaurar" if expandido else "⤢ Expandir")
+        self.btn_expandir.setToolTip(
+            "Volver al reparto de 3 columnas" if expandido
+            else "Expandir esta ventana para trabajar con más visibilidad"
+        )
+
+    # ------------------------------------------------------------------
+    # Búsqueda por título/artista (barra debajo del título). Filtra
+    # TODA la biblioteca sin importar la categoría, y muestra los
+    # resultados en el mismo tree_archivos — mientras tanto se
+    # deshabilita el árbol de categorías para no mezclar estados.
+    # ------------------------------------------------------------------
+    def _buscar(self):
+        texto = self.txt_busqueda.text().strip().lower()
+        if not texto:
+            self._limpiar_busqueda()
+            return
+
+        resultados = []
+
+        def visitar(item):
+            for registro in (item.data(0, ROL_ARCHIVOS) or []):
+                titulo = (registro.get("titulo") or "").lower()
+                artista = (registro.get("artista") or "").lower()
+                if texto in titulo or texto in artista:
+                    resultados.append(registro)
+
+        self._para_cada_categoria(visitar)
+
+        self._en_busqueda = True
+        self.tree_categorias.setEnabled(False)
+        self.tree_archivos.clear()
+        for registro in resultados:
+            self._agregar_fila_archivo(registro)
+
+        self.busqueda_realizada.emit(len(resultados))
+
+    def _limpiar_busqueda(self):
+        if not self._en_busqueda and not self.txt_busqueda.text():
+            return
+        self._en_busqueda = False
+        self.txt_busqueda.clear()
+        self.tree_categorias.setEnabled(True)
+        self._on_categoria_seleccionada(self._categoria_actual(), None)
 
     # ------------------------------------------------------------------
     # Persistencia (config/data/biblioteca.json) — ver nota al inicio
@@ -236,6 +336,8 @@ class VentanaExplorador(QWidget):
         return self.tree_categorias.currentItem()
 
     def _on_categoria_seleccionada(self, actual, anterior):
+        if self._en_busqueda:
+            return  # no pisar los resultados de búsqueda con la categoría
         self.tree_archivos.clear()
         if actual is None:
             return
@@ -244,12 +346,20 @@ class VentanaExplorador(QWidget):
             self._agregar_fila_archivo(registro)
 
     def _agregar_fila_archivo(self, registro: dict):
-        item = QTreeWidgetItem([
-            registro.get("titulo", ""),
-            registro.get("artista", ""),
-            registro.get("genero", ""),
-            registro.get("codigo", ""),
-        ])
+        duracion = registro.get("duracion")
+        if not duracion:
+            # Migración silenciosa: registros guardados antes de que
+            # existiera la columna Duración la calculan una vez y
+            # quedan con ella cacheada de ahí en más.
+            duracion = obtener_duracion_formateada(registro.get("ruta", ""))
+            registro["duracion"] = duracion
+
+        item = QTreeWidgetItem()
+        item.setText(COL_DURACION, duracion)
+        item.setText(COL_TITULO, registro.get("titulo", ""))
+        item.setText(COL_ARTISTA, registro.get("artista", ""))
+        item.setText(COL_CATEGORIA, registro.get("genero", ""))
+        item.setText(COL_CODIGO, registro.get("codigo", ""))
         item.setData(0, Qt.ItemDataRole.UserRole, registro.get("ruta", ""))  # para el drag
         item.setData(0, ROL_REGISTRO, registro)
         self._pintar_por_genero(item, registro.get("genero", ""))
@@ -313,7 +423,9 @@ class VentanaExplorador(QWidget):
         self._guardar_biblioteca()
 
     # ------------------------------------------------------------------
-    # Alta de archivos: diálogo de confirmación + análisis de audio
+    # Alta de archivos: UNO -> diálogo completo (título/artista/género
+    # editables); VARIOS (selección múltiple o arrastre masivo) ->
+    # un solo diálogo de categoría+género para todo el lote.
     # ------------------------------------------------------------------
     def _agregar_archivos(self):
         rutas, _ = QFileDialog.getOpenFileNames(
@@ -323,11 +435,15 @@ class VentanaExplorador(QWidget):
         if not rutas:
             return
 
+        rutas_validas = [ruta for ruta in rutas if ruta.lower().endswith(EXTENSIONES_SOPORTADAS)]
+        if not rutas_validas:
+            return
+
         categoria_sugerida = self._categoria_actual()
-        for ruta in rutas:
-            if not ruta.lower().endswith(EXTENSIONES_SOPORTADAS):
-                continue
-            self._dar_de_alta_archivo(ruta, categoria_sugerida)
+        if len(rutas_validas) == 1:
+            self._dar_de_alta_archivo(rutas_validas[0], categoria_sugerida)
+        else:
+            self._importar_archivos_masivo(rutas_validas, categoria_sugerida)
 
     def _dar_de_alta_archivo(self, ruta: str, categoria_sugerida):
         dialogo = DialogoAgregarArchivo(ruta, self.tree_categorias, categoria_sugerida, parent=self)
@@ -347,6 +463,7 @@ class VentanaExplorador(QWidget):
             "genero": datos["genero"],
             "codigo": datos["codigo"],
             "ruta": ruta,
+            "duracion": obtener_duracion_formateada(ruta),
             "punto_inicio_ms": analisis["punto_inicio_ms"],
             "punto_fin_ms": analisis["punto_fin_ms"] or None,
             "ganancia_db": analisis["ganancia_db"],
@@ -358,20 +475,69 @@ class VentanaExplorador(QWidget):
         registros.append(registro)
         item_categoria.setData(0, ROL_ARCHIVOS, registros)
 
-        if item_categoria is self._categoria_actual():
+        if item_categoria is self._categoria_actual() and not self._en_busqueda:
             self._agregar_fila_archivo(registro)
 
         self._guardar_biblioteca()
         self.archivo_agregado.emit(ruta)
 
+    def _importar_archivos_masivo(self, rutas: list, categoria_sugerida):
+        """Un solo diálogo para TODO el lote: se elige una categoría y
+        un género que se aplican a todos, el título de cada uno sale
+        del nombre de archivo. Pensado para cargar de golpe."""
+        dialogo = DialogoAgregarArchivosMasivo(rutas, self.tree_categorias, categoria_sugerida, parent=self)
+        if dialogo.exec() != DialogoAgregarArchivosMasivo.DialogCode.Accepted:
+            return
+        datos = dialogo.resultado()
+        if not datos:
+            return
+
+        item_categoria = datos["item_categoria"]
+        genero = datos["genero"]
+        config = cargar_configuracion()
+        tolerancia = config["reproduccion"].get("tolerancia_silencio_segundos", 2.0)
+
+        registros = item_categoria.data(0, ROL_ARCHIVOS) or []
+        siguiente_numero = len(registros) + 1
+        prefijo = GENERO_PREFIJOS_CODIGO.get(genero, "GEN")
+
+        for ruta in rutas:
+            analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia)
+            registro = {
+                "titulo": os.path.splitext(os.path.basename(ruta))[0],
+                "artista": "",
+                "genero": genero,
+                "codigo": f"{prefijo}{siguiente_numero:05d}",
+                "ruta": ruta,
+                "duracion": obtener_duracion_formateada(ruta),
+                "punto_inicio_ms": analisis["punto_inicio_ms"],
+                "punto_fin_ms": analisis["punto_fin_ms"] or None,
+                "ganancia_db": analisis["ganancia_db"],
+                "analizado": analisis["analizado"],
+            }
+            registros.append(registro)
+            siguiente_numero += 1
+
+        item_categoria.setData(0, ROL_ARCHIVOS, registros)
+        if item_categoria is self._categoria_actual() and not self._en_busqueda:
+            self._on_categoria_seleccionada(item_categoria, None)
+
+        self._guardar_biblioteca()
+        self.archivo_agregado.emit(f"{len(rutas)} archivos")
+
     # ------------------------------------------------------------------
-    # Reemplazar / Eliminar
+    # Reemplazar / Eliminar (Eliminar admite selección múltiple)
     # ------------------------------------------------------------------
     def _reemplazar_archivo(self):
         item = self.tree_archivos.currentItem()
-        categoria = self._categoria_actual()
-        if item is None or categoria is None:
+        if item is None:
             QMessageBox.information(self, "Reemplazar", "Seleccioná un archivo.")
+            return
+
+        registro_actual = item.data(0, ROL_REGISTRO)
+        categoria = self._buscar_categoria_de_ruta(registro_actual.get("ruta")) if registro_actual else None
+        if categoria is None:
+            QMessageBox.warning(self, "Reemplazar", "No se encontró la categoría de este archivo.")
             return
 
         ruta_nueva, _ = QFileDialog.getOpenFileName(
@@ -388,6 +554,7 @@ class VentanaExplorador(QWidget):
         analisis = analizar_audio(ruta_nueva, tolerancia_silencio_segundos=tolerancia)
 
         registro["ruta"] = ruta_nueva
+        registro["duracion"] = obtener_duracion_formateada(ruta_nueva)
         registro["punto_inicio_ms"] = analisis["punto_inicio_ms"]
         registro["punto_fin_ms"] = analisis["punto_fin_ms"] or None
         registro["ganancia_db"] = analisis["ganancia_db"]
@@ -395,35 +562,45 @@ class VentanaExplorador(QWidget):
 
         item.setData(0, Qt.ItemDataRole.UserRole, ruta_nueva)
         item.setData(0, ROL_REGISTRO, registro)
+        item.setText(COL_DURACION, registro["duracion"])
         self._sincronizar_registro_en_categoria(categoria, ruta_anterior, registro)
         self._guardar_biblioteca()
 
     def _eliminar_archivo(self):
-        item = self.tree_archivos.currentItem()
-        categoria = self._categoria_actual()
-        if item is None or categoria is None:
+        items = self.tree_archivos.selectedItems()
+        if not items:
             return
 
         config = cargar_configuracion()
         if config["general"]["confirmar_antes_de_eliminar"]:
+            descripcion = f"'{items[0].text(COL_TITULO)}'" if len(items) == 1 else f"estos {len(items)} archivos"
             respuesta = QMessageBox.question(
-                self, "Eliminar", f"¿Quitar '{item.text(0)}' de la biblioteca?",
+                self, "Eliminar", f"¿Quitar {descripcion} de la biblioteca?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if respuesta != QMessageBox.StandardButton.Yes:
                 return
 
-        registro = item.data(0, ROL_REGISTRO)
-        ruta = registro.get("ruta") if registro else None
-        indice = self.tree_archivos.indexOfTopLevelItem(item)
-        self.tree_archivos.takeTopLevelItem(indice)
-
-        if ruta:
-            registros = categoria.data(0, ROL_ARCHIVOS) or []
-            registros = [r for r in registros if r.get("ruta") != ruta]
+        rutas_eliminadas = []
+        for item in list(items):
+            registro = item.data(0, ROL_REGISTRO)
+            ruta = registro.get("ruta") if registro else None
+            indice = self.tree_archivos.indexOfTopLevelItem(item)
+            if indice >= 0:
+                self.tree_archivos.takeTopLevelItem(indice)
+            if not ruta:
+                continue
+            categoria = self._buscar_categoria_de_ruta(ruta)
+            if categoria is None:
+                continue
+            registros = [r for r in (categoria.data(0, ROL_ARCHIVOS) or []) if r.get("ruta") != ruta]
             categoria.setData(0, ROL_ARCHIVOS, registros)
+            rutas_eliminadas.append(ruta)
+
+        if rutas_eliminadas:
             self._guardar_biblioteca()
-            self.archivo_eliminado.emit(ruta)
+            for ruta in rutas_eliminadas:
+                self.archivo_eliminado.emit(ruta)
 
     def _sincronizar_registro_en_categoria(self, categoria, ruta_anterior, registro):
         """Reemplaza, en la lista persistida de la categoría, la
@@ -440,43 +617,70 @@ class VentanaExplorador(QWidget):
         categoria.setData(0, ROL_ARCHIVOS, registros)
 
     # ------------------------------------------------------------------
-    # Mover un archivo de categoría arrastrándolo (columna derecha ->
-    # columna izquierda), sin perder ninguna metadata (nombre editorial,
-    # artista, género, código, puntos de recorte, ganancia).
+    # Mover archivo(s) de categoría arrastrándolos (columna derecha ->
+    # columna izquierda, con selección múltiple), sin perder ninguna
+    # metadata. Si lo arrastrado NO es un archivo ya conocido de la
+    # biblioteca (viene de afuera, ej. el explorador de archivos del
+    # sistema), se interpreta como IMPORTACIÓN en vez de movimiento.
     # ------------------------------------------------------------------
-    def _on_archivo_soltado_en_categoria(self, ruta: str, item_categoria_destino):
+    def _on_archivos_soltados_en_categoria(self, rutas: list, item_categoria_destino):
         if item_categoria_destino is None:
-            QMessageBox.information(self, "Mover", "Soltá el archivo sobre una categoría concreta.")
+            QMessageBox.information(self, "Mover", "Soltá los archivos sobre una categoría concreta.")
             return
 
-        categoria_origen = self._categoria_actual()
-        if categoria_origen is None or categoria_origen is item_categoria_destino:
-            return  # soltado sobre la misma categoría que ya se está viendo: no hay nada que mover
+        rutas_conocidas = []
+        rutas_externas = []
+        for ruta in rutas:
+            if self.buscar_registro_por_ruta(ruta) is not None:
+                rutas_conocidas.append(ruta)
+            elif ruta.lower().endswith(EXTENSIONES_SOPORTADAS) and os.path.isfile(ruta):
+                rutas_externas.append(ruta)
 
-        registros_origen = categoria_origen.data(0, ROL_ARCHIVOS) or []
-        registro = next((r for r in registros_origen if r.get("ruta") == ruta), None)
-        if registro is None:
-            return  # el archivo arrastrado no pertenece a la categoría actualmente vista
+        if rutas_conocidas:
+            self._mover_archivos_a_categoria(rutas_conocidas, item_categoria_destino)
 
-        registros_origen = [r for r in registros_origen if r.get("ruta") != ruta]
-        categoria_origen.setData(0, ROL_ARCHIVOS, registros_origen)
+        if len(rutas_externas) == 1:
+            self._dar_de_alta_archivo(rutas_externas[0], item_categoria_destino)
+        elif len(rutas_externas) > 1:
+            self._importar_archivos_masivo(rutas_externas, item_categoria_destino)
 
-        registros_destino = item_categoria_destino.data(0, ROL_ARCHIVOS) or []
-        registros_destino.append(registro)
-        item_categoria_destino.setData(0, ROL_ARCHIVOS, registros_destino)
+    def _mover_archivos_a_categoria(self, rutas: list, categoria_destino):
+        movidos = []
+        for ruta in rutas:
+            registro = self.buscar_registro_por_ruta(ruta)
+            if registro is None:
+                continue
+            categoria_origen = self._buscar_categoria_de_ruta(ruta)
+            if categoria_origen is None or categoria_origen is categoria_destino:
+                continue
 
-        # Refresca la lista de archivos visible (el ítem movido ya no
-        # pertenece a la categoría que se está mostrando).
-        self._on_categoria_seleccionada(categoria_origen, None)
+            registros_origen = [r for r in (categoria_origen.data(0, ROL_ARCHIVOS) or []) if r.get("ruta") != ruta]
+            categoria_origen.setData(0, ROL_ARCHIVOS, registros_origen)
+
+            registros_destino = categoria_destino.data(0, ROL_ARCHIVOS) or []
+            registros_destino.append(registro)
+            categoria_destino.setData(0, ROL_ARCHIVOS, registros_destino)
+            movidos.append(registro.get("titulo", ruta))
+
+        if not movidos:
+            return
+
+        if not self._en_busqueda:
+            self._on_categoria_seleccionada(self._categoria_actual(), None)
 
         self._guardar_biblioteca()
-        self.archivo_movido.emit(registro.get("titulo", ruta), item_categoria_destino.text(0))
+        nombres = movidos[0] if len(movidos) == 1 else f"{len(movidos)} archivos"
+        self.archivo_movido.emit(nombres, categoria_destino.text(0))
 
     # ------------------------------------------------------------------
     # Menú contextual: Importar, Exportar, Reemplazar, Eliminar, Editar
     # ------------------------------------------------------------------
     def _mostrar_menu_contextual(self, posicion):
-        item = self.tree_archivos.itemAt(posicion)
+        item_bajo_cursor = self.tree_archivos.itemAt(posicion)
+        seleccionados = self.tree_archivos.selectedItems()
+        if item_bajo_cursor is not None and item_bajo_cursor not in seleccionados:
+            self.tree_archivos.setCurrentItem(item_bajo_cursor)
+            seleccionados = [item_bajo_cursor]
 
         menu = QMenu(self)
         accion_importar = menu.addAction("📥 Importar...")
@@ -485,26 +689,24 @@ class VentanaExplorador(QWidget):
         accion_reemplazar = menu.addAction("⟲ Reemplazar...")
         accion_editar = menu.addAction("🎚 Editar")
         menu.addSeparator()
-        accion_eliminar = menu.addAction("✕ Eliminar")
+        texto_eliminar = "✕ Eliminar" if len(seleccionados) <= 1 else f"✕ Eliminar {len(seleccionados)}"
+        accion_eliminar = menu.addAction(texto_eliminar)
 
-        hay_seleccion = item is not None
-        accion_exportar.setEnabled(hay_seleccion)
-        accion_reemplazar.setEnabled(hay_seleccion)
-        accion_editar.setEnabled(hay_seleccion)
-        accion_eliminar.setEnabled(hay_seleccion)
-
-        if item is not None:
-            self.tree_archivos.setCurrentItem(item)
+        hay_seleccion_unica = len(seleccionados) == 1
+        accion_exportar.setEnabled(hay_seleccion_unica)
+        accion_reemplazar.setEnabled(hay_seleccion_unica)
+        accion_editar.setEnabled(hay_seleccion_unica)
+        accion_eliminar.setEnabled(len(seleccionados) > 0)
 
         accion_elegida = menu.exec(self.tree_archivos.viewport().mapToGlobal(posicion))
         if accion_elegida == accion_importar:
             self._agregar_archivos()
         elif accion_elegida == accion_exportar:
-            self._exportar_archivo(item)
+            self._exportar_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_reemplazar:
             self._reemplazar_archivo()
         elif accion_elegida == accion_editar:
-            self._editar_archivo(item)
+            self._editar_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_eliminar:
             self._eliminar_archivo()
 
@@ -597,36 +799,34 @@ class VentanaExplorador(QWidget):
         self._para_cada_categoria(visitar)
         return hallazgo.get("registro")
 
-    def eliminar_registro_por_ruta(self, ruta: str) -> bool:
-        """Borra definitivamente el registro de TODA la biblioteca
-        (no solo de una lista). Usado por "Eliminar de la biblioteca"
-        en el menú contextual de Ventana 2 / Auxiliar.
-
-        IMPORTANTE: PySide6 devuelve una COPIA de los objetos Python
-        guardados con setData()/data() en roles custom (no la misma
-        referencia) — comparar por identidad (`is`) contra un dict
-        obtenido en otra llamada nunca matchea. Por eso el filtro acá
-        va por `ruta` (clave estable), no por identidad de objeto.
-        """
+    def _buscar_categoria_de_ruta(self, ruta: str):
+        """Categoría (QTreeWidgetItem) que tiene HOY el registro con
+        esa ruta, sin importar cuál esté seleccionada/mostrada — así
+        Eliminar/Reemplazar/mover funcionan igual de bien viendo una
+        categoría normal o resultados de búsqueda mezclados."""
         hallazgo = {}
 
         def visitar(item):
             if "categoria" in hallazgo:
                 return
-            registros = item.data(0, ROL_ARCHIVOS) or []
-            if any(r.get("ruta") == ruta for r in registros):
+            if any(r.get("ruta") == ruta for r in (item.data(0, ROL_ARCHIVOS) or [])):
                 hallazgo["categoria"] = item
 
         self._para_cada_categoria(visitar)
+        return hallazgo.get("categoria")
 
-        categoria = hallazgo.get("categoria")
+    def eliminar_registro_por_ruta(self, ruta: str) -> bool:
+        """Borra definitivamente el registro de TODA la biblioteca
+        (no solo de una lista). Usado por "Eliminar de la biblioteca"
+        en el menú contextual de Ventana 2 / Auxiliar."""
+        categoria = self._buscar_categoria_de_ruta(ruta)
         if categoria is None:
             return False
 
         registros = [r for r in (categoria.data(0, ROL_ARCHIVOS) or []) if r.get("ruta") != ruta]
         categoria.setData(0, ROL_ARCHIVOS, registros)
 
-        if categoria is self._categoria_actual():
+        if categoria is self._categoria_actual() and not self._en_busqueda:
             self._on_categoria_seleccionada(categoria, None)
 
         self._guardar_biblioteca()

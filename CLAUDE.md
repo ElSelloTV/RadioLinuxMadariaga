@@ -115,6 +115,19 @@ bloques de Publicidad con `ventana_publicidad.cargar_bloques(...)`.
 Si no hay nada guardado para el día, no toca lo que ya estaba
 cargado.
 
+**Selección múltiple + indicador "en vivo" (implementado)**: el
+árbol admite Ctrl/Shift+click (`ExtendedSelection`); menú contextual
+"Quitar de la lista" opera sobre todos los seleccionados a la vez.
+`IndicadorEnVivo` (`gui/indicador_en_vivo.py`) — círculo que titila
+en rojo mientras hay audio sonando de verdad (no solo un ítem
+marcado) — junto al estado; `GestorPublicidad` lo actualiza en cada
+play/pausa/stop y también cada 500ms (self-corrige solo).
+
+**Modo compacto (implementado)**: fuente 8pt + padding chico en el
+árbol (`gui/styles.py`, selector `#tree_publicidad`) y el mínimo de
+columna bajó de 45px a 24px — antes ese 45px no dejaba achicar más
+las columnas, era el motivo real del reclamo "no me deja achicar".
+
 ### Ventana 2 — Emisión + Ventana Auxiliar
 Ambas son un envoltorio delgado sobre `PanelReproductor`
 (`gui/panel_reproductor.py`) — la misma clase de UI, reutilizada por
@@ -204,6 +217,41 @@ motor saliente sigue fundiéndose solo en paralelo hasta apagarse.
 propio Pisador, no se dispara (dos rampas de volumen peleando por el
 mismo motor a la vez) — pendiente de resolver si hace falta.
 
+**Bug real corregido — el Pisador no sonaba**: `GestorPlaylist.panel`
+es la ventana WRAPPER (`VentanaEmision`/`VentanaAuxiliar`), no
+`PanelReproductor` directo. `ruta_pisador_en_fila` existía en
+`PanelReproductor` pero nunca se delegó en los wrappers — el código
+tenía un `hasattr()` defensivo que absorbía el `AttributeError` en
+silencio y el motor de Pisador jamás se disparaba, sin ningún error
+visible. Corregido agregando la delegación en ambos wrappers Y
+sacando el `hasattr` (ya no hace falta, y **taparía el mismo bug de
+nuevo si volviera a faltar** — regla: cuando un wrapper delega en
+`PanelReproductor`, delegar TODOS los métodos que el core necesita,
+nunca confiar en que un `hasattr` lo salve).
+
+**Fade en el Pisador (implementado)**: `MotorAudio.fade_volumen_a()`
+(rampa por pasos con QTimer, mismo patrón que `crossfade_a`) — el
+ducking del tema principal (bajar al arrancar el Pisador, subir al
+terminar) y el corte del Pisador si se interrumpe ya NO son saltos
+de volumen bruscos, son fades de `DURACION_FADE_PISADOR_SEGUNDOS`
+(0.8s, constante en `playlist_manager.py`).
+
+**Selección múltiple + arrastre múltiple (implementado)**: lista con
+`ExtendedSelection`; Quitar/Eliminar en el menú contextual operan
+sobre toda la selección. El reordenar por arrastre se DESHABILITA a
+propósito con 2+ seleccionados (evita mover "un poco cada uno" de
+forma confusa) — la selección múltiple ahí sirve para arrastrar
+varios temas juntos hacia otra ventana o para acciones en lote, no
+para reordenar.
+
+**Barra de progreso / seek (implementado, SOLO Ventana 2, no
+Auxiliar)**: `PanelReproductor(mostrar_barra_progreso=True)` agrega
+un QSlider 0-1000‰. `GestorPlaylist` lo alimenta desde
+`restante_ms_cambio` + `MotorAudio.duracion_total_ms()`, y al soltar
+el slider llama `MotorAudio.buscar_posicion_ms()`. La gating de
+"solo Ventana 2" es por `hasattr(self.panel, "solicitud_buscar_posicion")`
+— `VentanaAuxiliar` a propósito NO expone esa señal/método.
+
 ### Ventana 3 — Explorador (la más elaborada, "terminada" según Santiago)
 
 **Persistencia (implementado, pedido explícito de Santiago)**: toda
@@ -235,29 +283,63 @@ definitivo no se toca hasta que el `.tmp` está completo.
   (rol `ROL_ARCHIVOS`), no en un diccionario plano — así no hay
   límite de profundidad ni colisión de nombres.
 - Archivos a la derecha (`tree_archivos`, `ArbolOrigenArrastre`),
-  columnas Título/Artista/Género/Código, coloreadas por género:
-  Música=verde, Publicidad=amarillo, Separador=naranja,
+  columnas **Duración/Título/Artista/Categoría/Código** (orden
+  pedido explícito; "Categoría" es el género de siempre, solo
+  renombrado en el header), **movibles** (`header.setSectionsMovable`)
+  y fuente 8pt (`gui/styles.py`, selector `#tree_archivos`), coloreadas
+  por género: Música=verde, Publicidad=amarillo, Separador=naranja,
   Pisador=violeta, Artística=azul (`gui/styles.py:GENERO_COLORES`).
-- **Drag&Drop interno**: arrastrar de la columna derecha a una
-  categoría de la izquierda MUEVE el archivo (con toda su metadata)
-  entre categorías. Implementado en
-  `_on_archivo_soltado_en_categoria` en `ventana_explorador.py`.
-- **Drag&Drop externo**: de ahí hacia Ventana 1, 2, Auxiliar y
-  Programador (agrega el archivo a esas listas).
-- Al agregar un archivo se abre `DialogoAgregarArchivo`: elegir
+  `registro["duracion"]` se calcula una vez (mutagen) y queda
+  cacheado en el registro; los registros viejos sin ese campo se
+  migran solos la primera vez que se muestran.
+- **Selección múltiple** (`ExtendedSelection`) en `tree_archivos`:
+  arrastrar varios a la vez exporta varias URLs de una
+  (`ArbolOrigenArrastre.startDrag`), y Eliminar borra todos los
+  seleccionados con una sola confirmación.
+- **Drag&Drop interno/externo unificado y en LOTE**:
+  `_on_archivos_soltados_en_categoria` recibe la lista completa de
+  rutas soltadas de una vez (`ArbolConDrop.archivos_soltados`, señal
+  nueva además de la de a uno). Si la ruta YA es un registro
+  conocido de la biblioteca (`buscar_registro_por_ruta`), es un
+  MOVIMIENTO entre categorías; si NO lo es (viene de afuera, ej. el
+  explorador de archivos del sistema), es una IMPORTACIÓN — con 1
+  archivo va al diálogo de siempre, con 2+ va a
+  `DialogoAgregarArchivosMasivo` (un solo diálogo de categoría+género
+  para todo el lote, título derivado del nombre de archivo).
+- Al agregar UN archivo se abre `DialogoAgregarArchivo`: elegir
   categoría (combo jerárquico con sangría), nombre editorial (puede
   diferir del archivo fuente), artista, género. El código correlativo
   se calcula solo: prefijo por género (`GENERO_PREFIJOS_CODIGO`) +
-  número correlativo **dentro de esa categoría específica**.
+  número correlativo **dentro de esa categoría específica**. El botón
+  "＋ Agregar" también acepta selección múltiple en el diálogo de
+  archivos del sistema — con 2+ elegidos salta directo al flujo
+  masivo de arriba.
+- **Búsqueda** (`gui/ventana_explorador.py:_buscar`/`_limpiar_busqueda`):
+  barra debajo del título con lupa (clic) y Enter, filtra TODA la
+  biblioteca por título/artista sin importar la categoría y muestra
+  los resultados en el mismo `tree_archivos`; mientras tanto
+  `tree_categorias` se deshabilita para no mezclar estados. Limpiar
+  la búsqueda vuelve a la categoría que estaba seleccionada.
+- **Expandir/Restaurar** (`gui/ventana_explorador.py` botón +
+  `MainWindow._alternar_expansion_explorador`): la Ventana 3 puede
+  ocupar casi toda la pantalla principal (colapsa Publicidad/Emisión
+  a un costado con `splitter.setSizes([1, 1, total])`, guardando los
+  tamaños previos) y volver con el mismo botón. Dueña del splitter es
+  `MainWindow`, no la ventana — por eso es un signal/callback, no un
+  método local.
+- Botón de preescucha se llama **"▶ Previo"**, no "Play" (a propósito,
+  para no confundirlo con la reproducción real al aire de Ventana 1/2).
 - Menú contextual (botón derecho): Importar, Exportar, Reemplazar,
-  Eliminar, Editar (abre el editor de audio predeterminado del
+  Eliminar (en lote si hay selección múltiple), Editar (abre el
+  editor de audio predeterminado del
   sistema vía `QDesktopServices`; si no hay ninguno asociado, ofrece
   elegir un ejecutable a mano).
-- Botones Play/Stop de preescucha (`GestorExplorador`).
-- Columnas: última columna en modo `Stretch` + `setMinimumSectionSize`
-  para que nunca quede tapada al redimensionar (ver
-  `configurar_columnas_ajustables` en `common_widgets.py`) — esto fue
-  un bug reportado explícitamente por Santiago y ya está resuelto.
+- Botones Previo/Stop de preescucha (`GestorExplorador`).
+- Columnas: última columna (Código) en modo `Stretch` +
+  `setMinimumSectionSize` para que nunca quede tapada al
+  redimensionar (ver `configurar_columnas_ajustables` en
+  `common_widgets.py`) — esto fue un bug reportado explícitamente por
+  Santiago y ya está resuelto.
 
 ### Motor de agregado de tema musical (`core/analizador_audio.py`)
 No destructivo: nunca reescribe el archivo original. Analiza con
@@ -388,10 +470,24 @@ python3 main.py
 6. Integrar crossfade + Pisador para cuando el tema ENTRANTE de un
    crossfade tiene su propio Pisador (limitación conocida, ver nota
    en Ventana 2).
+7. ~~El Pisador no sonaba~~ — era un bug real de delegación faltante
+   (ver Ventana 2 más arriba), corregido, y de paso se le agregó fade
+   en vez de saltos de volumen. Falta confirmar con audio real que
+   suene bien (acá se probó con motor simulado).
+8. Ítems básicos de UI (selección múltiple, Ventana 3 expandible,
+   import masivo, búsqueda, indicador en vivo, barra de progreso,
+   modo compacto) — implementados, ver cada ventana más arriba.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - El bug de Drag&Drop que no funcionaba (ver regla de oro arriba).
+- **El Pisador no sonaba porque faltaba una delegación** (ver nota
+  completa en Ventana 2): cuando un wrapper (`VentanaEmision`/
+  `VentanaAuxiliar`) delega métodos en `PanelReproductor`, hay que
+  delegar TODOS los que el core (`GestorPlaylist`) necesita — un
+  `hasattr()` defensivo puede tapar el faltante en silencio sin
+  ningún error visible. Si algo "no pasa nada" sin traceback, primero
+  sospechar de una delegación incompleta entre wrapper y panel.
 - La columna que se tapaba al redimensionar (Stretch +
   minimumSectionSize).
 - `externally-managed-environment` de pip → usar venv siempre.

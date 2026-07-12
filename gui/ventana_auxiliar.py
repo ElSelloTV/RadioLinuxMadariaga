@@ -66,6 +66,9 @@ class VentanaAuxiliar(QDialog):
     def agregar_pisador(self, fila_padre, titulo, duracion, codigo, ruta):
         return self.panel.agregar_pisador(fila_padre, titulo, duracion, codigo, ruta)
 
+    def ruta_pisador_en_fila(self, fila):
+        return self.panel.ruta_pisador_en_fila(fila)
+
     def cantidad_items(self):
         return self.panel.cantidad_items()
 
@@ -77,3 +80,6 @@ class VentanaAuxiliar(QDialog):
 
     def fila_siguiente(self):
         return self.panel.fila_siguiente()
+
+    def set_indicador_en_vivo(self, activo: bool):
+        self.panel.set_indicador_en_vivo(activo)

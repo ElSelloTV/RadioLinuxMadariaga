@@ -117,6 +117,27 @@ QHeaderView::section {{
     border: 1px solid {COLOR_BORDE};
 }}
 
+/* ---------- Ventana 3 (Explorador): tipografía más chica en los
+   ítems (pedido explícito) para tener más visibilidad de los datos
+   sin agrandar la ventana. ---------- */
+QTreeWidget#tree_archivos, QTreeWidget#tree_categorias {{
+    font-size: 8pt;
+}}
+QTreeWidget#tree_archivos::item, QTreeWidget#tree_categorias::item {{
+    padding: 1px;
+}}
+
+/* ---------- Modo compacto: Ventana 1 (Publicidad) y Ventana 2 /
+   Auxiliar (Emisión) — fuente y relleno más chicos para poder
+   achicar columnas de verdad (antes un mínimo de sección lo
+   impedía). ---------- */
+QTreeWidget#tree_publicidad, QTreeWidget#tree_reproductor {{
+    font-size: 8pt;
+}}
+QTreeWidget#tree_publicidad::item, QTreeWidget#tree_reproductor::item {{
+    padding: 1px;
+}}
+
 /* ---------- Botones de transporte ---------- */
 QPushButton {{
     background-color: #3d3d3d;

@@ -46,12 +46,18 @@ def configurar_columnas_ajustables(tree: QTreeWidget, anchos_iniciales: list):
 class ArbolConDrop(QTreeWidget):
     """QTreeWidget que ACEPTA arrastres soltados (DropOnly) desde otra ventana.
 
-    Emite archivo_soltado(ruta, item_destino). item_destino puede ser
-    None si se soltó fuera de cualquier fila (se interpreta como "al
-    final de la lista" / "en el último bloque").
+    Emite archivo_soltado(ruta, item_destino) UNA VEZ POR ARCHIVO
+    (compatibilidad con quien solo agrega de a uno), y además
+    archivos_soltados(lista_de_rutas, item_destino) con el LOTE
+    completo de una sola vez — la usa el Explorador para poder
+    importar/mover varios archivos arrastrados juntos con un solo
+    diálogo en vez de uno por archivo. item_destino puede ser None si
+    se soltó fuera de cualquier fila (se interpreta como "al final de
+    la lista" / "en el último bloque").
     """
 
     archivo_soltado = Signal(str, object)
+    archivos_soltados = Signal(list, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -81,9 +87,11 @@ class ArbolConDrop(QTreeWidget):
         punto = event.position().toPoint() if hasattr(event, "position") else event.pos()
         item_destino = self.itemAt(punto)
 
-        for ruta in rutas:
-            if ruta:
-                self.archivo_soltado.emit(ruta, item_destino)
+        rutas_validas = [ruta for ruta in rutas if ruta]
+        for ruta in rutas_validas:
+            self.archivo_soltado.emit(ruta, item_destino)
+        if rutas_validas:
+            self.archivos_soltados.emit(rutas_validas, item_destino)
 
         event.acceptProposedAction()
 
@@ -160,6 +168,15 @@ class ArbolReproductorConDrop(QTreeWidget):
         soltada, SIEMPRE como hermano de nivel superior — nunca lo
         anida como hijo de otro, sin importar dónde exactamente caiga
         el cursor sobre la fila destino."""
+        if len(self.selectedItems()) > 1:
+            # Con selección múltiple, reordenar "un poco cada uno" da
+            # un resultado confuso — se pide seleccionar un solo tema
+            # para reordenar (la selección múltiple sigue sirviendo
+            # para arrastrar VARIOS hacia otra ventana, o para
+            # Quitar/Eliminar en lote desde el menú contextual).
+            event.ignore()
+            return
+
         item_arrastrado = self.currentItem()
         if item_arrastrado is None or item_arrastrado.parent() is not None:
             # Un Pisador anidado no se arrastra (ya no tiene
@@ -205,7 +222,10 @@ class ArbolOrigenArrastre(QTreeWidget):
 
     Solo los ítems con una ruta física guardada en
     Qt.ItemDataRole.UserRole (columna 0) se pueden arrastrar; los
-    nodos de categoría (sin ruta) simplemente no inician drag.
+    nodos de categoría (sin ruta) simplemente no inician drag. Con
+    selección múltiple activa, arrastra TODOS los seleccionados de
+    una vez (varios archivos en el mismo mimeData) — quien reciba el
+    drop en la otra punta ya recorre la lista completa.
     """
 
     def __init__(self, parent=None):
@@ -214,16 +234,14 @@ class ArbolOrigenArrastre(QTreeWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
 
     def startDrag(self, supportedActions):
-        item = self.currentItem()
-        if item is None:
-            return
-        ruta = item.data(0, Qt.ItemDataRole.UserRole)
-        if not ruta:
-            return  # nodo de categoría, no es un archivo arrastrable
+        items = [item for item in self.selectedItems() if item.data(0, Qt.ItemDataRole.UserRole)]
+        if not items:
+            return  # nada seleccionado, o son nodos de categoría sin ruta
 
+        rutas = [item.data(0, Qt.ItemDataRole.UserRole) for item in items]
         mime_data = QMimeData()
-        mime_data.setUrls([QUrl.fromLocalFile(ruta)])
-        mime_data.setText(ruta)
+        mime_data.setUrls([QUrl.fromLocalFile(ruta) for ruta in rutas])
+        mime_data.setText(rutas[0])
 
         drag = QDrag(self)
         drag.setMimeData(mime_data)

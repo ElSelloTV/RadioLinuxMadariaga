@@ -35,13 +35,14 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
-    QTreeWidgetItem, QHeaderView, QMenu, QMessageBox
+    QTreeWidgetItem, QHeaderView, QMenu, QMessageBox, QAbstractItemView, QSlider
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QBrush
 
 from gui.common_widgets import ArbolReproductorConDrop
 from gui.etiqueta_marquesina import EtiquetaMarquesina
+from gui.indicador_en_vivo import IndicadorEnVivo
 from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
@@ -56,6 +57,7 @@ class PanelReproductor(QWidget):
     solicitud_pausa = Signal()
     solicitud_stop = Signal()
     solicitud_siguiente = Signal()
+    solicitud_buscar_posicion = Signal(int)       # 0-1000 (por mil) — solo si mostrar_barra_progreso
     item_marcado_como_siguiente = Signal(int)
     archivo_soltado = Signal(str, object)
     solicitud_abrir_auxiliar = Signal()
@@ -63,14 +65,17 @@ class PanelReproductor(QWidget):
     solicitud_agregar_pisador = Signal(int)       # fila del tema música
     solicitud_eliminar_definitivo = Signal(str)   # ruta a borrar de TODA la biblioteca
 
-    def __init__(self, titulo_panel: str, mostrar_boton_auxiliar: bool = False, parent=None):
+    def __init__(self, titulo_panel: str, mostrar_boton_auxiliar: bool = False,
+                 mostrar_barra_progreso: bool = False, parent=None):
         super().__init__(parent)
         self._item_reproduciendo = None
         self._item_siguiente = None
-        self._construir_ui(titulo_panel, mostrar_boton_auxiliar)
+        self._arrastrando_slider = False
+        self.slider_progreso = None
+        self._construir_ui(titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso)
 
     # ------------------------------------------------------------------
-    def _construir_ui(self, titulo_panel, mostrar_boton_auxiliar):
+    def _construir_ui(self, titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso):
         layout_principal = QVBoxLayout(self)
         layout_principal.setContentsMargins(6, 6, 6, 6)
         layout_principal.setSpacing(6)
@@ -90,10 +95,15 @@ class PanelReproductor(QWidget):
         layout_contadores.addWidget(self.lbl_tiempo_restante)
         layout_grupo.addLayout(layout_contadores)
 
-        # Título del tema en reproducción: "sticker" de ancho fijo
-        # estilo Winamp — nunca empuja el tamaño del panel/columna.
+        # Indicador "en vivo" (titila mientras hay audio sonando de
+        # verdad) + título del tema: "sticker" de ancho fijo estilo
+        # Winamp, nunca empuja el tamaño del panel/columna.
+        fila_titulo = QHBoxLayout()
+        self.indicador_en_vivo = IndicadorEnVivo()
+        fila_titulo.addWidget(self.indicador_en_vivo)
         self.lbl_titulo_actual = EtiquetaMarquesina()
-        layout_grupo.addWidget(self.lbl_titulo_actual)
+        fila_titulo.addWidget(self.lbl_titulo_actual)
+        layout_grupo.addLayout(fila_titulo)
 
         # 2) Controles de reproducción (debajo del tiempo, arriba de la lista)
         barra_botones = QHBoxLayout()
@@ -119,8 +129,18 @@ class PanelReproductor(QWidget):
 
         layout_grupo.addLayout(barra_botones)
 
+        # 2.1) Barra de progreso (buscar posición) — solo Ventana 2
+        if mostrar_barra_progreso:
+            self.slider_progreso = QSlider(Qt.Orientation.Horizontal)
+            self.slider_progreso.setRange(0, 1000)
+            self.slider_progreso.setToolTip("Arrastrar para adelantar/retroceder")
+            self.slider_progreso.sliderPressed.connect(self._on_slider_presionado)
+            self.slider_progreso.sliderReleased.connect(self._on_slider_soltado)
+            layout_grupo.addWidget(self.slider_progreso)
+
         # 3) Lista de reproducción (al final)
         self.tree = ArbolReproductorConDrop()
+        self.tree.setObjectName("tree_reproductor")
         self.tree.setColumnCount(3)
         self.tree.setHeaderLabels(["Título", "Duración", "Código"])
         # Con decoración (flechas de expandir): un tema puede tener
@@ -128,6 +148,9 @@ class PanelReproductor(QWidget):
         self.tree.setRootIsDecorated(True)
         self.tree.setIndentation(14)
         self.tree.setAlternatingRowColors(True)
+        # Selección múltiple (Ctrl/Shift+click) para acciones en lote
+        # (quitar, eliminar) y para arrastrar varios temas a la vez.
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
         # Ajuste de columna LIBRE: todas Interactive, sin Stretch
         # forzado en la última (pedido explícito).
@@ -177,6 +200,24 @@ class PanelReproductor(QWidget):
     def actualizar_contadores(self, transcurrido: str, restante: str):
         self.lbl_tiempo_transcurrido.setText(transcurrido)
         self.lbl_tiempo_restante.setText(restante)
+
+    def set_indicador_en_vivo(self, activo: bool):
+        self.indicador_en_vivo.set_activo(activo)
+
+    # ------------------------------------------------------------------
+    # Barra de progreso (solo si mostrar_barra_progreso=True al construir)
+    # ------------------------------------------------------------------
+    def _on_slider_presionado(self):
+        self._arrastrando_slider = True
+
+    def _on_slider_soltado(self):
+        self._arrastrando_slider = False
+        self.solicitud_buscar_posicion.emit(self.slider_progreso.value())
+
+    def actualizar_progreso(self, permille: int):
+        if self.slider_progreso is None or self._arrastrando_slider:
+            return
+        self.slider_progreso.setValue(max(0, min(1000, permille)))
 
     def fila_reproduciendo(self) -> int:
         return self.tree.indexOfTopLevelItem(self._item_reproduciendo) if self._item_reproduciendo else -1
@@ -278,43 +319,56 @@ class PanelReproductor(QWidget):
 
     # ------------------------------------------------------------------
     # Menú contextual: Quitar de la lista, Información, Agregar/Quitar
-    # Pisador, Eliminar de la biblioteca (definitivo).
+    # Pisador, Eliminar de la biblioteca (definitivo). Quitar/Eliminar
+    # operan sobre TODA la selección (Ctrl/Shift+click); Información
+    # y Agregar/Quitar Pisador solo tienen sentido con un único ítem.
     # ------------------------------------------------------------------
     def _mostrar_menu_contextual(self, posicion):
-        item = self.tree.itemAt(posicion)
-        if item is None:
+        item_bajo_cursor = self.tree.itemAt(posicion)
+        seleccionados = self.tree.selectedItems()
+        if item_bajo_cursor is not None and item_bajo_cursor not in seleccionados:
+            self.tree.setCurrentItem(item_bajo_cursor)
+            seleccionados = [item_bajo_cursor]
+        if not seleccionados:
             return
 
-        es_pisador = item.parent() is not None
-        tiene_pisador = (not es_pisador) and item.childCount() > 0
+        item_unico = seleccionados[0] if len(seleccionados) == 1 else None
 
         menu = QMenu(self)
-        accion_borrar = menu.addAction("✕ Quitar de la lista")
-        accion_info = menu.addAction("ℹ Información...")
+        texto_quitar = "✕ Quitar de la lista" if item_unico is not None else f"✕ Quitar {len(seleccionados)} de la lista"
+        accion_borrar = menu.addAction(texto_quitar)
+
+        accion_info = None
+        if item_unico is not None:
+            accion_info = menu.addAction("ℹ Información...")
 
         accion_pisador = None
-        if not es_pisador:
+        if item_unico is not None and item_unico.parent() is None:
             menu.addSeparator()
-            if tiene_pisador:
+            if item_unico.childCount() > 0:
                 accion_pisador = menu.addAction("🎚 Quitar Pisador")
             else:
                 accion_pisador = menu.addAction("🎚 Agregar Pisador...")
 
         menu.addSeparator()
-        accion_eliminar = menu.addAction("🗑 Eliminar de la biblioteca...")
+        texto_eliminar = "🗑 Eliminar de la biblioteca..." if item_unico is not None \
+            else f"🗑 Eliminar {len(seleccionados)} de la biblioteca..."
+        accion_eliminar = menu.addAction(texto_eliminar)
 
         elegida = menu.exec(self.tree.viewport().mapToGlobal(posicion))
         if elegida == accion_borrar:
-            self.quitar_item(item)
-        elif elegida == accion_info:
-            self._mostrar_info(item)
+            for item in list(seleccionados):
+                self.quitar_item(item)
+        elif accion_info is not None and elegida == accion_info:
+            self._mostrar_info(item_unico)
         elif accion_pisador is not None and elegida == accion_pisador:
-            if tiene_pisador:
-                self.quitar_pisador(self.tree.indexOfTopLevelItem(item))
+            fila = self.tree.indexOfTopLevelItem(item_unico)
+            if item_unico.childCount() > 0:
+                self.quitar_pisador(fila)
             else:
-                self.solicitud_agregar_pisador.emit(self.tree.indexOfTopLevelItem(item))
+                self.solicitud_agregar_pisador.emit(fila)
         elif elegida == accion_eliminar:
-            self._solicitar_eliminacion_definitiva(item)
+            self._solicitar_eliminacion_definitiva(seleccionados)
 
     def _mostrar_info(self, item: QTreeWidgetItem):
         ruta = item.data(0, Qt.ItemDataRole.UserRole) or ""
@@ -346,22 +400,29 @@ class PanelReproductor(QWidget):
 
         QMessageBox.information(self, "Información del tema", "\n".join(lineas))
 
-    def _solicitar_eliminacion_definitiva(self, item: QTreeWidgetItem):
-        ruta = item.data(0, Qt.ItemDataRole.UserRole)
-        if not ruta:
-            QMessageBox.information(self, "Eliminar", "Este ítem no tiene un archivo asociado.")
+    def _solicitar_eliminacion_definitiva(self, items: list):
+        items_con_ruta = [item for item in items if item.data(0, Qt.ItemDataRole.UserRole)]
+        if not items_con_ruta:
+            QMessageBox.information(self, "Eliminar", "Ningún ítem seleccionado tiene un archivo asociado.")
             return
+
+        if len(items_con_ruta) == 1:
+            descripcion = f"'{items_con_ruta[0].text(0)}'"
+        else:
+            descripcion = f"estos {len(items_con_ruta)} archivos"
 
         respuesta = QMessageBox.warning(
             self, "Eliminar definitivamente",
-            f"Esto va a borrar '{item.text(0)}' de TODA la biblioteca del programa,\n"
+            f"Esto va a borrar {descripcion} de TODA la biblioteca del programa,\n"
             "no solo de esta lista. Esta acción no se puede deshacer.\n\n"
-            "¿Confirmás que querés eliminarlo por completo?",
+            "¿Confirmás que querés eliminarlos por completo?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if respuesta != QMessageBox.StandardButton.Yes:
             return
 
-        self.quitar_item(item)
-        self.solicitud_eliminar_definitivo.emit(ruta)
+        for item in items_con_ruta:
+            ruta = item.data(0, Qt.ItemDataRole.UserRole)
+            self.quitar_item(item)
+            self.solicitud_eliminar_definitivo.emit(ruta)
