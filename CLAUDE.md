@@ -66,17 +66,18 @@ gui/                        # SOLO interfaz — nunca lógica de audio acá
 
 core/                        # lógica y motor de audio — nunca widgets acá
   audio_engine.py             # MotorAudio (python-vlc), degrada si no hay libvlc
-  playlist_manager.py         # GestorPlaylist / GestorPublicidad / GestorExplorador
+  gestor_emision.py           # TODO el motor de Ventana 2/Auxiliar (GestorPlaylist) + su persistencia
+  playlist_manager.py         # GestorPublicidad / GestorExplorador / SchedulerAutomatico
   analizador_audio.py         # recorte de silencios + nivelado (pydub/ffmpeg)
-  actualizador.py             # git fetch/pull + reinicio de la app
+  actualizador.py             # git fetch/pull + reinicio de la app + subir_log_a_git
 
 config/
-  settings.py                 # config general (JSON) + programaciones (JSON)
-  data/                        # generado en runtime, NO se versiona (.gitignore)
+  settings.py                 # config general (JSON) + programaciones (JSON) + log de errores/eventos
+  data/                        # generado en runtime, NO se versiona (.gitignore salvo subida manual del log)
 
 assets/
   radiolinuxmadariaga.desktop # lanzador de escritorio
-  icono.png                    # ícono placeholder (Santiago lo va a cambiar)
+  icono.png                    # ícono (torre de transmisión + ondas de radio)
 
 iniciar.sh                   # lanzador robusto usado por el ícono de escritorio
 instalar.sh                  # clona/actualiza + venv + deps + lanzador
@@ -246,7 +247,7 @@ nunca confiar en que un `hasattr` lo salve).
 ducking del tema principal (bajar al arrancar el Pisador, subir al
 terminar) y el corte del Pisador si se interrumpe ya NO son saltos
 de volumen bruscos, son fades de `DURACION_FADE_PISADOR_SEGUNDOS`
-(0.8s, constante en `playlist_manager.py`).
+(0.8s, constante en `core/gestor_emision.py`).
 
 **Selección múltiple + arrastre múltiple (implementado)**: lista con
 `ExtendedSelection`; Quitar/Eliminar en el menú contextual operan
@@ -264,6 +265,71 @@ el slider llama `MotorAudio.buscar_posicion_ms()`. La gating de
 "solo Ventana 2" es por `hasattr(self.panel, "solicitud_buscar_posicion")`
 — `VentanaAuxiliar` a propósito NO expone esa señal/método.
 
+**Motor de Ventana 2 en archivo aparte (implementado, pedido
+explícito de cara a la futura programación automática)**: `GestorPlaylist`
+se mudó de `core/playlist_manager.py` a `core/gestor_emision.py` —
+archivo dedicado, separado de Publicidad/Explorador/Scheduler. Cuando
+se implemente la carga automática de ítems por plantilla, esa lógica
+nueva va ACÁ, sin tocar el resto del motor.
+
+**Máquina de estados de selección — "en punta" (rojo) / "en cola"
+(verde) (implementado, pedido explícito)**: cambio de comportamiento
+respecto de antes — doble click (o **tecla Enter**, nueva,
+`ArbolReproductorConDrop.keyPressEvent` en `common_widgets.py`) sobre
+un ítem, estando el reproductor EN SILENCIO, ya NO arranca a sonar
+solo: solo lo marca "en punta" (rojo), listo para arrancar recién
+cuando el operador aprieta Play (`GestorPlaylist.reproducir_actual`
+usa `panel.fila_reproduciendo()`, que ahora apunta al ítem ya
+armado). Con el reproductor sonando, doble click/Enter sigue
+marcando "en cola" (verde) sin interrumpir — sin cambios ahí.
+Bloqueos agregados: **`PanelReproductor.quitar_item` devuelve `False`
+sin hacer nada** si el ítem está en rojo o verde (no se puede quitar
+de la lista ni por el menú contextual ni por "Eliminar de la
+biblioteca" hasta liberarse solo — se elige otro ítem, o termina su
+reproducción); el ítem ROJO específicamente tampoco se puede
+**mover por arrastre** (bloqueado en
+`ArbolReproductorConDrop.startDrag`) ni **editar el Pisador** (opción
+oculta del menú contextual mientras esté en rojo). Fix visual: el
+resaltado de selección nativo de Qt (azul sólido) tapaba el
+rojo/verde cuando esa fila también estaba seleccionada — corregido en
+`gui/styles.py` (`#tree_reproductor::item:selected`) haciendo la
+selección transparente con solo un borde, así el color de estado
+siempre queda a la vista.
+
+**Bug real corregido — "los ítems desaparecen" al reordenar por
+arrastre**: `ArbolReproductorConDrop` necesita `dragDropMode =
+DragDrop` (no `InternalMove`) porque también acepta arrastres
+EXTERNOS desde el Explorador — pero la implementación base de
+`QAbstractItemView.startDrag()`, al terminar un arrastre aceptado con
+`MoveAction`, borra las filas ORIGINALES del modelo salvo que el modo
+sea `InternalMove`. Como `_reordenar_manual` ya reinsertaba el ítem a
+mano (`takeTopLevelItem`/`insertTopLevelItem`), ese borrado automático
+posterior de Qt se disparaba IGUAL después, borrando el ítem recién
+reordenado — el síntoma reportado era que el ítem "desaparecía" al
+soltar (y confundía más si el mouse salía de la ventana durante el
+arrastre). Corregido con `ArbolReproductorConDrop.startDrag()` propio
+que arma y ejecuta el `QDrag` a mano, sin llamar a
+`super().startDrag()` — así ese borrado automático de Qt nunca se
+dispara, y `_reordenar_manual` sigue siendo la única lógica que mueve
+ítems de lugar.
+
+**Persistencia de la playlist de Emisión (implementado, pedido
+explícito: "se borra toda la música cuando se cierra, corte de
+luz")**: antes la lista de Ventana 2 era efímera (nunca se guardaba
+en disco). Ahora `GestorPlaylist(persistir=True)` (SOLO Ventana 2, la
+Auxiliar sigue efímera a propósito) escucha el modelo interno del
+árbol (`rowsInserted`/`rowsRemoved`/`rowsMoved`/`dataChanged`) con un
+debounce de 500ms y guarda en `config/data/playlist_emision.json`
+(escritura atómica, mismo patrón que `biblioteca.json`) — ítems,
+Pisador anidado si tenía, y qué fila estaba armada/en cola. Al
+reabrir la app se restaura todo tal cual quedó, PERO el ítem "en
+punta" no arranca a sonar solo (queda armado en rojo esperando un
+Play manual) — ni siquiera al reiniciar el programa hay audio que
+salga al aire sin que el operador apriete Play. De paso, esto
+reemplazó los datos de ejemplo que traía Ventana 2 al arrancar
+(`VentanaEmision._cargar_datos_demo`, eliminado) — una instalación
+nueva arranca con la lista vacía de verdad.
+
 ### Ventana 3 — Explorador (la más elaborada, "terminada" según Santiago)
 
 **Persistencia (implementado, pedido explícito de Santiago)**: toda
@@ -276,8 +342,13 @@ alta, baja, reemplazo o movimiento — no solo al cerrar la app
 `_on_archivo_soltado_en_categoria`, `eliminar_registro_por_ruta`,
 `_nueva_categoria`/`_nueva_subcategoria`/`_eliminar_categoria`). El
 único borrado real es manual. Al arrancar, si `biblioteca.json` no
-existe todavía, se cargan las categorías demo y se persisten como
-base inicial (`_cargar_biblioteca_inicial`).
+existe todavía, arranca VACÍO (`_cargar_biblioteca_inicial`) — antes
+se cargaban categorías demo (Música/Publicidad/Separadores/etc.) y se
+persistían como base inicial; a pedido explícito ("ya es momento de
+sacar los ítems de ejemplo, necesito probar con música real") esas
+categorías de ejemplo ya no se crean solas. Un `biblioteca.json` YA
+EXISTENTE de una instalación anterior nunca se toca por esto — solo
+afecta instalaciones nuevas.
 
 **Escritura atómica ante corte de luz**: `config/settings.py:
 _guardar_json_atomico()` escribe a un `.tmp` y lo renombra encima
@@ -428,10 +499,30 @@ QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
 logs), Reproducción y Automatización (avanzar en error, reintentos,
 repetir lista, modo automático al iniciar, tolerancia de silencio),
-General (confirmaciones, reloj, tema), **Actualizaciones** (ver
-abajo). Todo persiste en `config/data/config_general.json`.
-Deliberadamente **sin nada de satelital/RDS** — Santiago fue
-explícito en que no lo necesita.
+General (confirmaciones, reloj, tema), **Apariencia** (colores por
+género, ver abajo), **Actualizaciones** (ver abajo), **Diagnóstico**
+(log de errores, ver abajo). Todo persiste en
+`config/data/config_general.json`. Deliberadamente **sin nada de
+satelital/RDS** — Santiago fue explícito en que no lo necesita.
+
+**Colores por género configurables (implementado, pedido explícito
+"que en configuraciones pueda elegir los colores para las categorías,
+incluso no poner color")**: alcance = los 5 géneros fijos (Música/
+Publicidad/Separador/Pisador/Artística), no las categorías reales del
+árbol (que son arbitrarias/ilimitadas). `config_general.json →
+apariencia.colores_genero` (dict género→hex o `null` = sin color).
+Tab Apariencia: un botón-swatch (`QColorDialog`) + checkbox "Sin
+color" por género. `gui/styles.GENERO_COLORES` sigue existiendo como
+default de fábrica (semilla del config la primera vez); en
+runtime, Ventana 3 (`_pintar_por_genero`) y el Pisador anidado de
+Ventana 2 (`PanelReproductor.agregar_pisador`) leen SIEMPRE la config
+en vivo, nunca la constante. `VentanaExplorador.repintar_colores_genero()`
+refresca la paleta y repinta las filas visibles, llamado desde
+`MainWindow._aplicar_configuracion_en_vivo()` al guardar Configuración
+— no hace falta reiniciar para ver el cambio. Como el color ahora lo
+elige el operador (ya no es fijo por género), el contraste de texto
+(blanco/negro) se calcula por luminancia (`gui/styles.color_texto_legible`)
+en vez de una lista fija de géneros con texto oscuro.
 
 **Bug real corregido — guardar Configuración cortaba la
 reproducción**: `MainWindow._reinicializar_motores_audio()` (ya no
@@ -462,6 +553,34 @@ operador dice que no.
 (`QProcess.startDetached` + `app.quit()`). Si la carpeta no es un
 clon git real, se deshabilita solo con un mensaje claro en vez de
 fallar. Botón en Configuración → pestaña Actualizaciones.
+
+### Sistema de log (`config/settings.py` + Configuración → Diagnóstico)
+Pedido explícito tras un caso real: el Play de Ventana 2 dejó de
+responder sin ningún error visible (cerrar y reabrir "solucionó" solo
+en apariencia — inaceptable en una radio en vivo). `registrar_error()`
+existía pero casi no se usaba; ahora es un log rotativo (`config/data/
+log_aplicacion.txt`, rota a `.anterior.txt` pasados 2MB) con DOS
+niveles: `registrar_error()` (errores) y `registrar_evento()` (Play/
+Pausa/Stop, restauración de playlist, cierre cancelado, etc. — para
+poder reconstruir la secuencia previa a un problema reportado).
+Wireado en: `main.py` (inicio/cierre de la app + `sys.excepthook`
+global — PySide6, si una excepción ocurre DENTRO de un slot como el
+handler de un botón, por defecto la imprime a stderr y la app sigue
+viva SIN avisar; eso es indistinguible para el operador de "el botón
+no respondió", que es exactamente el síntoma reportado), `core/
+gestor_emision.py` (Play/Pausa/Stop/errores de reproducción/
+restauración de playlist), `MainWindow.closeEvent` (cierre cancelado
+por emisión en curso). Configuración → pestaña **Diagnóstico**: ver
+ruta/tamaño del log, botón "Ver log" (`QDesktopServices.openUrl`) y
+botón **"Subir log a GitHub"** (`actualizador.subir_log_a_git`) — a
+pedido explícito, esto es SOLO MANUAL, nunca automático en cada
+cierre (decisión tomada con Santiago: menos riesgo de tocar git solo
+en su PC sin que él lo sepa). `config/data/*.txt` está en
+`.gitignore` a propósito (datos de cada instalación, no se versionan
+solos); `subir_log_a_git` usa `git add -f` puntualmente SOLO cuando
+el operador aprieta ese botón, para saltear ese ignore de forma
+explícita. Si no hay red/credenciales, el commit local igual queda
+hecho y el mensaje de error es claro sobre qué falló.
 
 ### Lanzador de escritorio (`iniciar.sh` + `assets/radiolinuxmadariaga.desktop`)
 El ícono de escritorio no llama a `main.py` directamente: llama a
@@ -603,6 +722,22 @@ python3 main.py
     400ms del guard anti-arrastre es suficiente, y probar la barra
     de seek del previo con audio real (acá VLC no está disponible en
     el sandbox).
+11. ~~Colores configurables + motores de Ventana 2~~ — colores por
+    género editables en Configuración (con "sin color"), quitar los
+    ítems de ejemplo de Ventana 2 (Auxiliar nunca tuvo), persistencia
+    real de la playlist de Emisión (sobrevive cierre/corte de luz sin
+    arrancar sola a sonar), arreglo del bug real de "los ítems
+    desaparecen" al reordenar por arrastre, máquina de estados en
+    punta (rojo)/en cola (verde) con Play manual obligatorio y
+    bloqueos de eliminar/mover/editar, fix visual de la selección
+    tapando el color de estado, motor de Ventana 2 movido a
+    `core/gestor_emision.py`, y sistema de log rotativo con subida
+    manual a GitHub — implementado (ver Ventana 2 y Configuración más
+    arriba). Falta que Santiago lo pruebe con música real: el drag de
+    reordenar con archivos de verdad, si el corte visual
+    rojo/verde/seleccionado se ve bien en su pantalla, y confirmar que
+    el próximo "no respondía" (si vuelve a pasar) ahora quede
+    registrado en el log para poder diagnosticarlo sin acceso a su PC.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
@@ -640,3 +775,20 @@ python3 main.py
   de objeto. **Regla**: nunca comparar por identidad (`is`) un dict
   que salió de `item.data()`; comparar siempre por una clave de
   contenido estable (acá, `ruta`).
+- **Otra trampa real de PySide6 — "los ítems desaparecen" al
+  reordenar por arrastre**: si un `QTreeWidget` tiene
+  `dragDropMode = DragDrop` (necesario para aceptar arrastres
+  EXTERNOS además de reordenar los propios) y vos manejás la
+  reordenada a mano en `dropEvent` (`takeTopLevelItem`/
+  `insertTopLevelItem`), la implementación BASE de
+  `QAbstractItemView.startDrag()` IGUAL borra las filas originales del
+  modelo al terminar el arrastre con `MoveAction` — ese borrado
+  automático solo se salta con `dragDropMode = InternalMove`, que acá
+  no se puede usar (bloquearía los arrastres externos). Resultado: el
+  ítem recién reordenado a mano se borra solo después, sin ningún
+  error. **Regla**: si un árbol maneja su propia reordenada interna Y
+  además acepta arrastres externos, hay que sobrescribir `startDrag()`
+  también (armar y ejecutar el `QDrag` a mano, sin llamar a
+  `super().startDrag()`) para que Qt no haga esa limpieza automática
+  por su cuenta. Ver `ArbolReproductorConDrop.startDrag` en
+  `gui/common_widgets.py`.

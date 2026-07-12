@@ -83,3 +83,10 @@ class VentanaAuxiliar(QDialog):
 
     def set_indicador_en_vivo(self, activo: bool):
         self.panel.set_indicador_en_vivo(activo)
+
+    @property
+    def tree(self):
+        # Delegación completa por consistencia con VentanaEmision,
+        # aunque la Auxiliar no persiste su lista (persistir=False) —
+        # ver core/gestor_emision.py.
+        return self.panel.tree

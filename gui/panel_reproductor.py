@@ -46,8 +46,9 @@ from gui.indicador_en_vivo import IndicadorEnVivo
 from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
-    GENERO_COLORES,
+    GENERO_COLORES, color_texto_legible,
 )
+from config.settings import cargar_configuracion
 
 
 class PanelReproductor(QWidget):
@@ -254,12 +255,14 @@ class PanelReproductor(QWidget):
         item.setData(0, Qt.ItemDataRole.UserRole, ruta)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
 
-        color_pisador = GENERO_COLORES.get("Pisador")
+        colores_genero = cargar_configuracion().get("apariencia", {}).get("colores_genero", GENERO_COLORES)
+        color_pisador = colores_genero.get("Pisador")
         if color_pisador:
             fondo = QBrush(QColor(color_pisador))
+            texto = QBrush(QColor(color_texto_legible(color_pisador)))
             for columna in range(item.columnCount()):
                 item.setBackground(columna, fondo)
-                item.setForeground(columna, QBrush(QColor("white")))
+                item.setForeground(columna, texto)
 
         item_padre.addChild(item)
         item_padre.setExpanded(True)
@@ -282,13 +285,20 @@ class PanelReproductor(QWidget):
     # Si es el Pisador de un tema, solo se quita él; si es el tema
     # principal, se va con su Pisador (si tenía).
     # ------------------------------------------------------------------
-    def quitar_item(self, item: QTreeWidgetItem):
+    def quitar_item(self, item: QTreeWidgetItem) -> bool:
+        """Devuelve False sin hacer nada si el ítem está marcado en
+        rojo o verde (en reproducción o en cola) — pedido explícito:
+        esos ítems no se pueden quitar de la lista hasta liberarse
+        (se elige otro, o termina su reproducción)."""
         if item is None:
-            return
+            return False
+        if item.data(0, ROL_ESTADO_ITEM) in (ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE):
+            return False
+
         padre = item.parent()
         if padre is not None:
             padre.removeChild(item)
-            return
+            return True
 
         if item is self._item_reproduciendo:
             self._item_reproduciendo = None
@@ -298,6 +308,7 @@ class PanelReproductor(QWidget):
         indice = self.tree.indexOfTopLevelItem(item)
         if indice >= 0:
             self.tree.takeTopLevelItem(indice)
+        return True
 
     # ------------------------------------------------------------------
     def _pintar_item(self, item, estado: int):
@@ -349,7 +360,10 @@ class PanelReproductor(QWidget):
             accion_info = menu.addAction("ℹ Información...")
 
         accion_pisador = None
-        if item_unico is not None and item_unico.parent() is None:
+        bloqueado_por_reproduccion = (
+            item_unico is not None and item_unico.data(0, ROL_ESTADO_ITEM) == ESTADO_REPRODUCIENDO
+        )
+        if item_unico is not None and item_unico.parent() is None and not bloqueado_por_reproduccion:
             menu.addSeparator()
             if item_unico.childCount() > 0:
                 accion_pisador = menu.addAction("🎚 Quitar Pisador")
@@ -363,8 +377,14 @@ class PanelReproductor(QWidget):
 
         elegida = menu.exec(self.tree.viewport().mapToGlobal(posicion))
         if elegida == accion_borrar:
-            for item in list(seleccionados):
-                self.quitar_item(item)
+            bloqueados = [item.text(0) for item in seleccionados if not self.quitar_item(item)]
+            if bloqueados:
+                QMessageBox.information(
+                    self, "No se puede quitar",
+                    "Estos ítems están marcados para reproducción (rojo/verde) y no\n"
+                    "se pueden quitar hasta que se liberen (se elige otro, o termina\n"
+                    "su reproducción):\n\n" + "\n".join(bloqueados),
+                )
         elif accion_info is not None and elegida == accion_info:
             self._mostrar_info(item_unico)
         elif accion_pisador is not None and elegida == accion_pisador:
@@ -407,9 +427,25 @@ class PanelReproductor(QWidget):
         QMessageBox.information(self, "Información del tema", "\n".join(lineas))
 
     def _solicitar_eliminacion_definitiva(self, items: list):
+        bloqueados = [
+            item.text(0) for item in items
+            if item.data(0, ROL_ESTADO_ITEM) in (ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE)
+        ]
+        items = [
+            item for item in items
+            if item.data(0, ROL_ESTADO_ITEM) not in (ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE)
+        ]
+        if bloqueados:
+            QMessageBox.information(
+                self, "No se puede eliminar",
+                "Estos ítems están marcados para reproducción (rojo/verde) y no\n"
+                "se pueden eliminar hasta que se liberen:\n\n" + "\n".join(bloqueados),
+            )
+
         items_con_ruta = [item for item in items if item.data(0, Qt.ItemDataRole.UserRole)]
         if not items_con_ruta:
-            QMessageBox.information(self, "Eliminar", "Ningún ítem seleccionado tiene un archivo asociado.")
+            if not bloqueados:
+                QMessageBox.information(self, "Eliminar", "Ningún ítem seleccionado tiene un archivo asociado.")
             return
 
         if len(items_con_ruta) == 1:
