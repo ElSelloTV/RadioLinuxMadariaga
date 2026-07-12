@@ -43,7 +43,9 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Automatización Radial — Clon Dinesat 9 (Linux)")
+        self.setWindowTitle(
+            "Automatizador Radio Linux - by Santiago M. Escobar - Radio Tuyú Gral. Madariaga"
+        )
         self.resize(1400, 800)
 
         self._ventana_auxiliar = None

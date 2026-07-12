@@ -1,8 +1,8 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Automatización Radial (Dinesat Clon)
-Comment=Automatización radial estilo Dinesat 9 para Linux
+Name=Auto-Radio Tuyú
+Comment=Automatizador Radio Linux — Radio Tuyú Gral. Madariaga
 Exec=/home/santiago/RadioLinuxMadariaga/iniciar.sh
 Icon=/home/santiago/RadioLinuxMadariaga/assets/icono.png
 Terminal=false

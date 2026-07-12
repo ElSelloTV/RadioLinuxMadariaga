@@ -224,7 +224,10 @@ class VentanaConfiguracion(QDialog):
         widget = QWidget()
         form = QFormLayout(widget)
 
-        self.chk_confirmar_eliminar = QCheckBox("Pedir confirmación antes de eliminar un archivo o bloque")
+        self.chk_confirmar_eliminar = QCheckBox(
+            "Pedir confirmación antes de eliminar, reemplazar o cambiar de\n"
+            "categoría un archivo (o eliminar un bloque)"
+        )
         self.chk_mostrar_segundos = QCheckBox("Mostrar segundos en el reloj de la toolbar")
 
         self.combo_tema = QComboBox()

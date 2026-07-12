@@ -626,15 +626,26 @@ class SchedulerAutomatico:
 class GestorExplorador:
     """Preescucha (Play/Stop) del archivo seleccionado en la Ventana 3.
     Usa los puntos de recorte de silencio y la ganancia calculados
-    por core/analizador_audio.py si el registro ya fue analizado."""
+    por core/analizador_audio.py si el registro ya fue analizado.
+
+    Indicador "en vivo" + barra de progreso: mismo patrón que
+    GestorPlaylist (Ventana 2) — pedido explícito, para que se note a
+    simple vista cuándo está sonando el previo (antes podía disparar
+    sin querer arrastrando y no había forma de notarlo) y para poder
+    adelantar/retroceder igual que en Emisión."""
 
     def __init__(self, ventana_explorador, id_dispositivo: str = None):
         self.ventana = ventana_explorador
         self.motor = MotorAudio(id_dispositivo)
         self.motor.error_reproduccion.connect(self._on_error)
+        self.motor.posicion_cambiada.connect(self._actualizar_indicador)
+        self.motor.restante_ms_cambio.connect(self._actualizar_progreso)
+        self.motor.finalizo_item.connect(self._on_fin_preview)
 
         self.ventana.solicitud_play_preview.connect(self._reproducir_seleccion)
-        self.ventana.solicitud_stop_preview.connect(self.motor.detener)
+        self.ventana.solicitud_stop_preview.connect(self._detener)
+        if hasattr(self.ventana, "solicitud_buscar_posicion_preview"):
+            self.ventana.solicitud_buscar_posicion_preview.connect(self._buscar_posicion)
 
     def _reproducir_seleccion(self):
         registro = self.ventana.registro_seleccionado()
@@ -646,6 +657,33 @@ class GestorExplorador:
             punto_fin_ms=registro.get("punto_fin_ms"),
             ganancia_db=registro.get("ganancia_db") or 0.0,
         )
+        self.ventana.set_indicador_en_vivo(True)
+
+    def _detener(self):
+        self.motor.detener()
+        self.ventana.set_indicador_en_vivo(False)
+        self.ventana.actualizar_progreso_preview(0)
+
+    def _on_fin_preview(self):
+        self.ventana.set_indicador_en_vivo(False)
+        self.ventana.actualizar_progreso_preview(0)
+
+    def _actualizar_indicador(self, *_args):
+        self.ventana.set_indicador_en_vivo(self.motor.esta_reproduciendo())
+
+    def _actualizar_progreso(self, restante_ms: int):
+        total_ms = self.motor.duracion_total_ms()
+        if total_ms <= 0:
+            return
+        transcurrido_ms = max(0, total_ms - restante_ms)
+        permille = int(1000 * transcurrido_ms / total_ms)
+        self.ventana.actualizar_progreso_preview(max(0, min(1000, permille)))
+
+    def _buscar_posicion(self, permille: int):
+        total_ms = self.motor.duracion_total_ms()
+        if total_ms <= 0:
+            return
+        self.motor.buscar_posicion_ms(int(total_ms * permille / 1000))
 
     def _on_error(self, mensaje: str):
         print(f"[GestorExplorador] {mensaje}")
