@@ -163,10 +163,18 @@ def subir_log_a_git(ruta_log: str) -> tuple[bool, str]:
 
 def reiniciar_aplicacion(app):
     """Lanza una copia nueva de la app (python main.py) y cierra ésta.
-    `app` es la instancia de QApplication en curso."""
+    `app` es la instancia de QApplication en curso.
+
+    closeAllWindows() antes de quit() es a propósito: app.quit() solo
+    corta el event loop SIN pasar por closeEvent, y ahí se perdía el
+    guardado de layout (splitters/columnas/geometría) en cada reinicio
+    por actualización. La ventana principal ya fue avisada con
+    preparar_cierre_por_actualizacion() para no repreguntar por la
+    emisión en curso durante este cierre."""
     from PySide6.QtCore import QProcess
 
     python = sys.executable
     script = os.path.join(_raiz_app(), "main.py")
     QProcess.startDetached(python, [script])
+    app.closeAllWindows()
     app.quit()

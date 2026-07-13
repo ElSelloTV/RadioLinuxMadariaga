@@ -93,8 +93,23 @@ class GestorPublicidad:
         self._callback_bloque_finalizado = None
         self._restaurando = False
 
+        # Callback general de "la reproducción terminó sola" (fin del
+        # bloque, freno por hora de un bloque futuro, fin del árbol,
+        # o cascada de errores agotada) — SchedulerAutomatico lo usa
+        # para el ciclo Automático (volver a Emisión / quedar en
+        # silencio según el botón). NO se llama en un Stop manual del
+        # operador fuera de un bloque automático: ahí el silencio es
+        # intencional.
+        self.al_finalizar_reproduccion = None
+
         self.motor.posicion_cambiada.connect(self.ventana.actualizar_contadores)
         self.motor.posicion_cambiada.connect(self._actualizar_indicador)
+        # Bug real corregido — "la ventana 1 no reproduce el ítem
+        # siguiente": esta conexión FALTABA (Ventana 2 la tuvo siempre
+        # en _conectar_motor). Sin ella, al terminar una tanda
+        # naturalmente nadie llamaba a _avanzar() y la reproducción
+        # moría en el primer ítem, sin ningún error visible.
+        self.motor.finalizo_item.connect(self._on_fin_de_item)
         self.motor.error_reproduccion.connect(self._on_error)
         self.motor.restante_ms_cambio.connect(self._actualizar_progreso)
 
@@ -245,12 +260,37 @@ class GestorPublicidad:
         registrar_evento("Publicidad: bloque automático finalizado")
         self.motor.detener()
         self.ventana.set_indicador_en_vivo(False)
+        bloque_terminado = self._bloque_automatico_actual
         callback = self._callback_bloque_finalizado
         self._bloque_automatico_actual = None
         self._callback_bloque_finalizado = None
         self.ventana.marcar_reproduciendo_item(None)
+        # Pedido explícito (ciclo Automático, punto 4): al terminar el
+        # bloque queda MARCADO (verde) el primer ítem del bloque que
+        # sigue, sin reproducirlo, en espera de que llegue su hora.
+        self._marcar_proximo_bloque_en_espera(bloque_terminado)
         if callback:
             callback()
+
+    def _marcar_proximo_bloque_en_espera(self, bloque_terminado):
+        """Deja en verde el primer ítem reproducible del bloque
+        SIGUIENTE al terminado (si existe). Si el operador ya había
+        encolado algo en verde FUERA del bloque que acaba de terminar,
+        se respeta esa elección y no se pisa."""
+        siguiente_actual = self.ventana.item_siguiente()
+        if self._item_valido(siguiente_actual) and siguiente_actual.parent() is not bloque_terminado:
+            return
+        indice = self.ventana.tree.indexOfTopLevelItem(bloque_terminado) if bloque_terminado is not None else -1
+        for i in range(indice + 1, self.ventana.tree.topLevelItemCount()):
+            bloque = self.ventana.tree.topLevelItem(i)
+            for j in range(bloque.childCount()):
+                if self._item_valido(bloque.child(j)):
+                    self.ventana.marcar_siguiente_item(bloque.child(j))
+                    return
+        # No hay más bloques con ítems: limpia un verde que haya
+        # quedado apuntando adentro del bloque terminado.
+        if siguiente_actual is not None and siguiente_actual.parent() is bloque_terminado:
+            self.ventana.marcar_siguiente_item(None)
 
     # ------------------------------------------------------------------
     # Selección manual por doble click / Enter (arma en punta / encola)
@@ -279,11 +319,27 @@ class GestorPublicidad:
         self._fallos_consecutivos = 0
         self._avanzar()
 
+    def _on_fin_de_item(self):
+        """Fin NATURAL de una tanda (señal finalizo_item del motor):
+        continúa solo con la siguiente hasta agotar el bloque."""
+        self._fallos_consecutivos = 0
+        self._avanzar()
+
+    def _notificar_fin_reproduccion(self):
+        if not self.al_finalizar_reproduccion:
+            return
+        try:
+            self.al_finalizar_reproduccion()
+        except Exception as error:
+            registrar_error(f"Publicidad: error en el callback de fin de reproducción: {error}")
+
     def _on_error(self, mensaje: str):
         registrar_error(f"[Publicidad] {mensaje}")
         if not self.avanzar_en_error:
             if self._bloque_automatico_actual is not None:
                 self._finalizar_bloque_automatico()
+            else:
+                self._notificar_fin_reproduccion()
             return
         self._fallos_consecutivos += 1
         if self._fallos_consecutivos >= self.reintentos_maximos:
@@ -291,6 +347,8 @@ class GestorPublicidad:
             self._fallos_consecutivos = 0
             if self._bloque_automatico_actual is not None:
                 self._finalizar_bloque_automatico()
+            else:
+                self._notificar_fin_reproduccion()
             return
         self._avanzar()
 
@@ -332,10 +390,21 @@ class GestorPublicidad:
                         f"'{bloque_candidato.text(0)}' todavía no llegó a su hora"
                     )
                     self.motor.detener()
+                    self.ventana.marcar_reproduciendo_item(None)
+                    self.ventana.set_indicador_en_vivo(False)
+                    # El ítem "en cola" (verde) sobre el bloque futuro
+                    # queda puesto a propósito: es la señal de "listo,
+                    # esperando su hora" (pedido explícito del ciclo
+                    # Automático). Avisar al Scheduler para que, con
+                    # Automático activo, vuelva a Emisión sin bache.
+                    self._notificar_fin_reproduccion()
                     return
 
         if candidato is None:
             self.motor.detener()
+            self.ventana.marcar_reproduciendo_item(None)
+            self.ventana.set_indicador_en_vivo(False)
+            self._notificar_fin_reproduccion()
             return
 
         self._reproducir_item(candidato)
@@ -440,21 +509,41 @@ class GestorPublicidad:
 
 
 class SchedulerAutomatico:
-    """Dispara los bloques de Publicidad por horario cuando el modo
-    AUTOMÁTICO (Ventana 1) está activo, pausando/reanudando Emisión
-    (Ventana 2) de forma transparente durante cada bloque. También
-    carga sola, al cambiar el día (medianoche), la programación
-    resuelta para hoy (fecha específica > patrón semanal — ver
-    config/settings.py:resolver_programacion_del_dia), si hay alguna
-    guardada desde el Programador.
+    """Coordinador del ciclo de la estación (pedido explícito, con el
+    CONTEXTO de Santiago: "la estación funciona reproduciendo la
+    ventana 2; a la hora del bloque horario de la ventana 1, corta la
+    2, reproduce todo el bloque y vuelve a la 2"):
 
-    Un QTimer chequea cada segundo. Al activar el modo AUTOMÁTICO (o
-    si ya arranca activado), los bloques cuya hora ya pasó se marcan
-    como "ya emitidos hoy" SIN dispararlos — activar el modo a mitad
-    de la tarde no debe hacer sonar de golpe todo lo que ya pasó.
+    - Los bloques de Publicidad se disparan por horario SIEMPRE (ya no
+      depende del botón AUTOMÁTICO — punto 3 del pedido: "si no está
+      activado, reproducirá el bloque horario y se quedará en
+      silencio"). El disparo es por TRANSICIÓN de hora (la hora del
+      bloque cae entre el tick anterior y el actual): un bloque creado
+      a mitad del día con una hora ya pasada NO se dispara de golpe.
+    - El botón AUTOMÁTICO gobierna la VUELTA a Emisión (Ventana 2): con
+      el modo activo, al terminar cada bloque (o al agotarse la
+      reproducción de Publicidad porque el próximo bloque es futuro),
+      Emisión se reanuda (si estaba pausada por el bloque) o arranca
+      desde el ítem en rojo / el primero. Con el modo apagado, el
+      bloque suena igual a su hora y después queda en silencio.
+    - Todas las transiciones Ventana 2 <-> bloque usan FUNDIDO
+      (fade_volumen_a) superpuesto, nunca un corte seco ni un bache de
+      silencio — pedido explícito "como debe sonar toda estación de
+      radio". Al disparar un bloque, Emisión baja en fade mientras el
+      bloque ya está sonando encima; al volver, Emisión sube en fade.
+    - Al INICIAR el programa (punto a del pedido): reproduce solo el
+      bloque VIGENTE — el de hora más tardía que ya pasó ("el último
+      bloque menor más cercano a la actual"), nunca el primero del
+      árbol. Si no hay bloque vigente y el modo AUTOMÁTICO está activo,
+      arranca directamente Emisión.
+    - A medianoche (o al iniciar) carga sola la programación resuelta
+      para hoy (fecha específica > patrón semanal — ver
+      config/settings.py:resolver_programacion_del_dia), si hay alguna
+      guardada desde el Programador.
     """
 
     INTERVALO_MS = 1000
+    RETARDO_INICIO_MS = 1200  # deja asentar la GUI/restauración antes del arranque automático
 
     def __init__(self, ventana_publicidad, gestor_publicidad, gestor_emision):
         self.ventana = ventana_publicidad
@@ -464,6 +553,19 @@ class SchedulerAutomatico:
         self._dia_actual = QDate.currentDate()
         self._horas_disparadas_hoy = set()
         self._emision_estaba_sonando = False
+        self._volumen_emision_previo = 0
+        self._ultima_hora_tick = QTime.currentTime()
+        # Generación de la pausa diferida post-fade: si Emisión vuelve
+        # al aire ANTES de que el fade de salida termine (bloque más
+        # corto que el fundido), la pausa vieja se invalida en vez de
+        # pausar lo recién reanudado — mismo patrón que
+        # _generacion_pisador en core/gestor_emision.py.
+        self._generacion_pausa_emision = 0
+
+        # Fin de reproducción de Publicidad fuera de un bloque
+        # disparado (freno por hora, fin del árbol, cascada de errores)
+        # — mismo destino que el fin de un bloque disparado.
+        self.gestor_publicidad.al_finalizar_reproduccion = self._al_terminar_publicidad
 
         self.ventana.automatico_cambiado.connect(self._on_automatico_cambiado)
 
@@ -472,20 +574,39 @@ class SchedulerAutomatico:
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
-        if self.ventana.esta_en_automatico():
-            self._marcar_bloques_pasados_sin_disparar()
-
         # Pedido explícito: al iniciar el programa, lo primero que
         # hace es buscar si hay programación guardada para HOY
         # (fecha específica > día genérico) y cargarla sola, sin
-        # preguntar — igual que ya hacía a medianoche. Esto pisa lo
-        # que GestorPublicidad haya restaurado de la sesión anterior
+        # preguntar — igual que a medianoche. Esto pisa lo que
+        # GestorPublicidad haya restaurado de la sesión anterior
         # (playlist_publicidad.json) SOLO si hay algo programado para
         # hoy; si no hay nada guardado, no toca lo restaurado.
         self._cargar_programacion_del_dia()
 
+        # Los bloques cuya hora ya pasó quedan como "ya emitidos hoy"
+        # — el arranque automático de abajo reproduce SOLO el vigente.
+        self._marcar_bloques_pasados_sin_disparar()
+        QTimer.singleShot(self.RETARDO_INICIO_MS, self._arrancar_al_iniciar)
+
     def detener(self):
         self._timer.stop()
+
+    # ------------------------------------------------------------------
+    def _duracion_fade(self) -> float:
+        """Duración del fundido Ventana 2 <-> bloque: la misma
+        configurada en Fade/Transiciones, con un piso para que nunca
+        sea un corte seco."""
+        try:
+            configurada = float(self.gestor_emision.duracion_fade_segundos or 0)
+        except (TypeError, ValueError):
+            configurada = 0.0
+        return max(0.8, configurada)
+
+    def _bloque_tiene_items(self, bloque) -> bool:
+        for j in range(bloque.childCount()):
+            if self.gestor_publicidad._item_valido(bloque.child(j)):
+                return True
+        return False
 
     # ------------------------------------------------------------------
     def _on_automatico_cambiado(self, activo: bool):
@@ -503,15 +624,50 @@ class SchedulerAutomatico:
         self._horas_disparadas_hoy = marcadas
 
     # ------------------------------------------------------------------
+    # Arranque del programa (punto a): reproducir el bloque VIGENTE
+    # ------------------------------------------------------------------
+    def _bloque_vigente(self):
+        """El bloque con la hora MÁS TARDÍA que ya pasó (<= ahora) y
+        que tenga al menos un ítem reproducible. Nunca el primero del
+        árbol porque sí."""
+        ahora = QTime.currentTime()
+        mejor, mejor_hora = None, None
+        for bloque in self.ventana.bloques():
+            hora_str = self.ventana.hora_de_bloque(bloque)
+            hora = QTime.fromString(hora_str, "HH:mm:ss") if hora_str else QTime()
+            if not hora.isValid() or hora > ahora:
+                continue
+            if not self._bloque_tiene_items(bloque):
+                continue
+            if mejor_hora is None or hora >= mejor_hora:
+                mejor, mejor_hora = bloque, hora
+        return mejor
+
+    def _arrancar_al_iniciar(self):
+        bloque = self._bloque_vigente()
+        if bloque is not None:
+            registrar_evento(
+                f"Inicio: reproduciendo el bloque horario vigente '{bloque.text(0)}'"
+            )
+            hora_str = self.ventana.hora_de_bloque(bloque)
+            if hora_str:
+                self._horas_disparadas_hoy.add(hora_str)
+            self._disparar_bloque(bloque)
+            return
+        if self.ventana.esta_en_automatico():
+            # No hay bloque vigente para reproducir: la estación
+            # arranca directo por Emisión (con fundido de entrada).
+            registrar_evento("Inicio: sin bloque vigente — arranca Emisión (Automático activo)")
+            self._reanudar_o_arrancar_emision(estaba_sonando=False)
+
+    # ------------------------------------------------------------------
     def _tick(self):
         hoy = QDate.currentDate()
         if hoy != self._dia_actual:
             self._dia_actual = hoy
             self._horas_disparadas_hoy = set()
+            self._ultima_hora_tick = QTime(0, 0, 0)
             self._cargar_programacion_del_dia()
-
-        if not self.ventana.esta_en_automatico():
-            return
 
         ahora = QTime.currentTime()
         for bloque in self.ventana.bloques():
@@ -519,21 +675,107 @@ class SchedulerAutomatico:
             if not hora_str or hora_str in self._horas_disparadas_hoy:
                 continue
             hora_bloque = QTime.fromString(hora_str, "HH:mm:ss")
-            if hora_bloque.isValid() and ahora >= hora_bloque:
+            if not hora_bloque.isValid():
+                continue
+            # Disparo por TRANSICIÓN: la hora del bloque cayó entre el
+            # tick anterior y este. Un bloque agregado durante el día
+            # con hora ya pasada nunca se dispara retroactivamente.
+            if self._ultima_hora_tick <= hora_bloque <= ahora:
+                if not self._bloque_tiene_items(bloque):
+                    continue  # un bloque vacío no corta nada
                 self._horas_disparadas_hoy.add(hora_str)
                 self._disparar_bloque(bloque)
                 break  # un bloque por chequeo alcanza y sobra
+        self._ultima_hora_tick = ahora
 
     # ------------------------------------------------------------------
+    # Transiciones con fundido Ventana 2 <-> bloque de Publicidad
+    # ------------------------------------------------------------------
     def _disparar_bloque(self, bloque):
-        self._emision_estaba_sonando = self.gestor_emision.motor.esta_reproduciendo()
-        if self._emision_estaba_sonando:
-            self.gestor_emision.motor.pausar()
-        self.gestor_publicidad.disparar_bloque(bloque, al_finalizar=self._reanudar_emision)
+        motor_emision = self.gestor_emision.motor
+        sonando_ahora = motor_emision.esta_reproduciendo()
+        # "or": si dos bloques se encadenan (el segundo dispara antes
+        # de que Emisión llegara a reanudarse), no se pierde el dato de
+        # que Emisión debía volver al final.
+        self._emision_estaba_sonando = sonando_ahora or self._emision_estaba_sonando
+        if sonando_ahora:
+            self._volumen_emision_previo = motor_emision.obtener_volumen()
+            duracion = self._duracion_fade()
+            self._generacion_pausa_emision += 1
+            generacion = self._generacion_pausa_emision
+            # Fundido de salida SUPERPUESTO: el bloque arranca ya
+            # mientras Emisión baja — nunca hay un bache de silencio.
+            motor_emision.fade_volumen_a(0, duracion)
+            QTimer.singleShot(
+                int(duracion * 1000) + 150,
+                lambda: self._pausar_emision_tras_fade(motor_emision, generacion),
+            )
+        self.gestor_publicidad.disparar_bloque(bloque, al_finalizar=self._al_terminar_publicidad)
 
-    def _reanudar_emision(self):
-        if self._emision_estaba_sonando and not self.gestor_emision.motor.esta_reproduciendo():
-            self.gestor_emision.motor.pausar()  # pausar() alterna: reanuda lo que estaba pausado
+    def _pausar_emision_tras_fade(self, motor_emision, generacion: int):
+        # Solo pausa si esta pausa sigue vigente: si Emisión ya volvió
+        # al aire antes de que el fundido terminara (bloque más corto
+        # que el fade), la generación cambió y no hay que tocar nada.
+        if generacion != self._generacion_pausa_emision:
+            return
+        if motor_emision.esta_reproduciendo():
+            motor_emision.pausar()
+            # Con Emisión ya pausada (inaudible), el volumen vuelve al
+            # nivel previo — así un Play/reanudación manual posterior
+            # (por ejemplo con Automático apagado) nunca se encuentra
+            # el volumen atrapado en 0 sin explicación.
+            motor_emision.set_volumen(self._volumen_objetivo_emision())
+
+    def _al_terminar_publicidad(self):
+        estaba_sonando = self._emision_estaba_sonando
+        self._emision_estaba_sonando = False
+        if not self.ventana.esta_en_automatico():
+            # Punto 3 del pedido: sin el botón AUTOMÁTICO, el bloque
+            # suena a su hora y después la estación queda en silencio.
+            registrar_evento("Publicidad: fin de reproducción — Automático apagado, queda en silencio")
+            return
+        self._reanudar_o_arrancar_emision(estaba_sonando)
+
+    def _volumen_objetivo_emision(self) -> int:
+        return self._volumen_emision_previo or self.gestor_emision._volumen_base
+
+    def _reanudar_o_arrancar_emision(self, estaba_sonando: bool):
+        motor = self.gestor_emision.motor
+        duracion = self._duracion_fade()
+
+        if estaba_sonando and motor.esta_reproduciendo():
+            # El bloque terminó antes de que la pausa diferida llegara
+            # a ejecutarse: Emisión nunca dejó de correr, solo quedó en
+            # volumen 0 — se invalida esa pausa pendiente y basta con
+            # subirla de nuevo en fade.
+            self._generacion_pausa_emision += 1
+            motor.fade_volumen_a(self._volumen_objetivo_emision(), duracion)
+            registrar_evento("Automático: Emisión vuelve al aire (seguía corriendo, sube en fade)")
+            return
+
+        if estaba_sonando and not motor.esta_reproduciendo():
+            motor.set_volumen(0)  # arranca inaudible para que la vuelta sea un fundido real
+            motor.pausar()  # pausar() alterna: reanuda lo que estaba pausado
+            motor.fade_volumen_a(self._volumen_objetivo_emision(), duracion)
+            registrar_evento("Automático: Emisión reanudada con fundido de entrada")
+            return
+
+        if motor.esta_reproduciendo():
+            # Emisión ya está al aire por su cuenta (el bloque nunca la
+            # pausó): no hay nada que arrancar ni que tocar.
+            return
+
+        # Emisión no estaba sonando: arranca desde el ítem en rojo (o
+        # el primero de la lista) — punto 2 del pedido — con fundido
+        # de entrada.
+        if self.gestor_emision.panel.cantidad_items() == 0:
+            registrar_evento("Automático: Emisión sin ítems — no hay nada para reproducir")
+            return
+        self.gestor_emision.reproducir_actual()
+        objetivo = motor.obtener_volumen() or self.gestor_emision._volumen_base
+        motor.set_volumen(0)
+        motor.fade_volumen_a(objetivo, duracion)
+        registrar_evento("Automático: Emisión arrancada desde el ítem armado, con fundido de entrada")
 
     # ------------------------------------------------------------------
     def _cargar_programacion_del_dia(self):

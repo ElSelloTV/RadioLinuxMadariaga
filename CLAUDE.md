@@ -206,22 +206,68 @@ toca lo restaurado — la persistencia de la sesión anterior actúa
 como red de seguridad solo cuando no hay una programación real
 guardada para el día.
 
-**Modo AUTOMÁTICO real (implementado)**: cada bloque guarda su hora
-real como dato (`ROL_HORA_BLOQUE` en `ventana_publicidad.py`, no solo
-como texto en el título). `SchedulerAutomatico`
-(`core/playlist_manager.py`) es un QTimer de 1s que, con el modo
-AUTOMÁTICO activo, dispara el bloque cuya hora ya llegó: pausa
-Emisión (Ventana 2) si estaba sonando, reproduce el bloque completo
-(`GestorPublicidad.disparar_bloque`, que NO cruza hacia el bloque
-siguiente del árbol — se detiene al agotar los ítems de ESE bloque),
-y reanuda Emisión sola al terminar (`pausar()` de `MotorAudio` es un
-TOGGLE de libVLC, se usa la misma llamada para pausar y para
-reanudar). Si el operador interviene a mano (doble click, Stop)
-mientras un bloque automático está en curso, se da por terminado
-igual (no deja Emisión pausada para siempre). Activar el modo a
-mitad de la tarde NO dispara de golpe los bloques que ya pasaron hoy
-(se marcan como "ya emitidos" sin sonar, ver
-`_marcar_bloques_pasados_sin_disparar`).
+**Ciclo Automático completo (reescrito a pedido explícito — este es
+el CORAZÓN de la estación)**: el CONTEXTO que dio Santiago: "la
+estación funciona reproduciendo la ventana 2; a la hora del bloque
+horario de la ventana 1, corta la 2, reproduce todo el bloque y
+vuelve a la 2. Esa es la función del automático. Siempre sin silencio
+musical, todo encadenado, con fundido de entrada y salida". Semántica
+actual de `SchedulerAutomatico` (`core/playlist_manager.py`, QTimer
+de 1s):
+
+- **Los bloques se disparan por horario SIEMPRE**, ya no depende del
+  botón AUTOMÁTICO (cambio de semántica explícito: "si no está
+  activado, reproducirá el bloque horario y se quedará en silencio").
+  El disparo es por TRANSICIÓN de hora (`_ultima_hora_tick <= hora
+  <= ahora`): un bloque creado a mitad del día con hora ya pasada
+  NUNCA se dispara retroactivamente (antes `Crear Bloque Nuevo`, que
+  pone la hora actual por defecto, se habría disparado vacío al
+  segundo siguiente). Un bloque VACÍO tampoco dispara nada.
+- **El botón AUTOMÁTICO gobierna solo la VUELTA a Emisión**: con el
+  modo activo, al terminar la reproducción de Publicidad (fin del
+  bloque disparado, freno por hora de un bloque futuro, fin del
+  árbol, o cascada de errores agotada) Emisión se reanuda o arranca
+  desde el ítem en rojo / el primero
+  (`GestorPublicidad.al_finalizar_reproduccion` →
+  `SchedulerAutomatico._al_terminar_publicidad`). Con el modo
+  apagado, el bloque suena igual a su hora y después silencio.
+- **Todas las transiciones Ventana 2 <-> bloque son FUNDIDOS
+  superpuestos** (`fade_volumen_a`, duración = la configurada en
+  Fade/Transiciones con piso de 0.8s): al disparar un bloque el
+  bloque ya arranca mientras Emisión baja en fade (nunca hay bache), y
+  una pausa DIFERIDA (`_generacion_pausa_emision`, mismo patrón que
+  `_generacion_pisador`) pausa Emisión recién al terminar el fade —
+  restaurando el volumen previo con el motor ya pausado, para que un
+  Play manual posterior no se encuentre el volumen atrapado en 0. Al
+  volver, Emisión arranca inaudible y sube en fade al volumen previo.
+  Si el bloque fue más corto que el fade, la pausa vieja se invalida
+  por generación y Emisión solo vuelve a subir.
+- **Al INICIAR el programa** (pedido a): reproduce el bloque VIGENTE
+  — el de hora más tardía que ya pasó y que tenga ítems
+  (`_bloque_vigente()`), nunca el primero del árbol
+  (`_arrancar_al_iniciar`, diferido 1.2s con singleShot para dejar
+  asentar la restauración). Si no hay bloque vigente y el modo
+  AUTOMÁTICO está activo (checkbox "modo automático al iniciar" en
+  Configuración), arranca directamente Emisión con fundido. OJO: esto
+  reemplaza a propósito la regla anterior de "nunca suena nada al
+  abrir sin Play" — pedido explícito de esta ronda, la radio debe
+  retomar sola tras un corte de luz.
+- Al terminar cada bloque queda MARCADO en verde el primer ítem del
+  bloque siguiente, sin reproducirlo, en espera de su hora
+  (`_marcar_proximo_bloque_en_espera`, punto 4 del pedido; respeta
+  un verde que el operador ya haya puesto fuera del bloque terminado).
+- Si el operador interviene a mano (doble click, Stop) mientras un
+  bloque disparado está en curso, se da por terminado igual (no deja
+  Emisión pausada para siempre).
+
+**Bug real corregido — "la ventana 1 sigue sin reproducir el ítem
+siguiente" (pedido b)**: `GestorPublicidad.__init__` NUNCA conectaba
+`motor.finalizo_item` (Ventana 2 siempre la tuvo en
+`_conectar_motor`) — al terminar una tanda naturalmente nadie llamaba
+a `_avanzar()` y la reproducción moría en el primer ítem sin error
+visible. Corregido conectándola a `_on_fin_de_item`. Regla: al crear
+un gestor nuevo sobre `MotorAudio`, revisar contra `_conectar_motor`
+de `core/gestor_emision.py` que estén TODAS las señales conectadas.
 
 **Scheduler de medianoche (implementado)**: el mismo
 `SchedulerAutomatico`, al detectar que cambió el día calendario,
@@ -254,6 +300,11 @@ bloque de las 14hs nunca empieza a sonar a las 13:50 solo porque se
 terminó el bloque anterior. Esto es una regla nueva, más estricta que
 la que ya tenía el modo automático (que sigue además NUNCA cruzando
 de bloque bajo ninguna circunstancia mientras dura su disparo).
+Ronda posterior: ese freno además AVISA al Scheduler
+(`_notificar_fin_reproduccion`) — con Automático activo, el aire
+vuelve a Emisión en vez de quedar en silencio (ver "Ciclo Automático
+completo" más arriba); el verde queda puesto sobre el bloque futuro
+como señal de "en espera de su hora".
 
 **Selección múltiple + indicador "en vivo" (implementado)**: el
 árbol admite Ctrl/Shift+click (`ExtendedSelection`); menú contextual
@@ -574,11 +625,20 @@ debounce de 500ms y guarda en `config/data/playlist_emision.json`
 Pisador anidado si tenía, y qué fila estaba armada/en cola. Al
 reabrir la app se restaura todo tal cual quedó, PERO el ítem "en
 punta" no arranca a sonar solo (queda armado en rojo esperando un
-Play manual) — ni siquiera al reiniciar el programa hay audio que
-salga al aire sin que el operador apriete Play. De paso, esto
-reemplazó los datos de ejemplo que traía Ventana 2 al arrancar
-(`VentanaEmision._cargar_datos_demo`, eliminado) — una instalación
-nueva arranca con la lista vacía de verdad.
+Play manual). De paso, esto reemplazó los datos de ejemplo que traía
+Ventana 2 al arrancar (`VentanaEmision._cargar_datos_demo`,
+eliminado) — una instalación nueva arranca con la lista vacía de
+verdad.
+**Actualización de la ronda del ciclo Automático**: si al restaurar
+no había NADA armado, el primer ítem queda en rojo por defecto (sin
+sonar) — pedido explícito punto 2 del ciclo: "predeterminadamente el
+rojo estará al comienzo, con posibilidad de elegirlo manualmente" —
+así la vuelta automática a Emisión siempre tiene desde dónde
+arrancar. Y la regla de "nunca suena nada al abrir sin Play" ya NO es
+absoluta: el ciclo Automático (ver Ventana 1) reproduce solo el
+bloque vigente al iniciar, y arranca Emisión sola si el modo
+automático está activo — pedido explícito de esa ronda (la radio debe
+retomar sola tras un corte de luz).
 
 ### Ventana 3 — Explorador (la más elaborada, "terminada" según Santiago)
 
@@ -839,9 +899,22 @@ operador dice que no.
 ### Actualizador (`core/actualizador.py`)
 `git fetch` + comparar HEAD local contra `origin/main` (o `master`),
 `git pull --ff-only` para aplicar, y reinicio del proceso
-(`QProcess.startDetached` + `app.quit()`). Si la carpeta no es un
-clon git real, se deshabilita solo con un mensaje claro en vez de
-fallar. Botón en Configuración → pestaña Actualizaciones.
+(`QProcess.startDetached` + `app.closeAllWindows()` + `app.quit()`).
+Si la carpeta no es un clon git real, se deshabilita solo con un
+mensaje claro en vez de fallar. Botón en Configuración → pestaña
+Actualizaciones.
+
+**Reinicio por actualización vs. aviso de cierre (pedido explícito
+"salvo actualización")**: el aviso de `MainWindow.closeEvent` por
+emisión en curso NO se repite cuando el cierre viene del botón
+"Actualizar y reiniciar" (que ya pidió su propia confirmación) —
+`VentanaConfiguracion._aplicar_actualizacion` llama a
+`MainWindow.preparar_cierre_por_actualizacion()` antes de reiniciar,
+y `closeEvent` saltea la pregunta con ese flag. Además
+`reiniciar_aplicacion()` ahora hace `closeAllWindows()` ANTES de
+`quit()` a propósito: `app.quit()` solo corta el event loop SIN pasar
+por `closeEvent`, y ahí se perdía el guardado de layout
+(splitters/columnas/geometría) en cada reinicio por actualización.
 
 ### Sistema de log (`config/settings.py` + Configuración → Diagnóstico)
 Pedido explícito tras un caso real: el Play de Ventana 2 dejó de
@@ -1144,6 +1217,33 @@ todo el resto.
     eso. Así pasamos a la programación" — el próximo tema que Santiago
     quiere encarar es el motor de programación/carga automática por
     plantilla, todavía sin especificar en detalle.
+16. ~~Ciclo Automático completo (arranque en bloque vigente, avance
+    dentro del bloque, vuelta a Emisión con fundidos, cierre por
+    actualización)~~ — (a) al abrir el programa se reproduce solo el
+    bloque VIGENTE (el de hora más tardía que ya pasó, nunca el
+    primero del árbol), y sin bloque vigente con Automático activo
+    arranca Emisión directo; (b) bug real corregido: `finalizo_item`
+    nunca estuvo conectada en `GestorPublicidad` — por eso Ventana 1
+    "no reproducía el ítem siguiente"; (c) semántica nueva del
+    Automático: los bloques disparan por horario SIEMPRE (por
+    transición de hora, nunca retroactivo, nunca un bloque vacío) y
+    el botón gobierna solo la vuelta a Emisión al terminar Publicidad
+    (reanudar lo pausado o arrancar desde el rojo/primer ítem, que
+    ahora queda en rojo por defecto al restaurar), todo con fundidos
+    superpuestos de salida y entrada (sin baches de silencio, pausa
+    diferida por generación, volumen nunca atrapado en 0), y al
+    terminar cada bloque queda en verde el primer ítem del bloque
+    siguiente en espera de su hora; (d) el reinicio por actualización
+    ya no repregunta por la emisión en curso y ahora sí guarda el
+    layout al reiniciar (`closeAllWindows()` antes de `quit()`) —
+    implementado y probado (10 tests nuevos del ciclo + suite de
+    regresión completa + smoke test real del arranque con bloque
+    vigente restaurado desde disco). Falta que Santiago lo pruebe con
+    música real: cómo se escuchan los fundidos Ventana 2 <-> bloque en
+    la práctica, y confirmar la duración de fade configurada. Los
+    fundidos ENTRE tandas de un mismo bloque de Ventana 1 (crossfade
+    interno de Publicidad) quedan como mejora futura si hace falta —
+    hoy el encadenado ahí es corte directo con recorte de silencio.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

@@ -55,6 +55,7 @@ class MainWindow(QMainWindow):
         self._ventana_configuracion = None
         self._explorador_expandido = False
         self._tamaños_splitter_previos = None
+        self._cerrando_por_actualizacion = False
 
         self._config = cargar_configuracion()
 
@@ -248,11 +249,19 @@ class MainWindow(QMainWindow):
             motores.append(self._gestor_auxiliar.motor)
         return any(motor.esta_reproduciendo() for motor in motores)
 
+    def preparar_cierre_por_actualizacion(self):
+        """El reinicio por actualización YA pide su propia confirmación
+        en Configuración → Actualizaciones — pedido explícito: en ese
+        caso no hay que preguntar OTRA VEZ por la emisión en curso al
+        cerrar (el layout y demás guardados del cierre se hacen igual)."""
+        self._cerrando_por_actualizacion = True
+
     def closeEvent(self, evento):
         # Pedido explícito: la música no se corta sola por nada salvo
         # Stop o cerrar el programa — y cerrar el programa avisa antes,
-        # porque eso SÍ va a interrumpir la emisión al aire.
-        if self._hay_emision_en_curso():
+        # porque eso SÍ va a interrumpir la emisión al aire. Única
+        # excepción: el reinicio por actualización, que ya avisó lo suyo.
+        if self._hay_emision_en_curso() and not self._cerrando_por_actualizacion:
             respuesta = QMessageBox.question(
                 self, "Hay una emisión en curso",
                 "Se está reproduciendo audio ahora mismo (Publicidad, Emisión y/o "

@@ -506,6 +506,14 @@ class GestorPlaylist:
                 # nada solo — el audio nunca arranca sin que alguien
                 # apriete Play, ni siquiera al reabrir la app.
                 self.panel.marcar_reproduciendo(fila_armada)
+            elif total > 0:
+                # Pedido explícito (ciclo Automático, punto 2):
+                # "predeterminadamente el rojo estará al comienzo, con
+                # posibilidad de elegirlo manualmente" — si no había
+                # nada armado, el primer ítem queda en punta por
+                # defecto (sin sonar) para que la vuelta automática a
+                # Emisión siempre tenga desde dónde arrancar.
+                self.panel.marcar_reproduciendo(0)
             fila_siguiente = datos.get("fila_siguiente", -1)
             if 0 <= fila_siguiente < total and fila_siguiente != fila_armada:
                 self.panel.marcar_siguiente(fila_siguiente)

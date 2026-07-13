@@ -477,6 +477,12 @@ class VentanaConfiguracion(QDialog):
             return
 
         QMessageBox.information(self, "Actualizar", "Actualización aplicada. La aplicación se va a reiniciar.")
+        # El reinicio ya fue confirmado acá — avisar a la ventana
+        # principal para que closeEvent no vuelva a preguntar por la
+        # emisión en curso (pedido explícito: "salvo actualización").
+        principal = self.parent()
+        if principal is not None and hasattr(principal, "preparar_cierre_por_actualizacion"):
+            principal.preparar_cierre_por_actualizacion()
         actualizador.reiniciar_aplicacion(QApplication.instance())
     # ------------------------------------------------------------------
     def _cargar_valores_en_ui(self):
