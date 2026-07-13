@@ -109,6 +109,12 @@ from config.settings import cargar_playlist_emision, guardar_playlist_emision, r
 
 DURACION_FADE_PISADOR_SEGUNDOS = 0.8
 DEBOUNCE_GUARDADO_MS = 500
+# Pedido explícito (paridad con Dinesat): el botón verde Play/Siguiente
+# hace de "Siguiente con fundido" cuando ya hay algo sonando, y el
+# botón Fade-Stop apaga con fundido en vez de corte seco. Duración
+# corta a propósito — es una acción manual del operador, no debe
+# demorar la transición varios segundos.
+DURACION_FUNDIDO_MANUAL_SEGUNDOS = 1.2
 
 
 class GestorPlaylist:
@@ -144,6 +150,9 @@ class GestorPlaylist:
         self._crossfade_en_curso = False
         self._motor_saliente_crossfade = None
         self._restaurando = False
+        # "Stop diferido" (Dinesat): armado, deja terminar el ítem
+        # actual y recién ahí detiene TODO — no avanza al siguiente.
+        self._stop_diferido_armado = False
 
         self._conectar_motor(self.motor)
 
@@ -152,10 +161,20 @@ class GestorPlaylist:
             lambda mensaje: registrar_error(f"[Pisador] {mensaje}")
         )
 
-        self.panel.solicitud_play.connect(self.reproducir_actual)
+        # Pedido explícito (paridad con Dinesat): el botón verde es
+        # Play SI está en silencio, o "Siguiente con fundido" si ya
+        # hay algo sonando — las dos funciones en un solo botón.
+        self.panel.solicitud_play.connect(self._on_click_play)
         self.panel.solicitud_pausa.connect(self._pausar)
         self.panel.solicitud_stop.connect(self.detener)
+        # "Cut" (antes "Siguiente"): corte seco e inmediato al ítem en
+        # cola — mismo comportamiento de siempre, solo cambió el
+        # nombre/ícono en la UI para igualar Dinesat.
         self.panel.solicitud_siguiente.connect(self._avanzar_al_siguiente)
+        if hasattr(self.panel, "solicitud_fade_stop"):
+            self.panel.solicitud_fade_stop.connect(self._fade_stop)
+        if hasattr(self.panel, "solicitud_stop_diferido"):
+            self.panel.solicitud_stop_diferido.connect(self._toggle_stop_diferido)
         self.panel.item_doble_click.connect(self._on_doble_click)
         if hasattr(self.panel, "solicitud_buscar_posicion"):
             self.panel.solicitud_buscar_posicion.connect(self._buscar_posicion)
@@ -227,6 +246,38 @@ class GestorPlaylist:
         registrar_evento(f"Play (Emisión persistir={self.persistir}) fila={fila}")
         self._reproducir_fila(fila)
 
+    def _on_click_play(self):
+        """Botón verde grande (pedido explícito, paridad con Dinesat):
+        "en realidad es Play pero además es siguiente en fundido...
+        si no se está reproduciendo, pone en marcha el ítem elegido, y
+        si lo vuelvo a apretar en ejecución, pasa al verde" — Play y
+        Siguiente-con-fundido conviven en el mismo botón según el
+        estado actual del motor."""
+        if self.motor.esta_reproduciendo():
+            self._avanzar_con_fundido()
+        else:
+            self.reproducir_actual()
+
+    def _avanzar_con_fundido(self):
+        """"Siguiente con fundido": SIEMPRE con fundido superpuesto,
+        sin importar si `crossfade_activado` está apagado en
+        Configuración — es una acción manual explícita del operador,
+        no la transición automática de fin de tema. Reutiliza el
+        mismo motor de crossfade ya existente, llamado directo (no vía
+        `_chequear_crossfade`, que es quien aplica el gating de
+        configuración/umbral)."""
+        if self._crossfade_en_curso:
+            return  # ya hay una transición en curso, no superponer otra
+        if self._stop_diferido_armado:
+            self._cancelar_stop_diferido()
+        registrar_evento(f"Siguiente con fundido (Emisión persistir={self.persistir})")
+        # Cancela el Pisador del tema SALIENTE antes de arrancar el
+        # fundido — evita que su fade de ducking pelee con la propia
+        # rampa del crossfade sobre el mismo motor (mismo criterio que
+        # ya se usa en cualquier avance manual).
+        self._cancelar_pisador_en_curso()
+        self._iniciar_crossfade(duracion_segundos=DURACION_FUNDIDO_MANUAL_SEGUNDOS)
+
     def _pausar(self):
         registrar_evento(f"Pausa (Emisión persistir={self.persistir})")
         self.motor.pausar()
@@ -244,6 +295,40 @@ class GestorPlaylist:
         self._cancelar_pisador_en_curso()
         self._fallos_consecutivos = 0
         self.panel.set_indicador_en_vivo(False)
+        if self._stop_diferido_armado:
+            self._cancelar_stop_diferido()
+
+    def _fade_stop(self):
+        """Botón "Fade" (Dinesat): fundido hasta apagar el ítem en
+        reproducción — distinto del Stop (corte seco) y del Stop
+        diferido (dejar terminar y recién ahí frenar)."""
+        if not self.motor.esta_reproduciendo():
+            self.detener()
+            return
+        registrar_evento(f"Fade-Stop (Emisión persistir={self.persistir})")
+        self._cancelar_pisador_en_curso()
+        self.motor.fade_volumen_a(0, DURACION_FUNDIDO_MANUAL_SEGUNDOS)
+        QTimer.singleShot(int(DURACION_FUNDIDO_MANUAL_SEGUNDOS * 1000) + 150, self.detener)
+
+    def _toggle_stop_diferido(self):
+        """Botón "Stop diferido" (Dinesat): deja terminar el ítem en
+        reproducción y recién ahí detiene TODO (no avanza al
+        siguiente) — un segundo click lo desarma. `panel.
+        set_stop_diferido_armado()` refleja el estado en la UI (mismo
+        patrón que el resto de los botones con estado)."""
+        if self._stop_diferido_armado:
+            self._cancelar_stop_diferido()
+            return
+        self._stop_diferido_armado = True
+        if hasattr(self.panel, "set_stop_diferido_armado"):
+            self.panel.set_stop_diferido_armado(True)
+        registrar_evento(f"Stop diferido: armado (Emisión persistir={self.persistir})")
+
+    def _cancelar_stop_diferido(self):
+        self._stop_diferido_armado = False
+        if hasattr(self.panel, "set_stop_diferido_armado"):
+            self.panel.set_stop_diferido_armado(False)
+        registrar_evento(f"Stop diferido: desarmado (Emisión persistir={self.persistir})")
 
     def _reproducir_fila(self, fila: int):
         ruta = self.panel.ruta_en_fila(fila)
@@ -275,13 +360,21 @@ class GestorPlaylist:
     def _chequear_crossfade(self, restante_ms: int):
         if not self.crossfade_activado or self._crossfade_en_curso or self._pisador_activo:
             return
+        if self._stop_diferido_armado:
+            # No arrancar una transición nueva: dejar que el ítem
+            # actual llegue a su fin tal cual, _avanzar() frena ahí.
+            return
         duracion_ms = int(self.duracion_fade_segundos * 1000)
         if duracion_ms <= 0:
             return
         if 0 < restante_ms <= duracion_ms:
             self._iniciar_crossfade()
 
-    def _iniciar_crossfade(self):
+    def _iniciar_crossfade(self, duracion_segundos: float = None):
+        if self._crossfade_en_curso:
+            return  # defensivo: no superponer dos crossfades a la vez
+        duracion_segundos = self.duracion_fade_segundos if duracion_segundos is None else duracion_segundos
+
         total = self.panel.cantidad_items()
         if total == 0:
             return
@@ -305,7 +398,7 @@ class GestorPlaylist:
         analisis_siguiente = self.panel.analisis_en_fila(fila_siguiente)
         motor_saliente = self.motor
         entrante = motor_saliente.crossfade_a(
-            ruta_siguiente, self.duracion_fade_segundos,
+            ruta_siguiente, duracion_segundos,
             punto_inicio_ms=analisis_siguiente.get("punto_inicio_ms") or 0,
             punto_fin_ms=analisis_siguiente.get("punto_fin_ms"),
             ganancia_db=analisis_siguiente.get("ganancia_db") or 0.0,
@@ -348,7 +441,7 @@ class GestorPlaylist:
         self._disparar_pisador_si_corresponde(fila_siguiente, aplicar_ducking=False)
 
         QTimer.singleShot(
-            int(self.duracion_fade_segundos * 1000) + 200,
+            int(duracion_segundos * 1000) + 200,
             lambda: self._liberar_crossfade(fila_siguiente),
         )
 
@@ -464,6 +557,16 @@ class GestorPlaylist:
         self._avanzar(es_reintento=True)
 
     def _avanzar(self, es_reintento: bool):
+        if self._stop_diferido_armado:
+            # Pedido explícito (Dinesat, "Stop diferido"): dejar
+            # terminar el ítem en reproducción y detener TODO en vez
+            # de avanzar al siguiente — aplica sin importar si el
+            # disparo fue por fin natural, Cut manual o cascada de
+            # error, todos pasan por acá.
+            self._cancelar_stop_diferido()
+            self.detener()
+            return
+
         total = self.panel.cantidad_items()
         if total == 0:
             return

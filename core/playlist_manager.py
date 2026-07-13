@@ -47,6 +47,10 @@ from config.settings import (
 )
 
 DEBOUNCE_GUARDADO_PUBLICIDAD_MS = 500
+# Paridad con Dinesat: el botón verde hace de "Siguiente con fundido"
+# con algo sonando, y Fade-Stop apaga con fundido en vez de corte
+# seco — duración corta a propósito, es una acción manual.
+DURACION_FUNDIDO_MANUAL_SEGUNDOS = 1.2
 
 
 class GestorPublicidad:
@@ -92,6 +96,10 @@ class GestorPublicidad:
         self._bloque_automatico_actual = None
         self._callback_bloque_finalizado = None
         self._restaurando = False
+        self._fundido_en_curso = False
+        # "Stop diferido" (Dinesat): armado, deja terminar el ítem
+        # actual y recién ahí detiene TODO — no avanza al siguiente.
+        self._stop_diferido_armado = False
 
         # Callback general de "la reproducción terminó sola" (fin del
         # bloque, freno por hora de un bloque futuro, fin del árbol,
@@ -113,10 +121,20 @@ class GestorPublicidad:
         self.motor.error_reproduccion.connect(self._on_error)
         self.motor.restante_ms_cambio.connect(self._actualizar_progreso)
 
-        self.ventana.solicitud_play.connect(self._reproducir_seleccion_o_actual)
+        # Pedido explícito (paridad con Dinesat): el botón verde es
+        # Play SI está en silencio, o "Siguiente con fundido" si ya
+        # hay algo sonando.
+        self.ventana.solicitud_play.connect(self._on_click_play)
         self.ventana.solicitud_pausa.connect(self._pausar)
         self.ventana.solicitud_stop.connect(self._detener)
+        # "Cut" (antes "Siguiente"): corte seco e inmediato — mismo
+        # comportamiento de siempre, solo cambió el nombre/ícono en la
+        # UI para igualar Dinesat.
         self.ventana.solicitud_siguiente.connect(self._avanzar_al_siguiente)
+        if hasattr(self.ventana, "solicitud_fade_stop"):
+            self.ventana.solicitud_fade_stop.connect(self._fade_stop)
+        if hasattr(self.ventana, "solicitud_stop_diferido"):
+            self.ventana.solicitud_stop_diferido.connect(self._toggle_stop_diferido)
         self.ventana.item_doble_click.connect(self._on_doble_click)
         self.ventana.solicitud_buscar_posicion.connect(self._buscar_posicion)
 
@@ -161,6 +179,37 @@ class GestorPublicidad:
         self.ventana.set_indicador_en_vivo(False)
         if self._bloque_automatico_actual is not None:
             self._finalizar_bloque_automatico()
+        if self._stop_diferido_armado:
+            self._cancelar_stop_diferido()
+
+    def _fade_stop(self):
+        """Botón "Fade" (Dinesat): fundido hasta apagar el ítem en
+        reproducción — distinto del Stop (corte seco) y del Stop
+        diferido (dejar terminar y recién ahí frenar)."""
+        if not self.motor.esta_reproduciendo():
+            self._detener()
+            return
+        registrar_evento("Publicidad: Fade-Stop")
+        self.motor.fade_volumen_a(0, DURACION_FUNDIDO_MANUAL_SEGUNDOS)
+        QTimer.singleShot(int(DURACION_FUNDIDO_MANUAL_SEGUNDOS * 1000) + 150, self._detener)
+
+    def _toggle_stop_diferido(self):
+        """Botón "Stop diferido" (Dinesat): deja terminar el ítem en
+        reproducción y recién ahí detiene TODO (no avanza al
+        siguiente) — un segundo click lo desarma."""
+        if self._stop_diferido_armado:
+            self._cancelar_stop_diferido()
+            return
+        self._stop_diferido_armado = True
+        if hasattr(self.ventana, "set_stop_diferido_armado"):
+            self.ventana.set_stop_diferido_armado(True)
+        registrar_evento("Publicidad: Stop diferido armado")
+
+    def _cancelar_stop_diferido(self):
+        self._stop_diferido_armado = False
+        if hasattr(self.ventana, "set_stop_diferido_armado"):
+            self.ventana.set_stop_diferido_armado(False)
+        registrar_evento("Publicidad: Stop diferido desarmado")
 
     def _item_valido(self, item) -> bool:
         return item is not None and bool(item.data(0, Qt.ItemDataRole.UserRole))
@@ -197,6 +246,51 @@ class GestorPublicidad:
         )
         self.ventana.set_indicador_en_vivo(True)
         registrar_evento(f"Publicidad: reproduciendo '{item.text(0)}'")
+
+    def _on_click_play(self):
+        """Botón verde grande (pedido explícito, paridad con Dinesat):
+        "en realidad es Play pero además es siguiente en fundido...
+        si no se está reproduciendo, pone en marcha el ítem elegido, y
+        si lo vuelvo a apretar en ejecución, pasa al verde"."""
+        if self.motor.esta_reproduciendo():
+            self._avanzar_con_fundido()
+        else:
+            self._reproducir_seleccion_o_actual()
+
+    def _avanzar_con_fundido(self):
+        """"Siguiente con fundido": fundido de salida en el ítem
+        actual, corte, y fundido de entrada en el que sigue —
+        reutiliza toda la lógica ya probada de `_avanzar()` (respeta
+        el límite de bloque automático y el freno por hora de un
+        bloque futuro), solo le agrega el fundido cosmético. A
+        diferencia de Ventana 2 (que superpone con un crossfade real
+        de dos motores), acá es secuencial: Publicidad solo tiene UN
+        MotorAudio, no hay infraestructura de doble motor todavía."""
+        if self._fundido_en_curso:
+            return
+        if self._stop_diferido_armado:
+            self._cancelar_stop_diferido()
+        if not self.motor.esta_reproduciendo():
+            self._avanzar()
+            return
+        registrar_evento("Publicidad: Siguiente con fundido")
+        self._fundido_en_curso = True
+        self.motor.fade_volumen_a(0, DURACION_FUNDIDO_MANUAL_SEGUNDOS)
+        QTimer.singleShot(
+            int(DURACION_FUNDIDO_MANUAL_SEGUNDOS * 1000) + 150,
+            self._completar_avance_con_fundido,
+        )
+
+    def _completar_avance_con_fundido(self):
+        self._fundido_en_curso = False
+        self._fallos_consecutivos = 0
+        self._avanzar()
+        # Si _avanzar() arrancó un ítem nuevo, motor.reproducir() ya
+        # fijó su volumen normal de golpe — acá se lo hace entrar en
+        # fundido en vez de un salto brusco.
+        if self.motor.esta_reproduciendo():
+            self.motor.set_volumen(0)
+            self.motor.fade_volumen_a(self._volumen_base, DURACION_FUNDIDO_MANUAL_SEGUNDOS)
 
     def _reproducir_seleccion_o_actual(self):
         # Prioridad: si ya hay algo marcado como "en reproducción"
@@ -353,6 +447,15 @@ class GestorPublicidad:
         self._avanzar()
 
     def _avanzar(self):
+        if self._stop_diferido_armado:
+            # Pedido explícito (Dinesat, "Stop diferido"): dejar
+            # terminar el ítem en reproducción y detener TODO en vez
+            # de avanzar — aplica sin importar si el disparo fue por
+            # fin natural, Cut manual o cascada de error.
+            self._cancelar_stop_diferido()
+            self._detener()
+            return
+
         item_base = self.ventana.item_reproduciendo() or self.ventana.tree.currentItem()
 
         # Prioridad: si hay un ítem marcado "en cola" (verde) válido,

@@ -21,7 +21,9 @@ class VentanaAuxiliar(QDialog):
     solicitud_play = Signal()
     solicitud_pausa = Signal()
     solicitud_stop = Signal()
-    solicitud_siguiente = Signal()
+    solicitud_siguiente = Signal()   # "Cut" en la UI
+    solicitud_fade_stop = Signal()
+    solicitud_stop_diferido = Signal()
     archivo_soltado = Signal(str, object)
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)
@@ -43,6 +45,8 @@ class VentanaAuxiliar(QDialog):
         self.panel.solicitud_pausa.connect(self.solicitud_pausa.emit)
         self.panel.solicitud_stop.connect(self.solicitud_stop.emit)
         self.panel.solicitud_siguiente.connect(self.solicitud_siguiente.emit)
+        self.panel.solicitud_fade_stop.connect(self.solicitud_fade_stop.emit)
+        self.panel.solicitud_stop_diferido.connect(self.solicitud_stop_diferido.emit)
         self.panel.archivo_soltado.connect(self.archivo_soltado.emit)
         self.panel.item_doble_click.connect(self.item_doble_click.emit)
         self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
@@ -88,6 +92,9 @@ class VentanaAuxiliar(QDialog):
 
     def set_indicador_en_vivo(self, activo: bool):
         self.panel.set_indicador_en_vivo(activo)
+
+    def set_stop_diferido_armado(self, armado: bool):
+        self.panel.set_stop_diferido_armado(armado)
 
     @property
     def tree(self):

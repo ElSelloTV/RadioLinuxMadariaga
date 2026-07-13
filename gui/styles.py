@@ -21,6 +21,8 @@ COLOR_REPRODUCIENDO = "#c0392b"   # Rojo: evento en emisión
 COLOR_SIGUIENTE = "#27ae60"       # Verde: próximo evento
 COLOR_AUTOMATICO_ON = "#e74c3c"
 COLOR_AUTOMATICO_OFF = "#555555"
+COLOR_SELECCION = "#5dade2"       # Celeste: cursor de selección (Dinesat), nunca reemplaza rojo/verde
+COLOR_ARMADO = "#e67e22"          # Naranja: acción diferida armada (Stop diferido)
 
 QSS_APLICACION = f"""
 QMainWindow {{
@@ -144,10 +146,14 @@ QTreeWidget#tree_publicidad::item, QTreeWidget#tree_reproductor::item {{
    tiene que quedar siempre a la vista. Acá la selección deja de
    pintar un relleno propio (queda transparente) y se marca solo con
    un borde, así el fondo rojo/verde del ítem nunca se cubre, esté
-   seleccionado o no. */
+   seleccionado o no. Color CELESTE (pedido explícito, igualando
+   Dinesat: "el celeste es solo para una selección... cuando se hace
+   clic en un verde o rojo, nunca pierde ese color") — antes era
+   amarillo; el celeste es la señal de "acá está el cursor de
+   selección", nunca reemplaza al rojo/verde de estado. */
 QTreeWidget#tree_reproductor::item:selected, QTreeWidget#tree_publicidad::item:selected {{
     background-color: transparent;
-    border: 1px solid #f1c40f;
+    border: 2px solid {COLOR_SELECCION};
 }}
 
 /* ---------- Botones de transporte ---------- */
@@ -185,6 +191,58 @@ QPushButton#btnStop:hover {{ background-color: #c0392b; }}
 QPushButton[class="btnTransporte"] {{
     padding: 4px 6px;
     font-size: 8pt;
+}}
+
+/* ---------- Grilla de transporte estilo Dinesat (pedido explícito,
+   "igualá lo más que pueda... la distribución de las ventanas 1 y 2")
+   ----------
+   Botón grande verde: Play SI está en silencio, "Siguiente con
+   fundido" si ya hay algo sonando — las dos funciones en un botón. */
+QPushButton#btnPlayPrincipal {{
+    background-color: #1e8449;
+    border: 2px solid #2ecc71;
+    font-weight: bold;
+    font-size: 9pt;
+}}
+QPushButton#btnPlayPrincipal:hover {{ background-color: #229954; }}
+QPushButton#btnPlayPrincipal:pressed {{ background-color: #145a32; }}
+
+/* Fade-Stop: fundido hasta apagar — distinto color de Stop (corte
+   seco) para no confundirlos de un vistazo. */
+QPushButton#btnFadeStop {{
+    background-color: #6c3483;
+    font-weight: bold;
+}}
+QPushButton#btnFadeStop:hover {{ background-color: #8e44ad; }}
+
+/* Cut (antes "Siguiente"): corte seco e inmediato al ítem en cola. */
+QPushButton#btnCut {{
+    background-color: #34495e;
+    font-weight: bold;
+}}
+QPushButton#btnCut:hover {{ background-color: #46617a; }}
+
+/* Stop diferido: deja terminar el ítem actual y recién ahí frena
+   todo — queda "armado" (naranja) hasta que se ejecute o se
+   desarme con un segundo click, mismo patrón visual que el botón
+   AUTOMÁTICO (propiedad dinámica + QSS). */
+QPushButton#btnStopDiferido[armado="true"] {{
+    background-color: {COLOR_ARMADO};
+    border: 2px solid #f39c12;
+    font-weight: bold;
+    color: white;
+}}
+QPushButton#btnStopDiferido[armado="false"] {{
+    background-color: #3d3d3d;
+}}
+
+/* Nombre de la estación (pedido explícito, imitando el nameplate de
+   Dinesat) — puramente decorativo, texto fijo. */
+QLabel#lblNombreEstacion {{
+    color: #e67e22;
+    font-weight: bold;
+    font-size: 8pt;
+    letter-spacing: 1px;
 }}
 
 /* Contorno rojo PERMANENTE (esté ON u OFF) para ubicarlo mejor de un

@@ -20,7 +20,9 @@ class VentanaEmision(QWidget):
     solicitud_play = Signal()
     solicitud_pausa = Signal()
     solicitud_stop = Signal()
-    solicitud_siguiente = Signal()
+    solicitud_siguiente = Signal()   # "Cut" en la UI
+    solicitud_fade_stop = Signal()
+    solicitud_stop_diferido = Signal()
     item_marcado_como_siguiente = Signal(int)
     archivo_soltado = Signal(str, object)
     solicitud_abrir_auxiliar = Signal()
@@ -43,6 +45,8 @@ class VentanaEmision(QWidget):
         self.panel.solicitud_pausa.connect(self.solicitud_pausa.emit)
         self.panel.solicitud_stop.connect(self.solicitud_stop.emit)
         self.panel.solicitud_siguiente.connect(self.solicitud_siguiente.emit)
+        self.panel.solicitud_fade_stop.connect(self.solicitud_fade_stop.emit)
+        self.panel.solicitud_stop_diferido.connect(self.solicitud_stop_diferido.emit)
         self.panel.item_marcado_como_siguiente.connect(self.item_marcado_como_siguiente.emit)
         self.panel.archivo_soltado.connect(self.archivo_soltado.emit)
         self.panel.solicitud_abrir_auxiliar.connect(self.solicitud_abrir_auxiliar.emit)
@@ -94,6 +98,9 @@ class VentanaEmision(QWidget):
 
     def set_stop_habilitado(self, habilitado: bool):
         self.panel.set_stop_habilitado(habilitado)
+
+    def set_stop_diferido_armado(self, armado: bool):
+        self.panel.set_stop_diferido_armado(armado)
 
     def actualizar_progreso(self, permille: int):
         self.panel.actualizar_progreso(permille)

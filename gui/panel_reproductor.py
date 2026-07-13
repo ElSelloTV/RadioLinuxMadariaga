@@ -43,6 +43,7 @@ from PySide6.QtGui import QColor, QBrush
 from gui.common_widgets import ArbolReproductorConDrop, SliderBusqueda
 from gui.etiqueta_marquesina import EtiquetaMarquesina
 from gui.indicador_en_vivo import IndicadorEnVivo
+from gui.medidor_nivel import MedidorNivelDecorativo
 from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
@@ -57,7 +58,9 @@ class PanelReproductor(QWidget):
     solicitud_play = Signal()
     solicitud_pausa = Signal()
     solicitud_stop = Signal()
-    solicitud_siguiente = Signal()
+    solicitud_siguiente = Signal()   # "Cut" en la UI — corte seco al ítem en cola
+    solicitud_fade_stop = Signal()
+    solicitud_stop_diferido = Signal()
     solicitud_buscar_posicion = Signal(int)       # 0-1000 (por mil) — solo si mostrar_barra_progreso
     item_marcado_como_siguiente = Signal(int)
     archivo_soltado = Signal(str, object)
@@ -85,7 +88,14 @@ class PanelReproductor(QWidget):
         grupo = QGroupBox(titulo_panel)
         layout_grupo = QVBoxLayout(grupo)
 
-        # 1) Contadores de tiempo (arriba de todo)
+        # 1) Nameplate + contadores de tiempo + medidor (arriba de
+        # todo) — pedido explícito, imitando la distribución de
+        # Dinesat: nombre de la estación, reloj grande, contador
+        # secundario y un medidor de nivel al costado.
+        self.lbl_nombre_estacion = QLabel("RADIO TUYÚ FM 92.5")
+        self.lbl_nombre_estacion.setObjectName("lblNombreEstacion")
+        layout_grupo.addWidget(self.lbl_nombre_estacion)
+
         layout_contadores = QHBoxLayout()
         self.lbl_tiempo_transcurrido = QLabel("00:00:00")
         self.lbl_tiempo_transcurrido.setObjectName("lblTiempoTranscurrido")
@@ -93,8 +103,12 @@ class PanelReproductor(QWidget):
         self.lbl_tiempo_restante = QLabel("00:00:00")
         self.lbl_tiempo_restante.setObjectName("lblTiempoRestante")
         self.lbl_tiempo_restante.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Medidor de nivel decorativo (pedido explícito: mismo lugar
+        # que en Dinesat, sin pretender medir audio real).
+        self.medidor_nivel = MedidorNivelDecorativo()
         layout_contadores.addWidget(self.lbl_tiempo_transcurrido)
         layout_contadores.addWidget(self.lbl_tiempo_restante)
+        layout_contadores.addWidget(self.medidor_nivel)
         layout_grupo.addLayout(layout_contadores)
 
         # Indicador "en vivo" (titila mientras hay audio sonando de
@@ -129,34 +143,69 @@ class PanelReproductor(QWidget):
         fila_siguiente.addWidget(self.lbl_titulo_siguiente)
         layout_grupo.addWidget(frame_luego)
 
-        # 2) Controles de reproducción (debajo del tiempo, arriba de la
-        # lista) — pedido explícito: 1 SOLA fila (no 2), para ahorrar
-        # visibilidad de la lista. Botones más chicos/compactos
-        # (objectName btnTransporte, gui/styles.py) para que las 4-5
-        # entren cómodas en una línea sin volver a fijar un ancho
-        # mínimo grande.
+        # 2) Controles de reproducción — grilla estilo Dinesat (pedido
+        # explícito): un botón VERDE grande a la izquierda que hace de
+        # Play (en silencio) o "Siguiente con fundido" (con algo
+        # sonando), y a la derecha una grilla de 2 filas: arriba
+        # Stop/Fade-Stop, abajo Pausa/Cut/Stop diferido.
         barra_botones = QHBoxLayout()
         barra_botones.setSpacing(4)
-        self.btn_play = QPushButton("▶ PLAY")
-        self.btn_play.setObjectName("btnPlay")
-        self.btn_play.setProperty("class", "btnTransporte")
-        self.btn_pausa = QPushButton("❚❚ PAUSA")
-        self.btn_pausa.setProperty("class", "btnTransporte")
+
+        self.btn_play = QPushButton("▶\nPLAY /\nSIG.")
+        self.btn_play.setObjectName("btnPlayPrincipal")
+        self.btn_play.setToolTip(
+            "En silencio: reproduce el ítem elegido.\n"
+            "Con algo sonando: pasa al ítem en cola (verde) con fundido."
+        )
+        self.btn_play.setMinimumHeight(52)
+        self.btn_play.setMinimumWidth(56)
+        self.btn_play.clicked.connect(self.solicitud_play.emit)
+        barra_botones.addWidget(self.btn_play)
+
+        grilla = QVBoxLayout()
+        grilla.setSpacing(3)
+
+        fila_superior = QHBoxLayout()
+        fila_superior.setSpacing(3)
         self.btn_stop = QPushButton("■ STOP")
         self.btn_stop.setObjectName("btnStop")
         self.btn_stop.setProperty("class", "btnTransporte")
-        self.btn_siguiente = QPushButton("⏭ SIGUIENTE")
-        self.btn_siguiente.setProperty("class", "btnTransporte")
-
-        self.btn_play.clicked.connect(self.solicitud_play.emit)
-        self.btn_pausa.clicked.connect(self.solicitud_pausa.emit)
+        self.btn_stop.setToolTip("Corte seco e inmediato.")
+        self.btn_fade_stop = QPushButton("◢ FADE")
+        self.btn_fade_stop.setObjectName("btnFadeStop")
+        self.btn_fade_stop.setProperty("class", "btnTransporte")
+        self.btn_fade_stop.setToolTip("Fundido hasta apagar el ítem en reproducción.")
         self.btn_stop.clicked.connect(self._on_click_stop)
-        self.btn_siguiente.clicked.connect(self.solicitud_siguiente.emit)
+        self.btn_fade_stop.clicked.connect(self._on_click_fade_stop)
+        fila_superior.addWidget(self.btn_stop)
+        fila_superior.addWidget(self.btn_fade_stop)
+        grilla.addLayout(fila_superior)
 
-        barra_botones.addWidget(self.btn_play)
-        barra_botones.addWidget(self.btn_pausa)
-        barra_botones.addWidget(self.btn_stop)
-        barra_botones.addWidget(self.btn_siguiente)
+        fila_inferior = QHBoxLayout()
+        fila_inferior.setSpacing(3)
+        self.btn_pausa = QPushButton("❚❚ PAUSA")
+        self.btn_pausa.setProperty("class", "btnTransporte")
+        self.btn_cut = QPushButton("✂ CUT")
+        self.btn_cut.setObjectName("btnCut")
+        self.btn_cut.setProperty("class", "btnTransporte")
+        self.btn_cut.setToolTip("Corte seco e inmediato al ítem en cola (antes \"Siguiente\").")
+        self.btn_stop_diferido = QPushButton("◷ STOP…")
+        self.btn_stop_diferido.setObjectName("btnStopDiferido")
+        self.btn_stop_diferido.setProperty("class", "btnTransporte")
+        self.btn_stop_diferido.setProperty("armado", "false")
+        self.btn_stop_diferido.setToolTip(
+            "Stop diferido: deja terminar el ítem actual y recién ahí detiene todo.\n"
+            "Un segundo click lo desarma."
+        )
+        self.btn_pausa.clicked.connect(self.solicitud_pausa.emit)
+        self.btn_cut.clicked.connect(self.solicitud_siguiente.emit)
+        self.btn_stop_diferido.clicked.connect(self._on_click_stop_diferido)
+        fila_inferior.addWidget(self.btn_pausa)
+        fila_inferior.addWidget(self.btn_cut)
+        fila_inferior.addWidget(self.btn_stop_diferido)
+        grilla.addLayout(fila_inferior)
+
+        barra_botones.addLayout(grilla)
 
         if mostrar_boton_auxiliar:
             self.btn_auxiliar = QPushButton("🎧 Auxiliar")
@@ -246,28 +295,53 @@ class PanelReproductor(QWidget):
 
     def set_indicador_en_vivo(self, activo: bool):
         self.indicador_en_vivo.set_activo(activo)
+        self.medidor_nivel.set_activo(activo)
+
+    def set_stop_diferido_armado(self, armado: bool):
+        """Refleja en el botón "Stop diferido" si quedó armado (queda
+        naranja hasta que se ejecute o se desarme) — mismo patrón de
+        propiedad dinámica + QSS que ya usa el botón AUTOMÁTICO."""
+        self.btn_stop_diferido.setProperty("armado", "true" if armado else "false")
+        self.btn_stop_diferido.style().unpolish(self.btn_stop_diferido)
+        self.btn_stop_diferido.style().polish(self.btn_stop_diferido)
 
     def set_stop_habilitado(self, habilitado: bool):
-        """Con el modo AUTOMÁTICO de Ventana 1 activo, el STOP de
-        Emisión queda BLOQUEADO — la estación no se puede silenciar a
-        mano mientras el automático conduce el aire. Bug real
-        corregido: antes se deshabilitaba el botón (`setEnabled`), y
-        un botón deshabilitado no emite `clicked` — el operador
-        apretaba Stop y "no pasaba nada", sin ningún aviso. Ahora el
-        botón queda SIEMPRE clickeable y `_on_click_stop` avisa con un
-        mensaje explícito en vez de quedar mudo."""
+        """Con el modo AUTOMÁTICO de Ventana 1 activo, el STOP (y sus
+        variantes Fade-Stop / Stop diferido) de Emisión quedan
+        BLOQUEADOS — la estación no se puede silenciar a mano mientras
+        el automático conduce el aire. Bug real corregido: antes se
+        deshabilitaba el botón (`setEnabled`), y un botón
+        deshabilitado no emite `clicked` — el operador apretaba Stop y
+        "no pasaba nada", sin ningún aviso. Ahora los botones quedan
+        SIEMPRE clickeables y avisan con un mensaje explícito en vez
+        de quedar mudos."""
         self._stop_bloqueado_por_automatico = not habilitado
+
+    def _avisar_bloqueado_por_automatico(self):
+        QMessageBox.information(
+            self, "Automático activo",
+            "No se puede detener Emisión mientras el modo AUTOMÁTICO esté\n"
+            "activo.\n\nPara detener, primero desactivá el botón AUTOMÁTICO\n"
+            "en Publicidad (Ventana 1).",
+        )
 
     def _on_click_stop(self):
         if self._stop_bloqueado_por_automatico:
-            QMessageBox.information(
-                self, "Automático activo",
-                "No se puede detener Emisión mientras el modo AUTOMÁTICO esté\n"
-                "activo.\n\nPara detener, primero desactivá el botón AUTOMÁTICO\n"
-                "en Publicidad (Ventana 1).",
-            )
+            self._avisar_bloqueado_por_automatico()
             return
         self.solicitud_stop.emit()
+
+    def _on_click_fade_stop(self):
+        if self._stop_bloqueado_por_automatico:
+            self._avisar_bloqueado_por_automatico()
+            return
+        self.solicitud_fade_stop.emit()
+
+    def _on_click_stop_diferido(self):
+        if self._stop_bloqueado_por_automatico:
+            self._avisar_bloqueado_por_automatico()
+            return
+        self.solicitud_stop_diferido.emit()
 
     # ------------------------------------------------------------------
     # Barra de progreso (solo si mostrar_barra_progreso=True al construir)
