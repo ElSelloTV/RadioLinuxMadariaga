@@ -99,10 +99,16 @@ class MotorAudio(QObject):
             volumen_final = volumen_ajustado_por_ganancia(volumen_base, ganancia_db)
         self.set_volumen(volumen_final)
 
-        if punto_inicio_ms and punto_inicio_ms > 0:
-            # El seek necesita que el media ya haya arrancado a
-            # reproducirse; libvlc lo tolera con un pequeño retardo.
-            QTimer.singleShot(150, lambda: self._player.set_time(punto_inicio_ms) if self._disponible else None)
+        # El seek necesita que el media ya haya arrancado a
+        # reproducirse; libvlc lo tolera con un pequeño retardo.
+        # SIEMPRE se hace, incluso a 0ms — bug real corregido: si se
+        # reproduce dos veces el MISMO archivo (ej. un Pisador
+        # reutilizado en varios temas), como la ruta no cambió
+        # cargar() se saltea arriba y el reproductor quedaba parado
+        # en el fin de la reproducción anterior en vez de arrancar de
+        # nuevo desde el principio — sin este seek explícito, la
+        # segunda vez simplemente no sonaba.
+        QTimer.singleShot(150, lambda: self._player.set_time(max(0, punto_inicio_ms)) if self._disponible else None)
 
     def pausar(self):
         if not self._disponible:
@@ -216,7 +222,9 @@ class MotorAudio(QObject):
     # ------------------------------------------------------------------
     # Crossfade: interpola volumen entre el ítem saliente y el entrante
     # ------------------------------------------------------------------
-    def crossfade_a(self, ruta_siguiente: str, duracion_segundos: float = 3.0, motor_entrante=None):
+    def crossfade_a(self, ruta_siguiente: str, duracion_segundos: float = 3.0, motor_entrante=None,
+                     punto_inicio_ms: int = 0, punto_fin_ms: int = None, ganancia_db: float = 0.0,
+                     volumen_base: int = 100):
         """
         Ejecuta un crossfade hacia `ruta_siguiente`. Usa un segundo
         MotorAudio (motor_entrante) para el archivo que entra, mientras
@@ -224,14 +232,35 @@ class MotorAudio(QObject):
         motor_entrante, se crea uno temporal sobre el mismo dispositivo.
         Devuelve el motor entrante (para que quien llame lo conserve
         como "reproductor activo" luego del fade).
+
+        Bug real corregido — "mucho silencio y atenuación al
+        encadenar temas": antes el tema ENTRANTE se reproducía sin su
+        recorte de silencio de entrada ni su nivelado de volumen (se
+        llamaba reproducir() sin esos parámetros), así que cada
+        crossfade arrancaba con el silencio de entrada del tema
+        siguiente todavía puesto, y a un volumen sin nivelar —
+        sonaba como un "bache" en vez de un encadenado fluido. Ahora
+        recibe los mismos punto_inicio_ms/punto_fin_ms/ganancia_db que
+        ya usa la reproducción normal. Además, el volumen de la rampa
+        ahora es relativo al volumen REAL de cada motor (el actual del
+        saliente, el correcto ya nivelado del entrante) en vez de una
+        escala fija 0-100 — antes eso producía un salto audible de
+        volumen justo al arrancar el crossfade si el volumen Master
+        configurado no era 100.
         """
         if not self._disponible:
             self.error_reproduccion.emit(MENSAJE_VLC_NO_DISPONIBLE)
             return None
 
+        volumen_inicial_saliente = self.obtener_volumen()
+
         entrante = motor_entrante or MotorAudio(self._id_dispositivo)
+        entrante.reproducir(
+            ruta_siguiente, punto_inicio_ms=punto_inicio_ms, punto_fin_ms=punto_fin_ms,
+            ganancia_db=ganancia_db, volumen_base=volumen_base,
+        )
+        volumen_objetivo_entrante = entrante.obtener_volumen()
         entrante.set_volumen(0)
-        entrante.reproducir(ruta_siguiente)
 
         pasos = 30
         intervalo_ms = max(20, int((duracion_segundos * 1000) / pasos))
@@ -243,8 +272,8 @@ class MotorAudio(QObject):
         def _paso():
             contador["paso"] += 1
             fraccion = contador["paso"] / pasos
-            self.set_volumen(int(100 * (1 - fraccion)))
-            entrante.set_volumen(int(100 * fraccion))
+            self.set_volumen(int(volumen_inicial_saliente * (1 - fraccion)))
+            entrante.set_volumen(int(volumen_objetivo_entrante * fraccion))
             if contador["paso"] >= pasos:
                 timer.stop()
                 self.detener()

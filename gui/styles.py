@@ -176,6 +176,17 @@ QPushButton#btnStop {{
 }}
 QPushButton#btnStop:hover {{ background-color: #c0392b; }}
 
+/* Play/Pausa/Stop/Siguiente en 1 SOLA fila (Ventana 1 y 2/Auxiliar,
+   antes en grilla de 2 filas) — pedido explícito, para ahorrar
+   visibilidad de la lista. Padding/fuente más chicos para que las
+   4-5 entren cómodas en una línea sin volver a fijar un ancho
+   mínimo grande (el motivo por el que antes se habían puesto en
+   grilla de 2x2). */
+QPushButton[class="btnTransporte"] {{
+    padding: 4px 6px;
+    font-size: 8pt;
+}}
+
 /* Contorno rojo PERMANENTE (esté ON u OFF) para ubicarlo mejor de un
    vistazo — pedido explícito. El relleno rojo + cambio de texto al
    activarlo NO cambia, sigue siendo la única señal de estado real. */

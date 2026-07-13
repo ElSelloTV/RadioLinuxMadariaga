@@ -428,6 +428,15 @@ class SchedulerAutomatico:
         if self.ventana.esta_en_automatico():
             self._marcar_bloques_pasados_sin_disparar()
 
+        # Pedido explícito: al iniciar el programa, lo primero que
+        # hace es buscar si hay programación guardada para HOY
+        # (fecha específica > día genérico) y cargarla sola, sin
+        # preguntar — igual que ya hacía a medianoche. Esto pisa lo
+        # que GestorPublicidad haya restaurado de la sesión anterior
+        # (playlist_publicidad.json) SOLO si hay algo programado para
+        # hoy; si no hay nada guardado, no toca lo restaurado.
+        self._cargar_programacion_del_dia()
+
     def detener(self):
         self._timer.stop()
 
@@ -487,6 +496,7 @@ class SchedulerAutomatico:
         if not contenido:
             return
         self.ventana.cargar_bloques(contenido.get("bloques", []))
+        registrar_evento(f"Publicidad: programación de hoy cargada automáticamente ('{contenido.get('nombre', '')}')")
 
 
 class GestorExplorador:

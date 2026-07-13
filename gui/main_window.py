@@ -292,6 +292,7 @@ class MainWindow(QMainWindow):
         self.ventana_publicidad.automatico_cambiado.connect(self._on_automatico_cambiado)
         self.ventana_publicidad.archivo_soltado.connect(self._on_archivo_soltado_publicidad)
         self.ventana_publicidad.solicitud_abrir_programador.connect(self.abrir_programador)
+        self.ventana_publicidad.solicitud_cargar_programacion_hoy.connect(self._cargar_programacion_de_hoy_manual)
 
         self.ventana_emision.archivo_soltado.connect(self._on_archivo_soltado_emision)
         self.ventana_emision.solicitud_abrir_auxiliar.connect(self.abrir_ventana_auxiliar)
@@ -575,6 +576,39 @@ class MainWindow(QMainWindow):
         self._ventana_programador.show()
         self._ventana_programador.raise_()
         self._ventana_programador.activateWindow()
+
+    def _cargar_programacion_de_hoy_manual(self):
+        """"Cargar Programación" del menú contextual de Ventana 1 —
+        pedido explícito: resuelve la programación de HOY (fecha
+        específica tiene prioridad sobre el patrón semanal genérico,
+        resolver_programacion_del_dia ya implementa esa regla) y pide
+        confirmación antes de reemplazar los bloques actuales, ya que
+        es una acción manual explícita (a diferencia de la carga
+        automática de medianoche/inicio, que no pregunta)."""
+        from datetime import date
+        from config.settings import resolver_programacion_del_dia
+
+        contenido = resolver_programacion_del_dia(date.today())
+        if not contenido:
+            QMessageBox.information(
+                self, "Cargar Programación",
+                "No hay ninguna programación guardada para hoy (ni por fecha\n"
+                "específica ni por día de la semana).",
+            )
+            return
+
+        respuesta = QMessageBox.question(
+            self, "Cargar Programación",
+            f"Se encontró la programación de hoy: \"{contenido.get('nombre', '')}\".\n\n"
+            "Esto va a reemplazar los bloques actuales de Publicidad.\n"
+            "¿Confirmás que querés cargarla?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+
+        self.ventana_publicidad.cargar_bloques(contenido.get("bloques", []))
+        self.statusBar().showMessage(f"Programación de hoy cargada: {contenido.get('nombre', '')}", 4000)
 
     # ------------------------------------------------------------------
     # Configuración general
