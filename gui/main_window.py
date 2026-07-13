@@ -391,10 +391,13 @@ class MainWindow(QMainWindow):
         while bloque is not None and bloque.parent() is not None:
             bloque = bloque.parent()
         if bloque is None:
+            # ArbolConDrop.dropEvent ya resuelve el bloque más cercano
+            # al punto soltado cuando cae en un hueco vacío — esto
+            # solo se ejecuta si el árbol está realmente vacío.
             if self.ventana_publicidad.tree.topLevelItemCount() == 0:
                 self.statusBar().showMessage("Creá primero un bloque horario en Publicidad.", 4000)
                 return
-            bloque = self.ventana_publicidad.tree.topLevelItem(0)
+            bloque = self.ventana_publicidad.tree.topLevelItem(self.ventana_publicidad.tree.topLevelItemCount() - 1)
 
         self.ventana_publicidad.agregar_tanda(
             bloque, titulo, duracion, codigo, ruta,

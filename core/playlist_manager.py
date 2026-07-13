@@ -43,6 +43,7 @@ from PySide6.QtCore import Qt, QTimer, QTime, QDate
 from core.audio_engine import MotorAudio
 from config.settings import (
     cargar_playlist_publicidad, guardar_playlist_publicidad, registrar_error, registrar_evento,
+    titulo_bloque_sin_prefijo_hora,
 )
 
 DEBOUNCE_GUARDADO_PUBLICIDAD_MS = 500
@@ -149,6 +150,17 @@ class GestorPublicidad:
     def _item_valido(self, item) -> bool:
         return item is not None and bool(item.data(0, Qt.ItemDataRole.UserRole))
 
+    def _bloque_ya_disponible(self, item_bloque) -> bool:
+        """True si ya llegó (o pasó) la hora asignada al bloque, o si
+        no tiene hora válida (no se restringe)."""
+        hora_str = self.ventana.hora_de_bloque(item_bloque)
+        if not hora_str:
+            return True
+        hora_bloque = QTime.fromString(hora_str, "HH:mm:ss")
+        if not hora_bloque.isValid():
+            return True
+        return QTime.currentTime() >= hora_bloque
+
     def _reproducir_item(self, item):
         if not self._item_valido(item):
             return
@@ -178,8 +190,29 @@ class GestorPublicidad:
         # el primer ítem reproducible.
         item = self.ventana.item_reproduciendo() or self.ventana.tree.currentItem() \
             or self.ventana.primer_item_reproducible()
+
+        if item is not None and item.parent() is None:
+            # Es el TÍTULO de un bloque (nodo de nivel superior), no
+            # una tanda — pedido explícito: seleccionar el bloque y
+            # apretar Play debe reproducir ESE bloque horario
+            # completo, desde su primer ítem reproducible.
+            registrar_evento(f"Publicidad: Play sobre el bloque '{item.text(0)}'")
+            self._reproducir_primero_del_bloque(item)
+            return
+
         registrar_evento(f"Publicidad: Play (ítem objetivo: {item.text(0) if item else 'ninguno'})")
         self._reproducir_item(item)
+
+    def _reproducir_primero_del_bloque(self, item_bloque):
+        primero = None
+        for i in range(item_bloque.childCount()):
+            candidato = item_bloque.child(i)
+            if self._item_valido(candidato):
+                primero = candidato
+                break
+        if primero is None:
+            return
+        self._reproducir_item(primero)
 
     # ------------------------------------------------------------------
     # Modo AUTOMÁTICO: disparar un bloque completo por horario
@@ -262,11 +295,12 @@ class GestorPublicidad:
         self._avanzar()
 
     def _avanzar(self):
+        item_base = self.ventana.item_reproduciendo() or self.ventana.tree.currentItem()
+
         # Prioridad: si hay un ítem marcado "en cola" (verde) válido,
         # es ese — el operador ya eligió qué sigue.
         candidato = self.ventana.item_siguiente()
         if candidato is None or not self._item_valido(candidato):
-            item_base = self.ventana.item_reproduciendo() or self.ventana.tree.currentItem()
             if item_base is None:
                 item_base = self.ventana.primer_item_reproducible()
                 self._reproducir_item(item_base)
@@ -284,6 +318,21 @@ class GestorPublicidad:
             if candidato is None or candidato.parent() is not self._bloque_automatico_actual:
                 self._finalizar_bloque_automatico()
                 return
+        elif candidato is not None and item_base is not None:
+            # Pedido explícito: la reproducción continua "normal" (no
+            # disparada por el modo AUTOMÁTICO) NUNCA debe cruzar a un
+            # bloque DISTINTO cuya hora todavía no llegó — se detiene
+            # ahí en vez de arrancarlo antes de tiempo.
+            bloque_actual = item_base if item_base.parent() is None else item_base.parent()
+            bloque_candidato = candidato.parent()
+            if bloque_candidato is not None and bloque_candidato is not bloque_actual:
+                if not self._bloque_ya_disponible(bloque_candidato):
+                    registrar_evento(
+                        f"Publicidad: reproducción continua detenida — el bloque "
+                        f"'{bloque_candidato.text(0)}' todavía no llegó a su hora"
+                    )
+                    self.motor.detener()
+                    return
 
         if candidato is None:
             self.motor.detener()
@@ -341,9 +390,7 @@ class GestorPublicidad:
         for i in range(self.ventana.tree.topLevelItemCount()):
             nodo_bloque = self.ventana.tree.topLevelItem(i)
             hora = self.ventana.hora_de_bloque(nodo_bloque)
-            texto_completo = nodo_bloque.text(0)
-            prefijo = f"{hora} - "
-            titulo = texto_completo[len(prefijo):] if texto_completo.startswith(prefijo) else texto_completo
+            titulo = titulo_bloque_sin_prefijo_hora(hora, nodo_bloque.text(0))
 
             items = []
             for j in range(nodo_bloque.childCount()):

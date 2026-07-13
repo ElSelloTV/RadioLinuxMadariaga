@@ -225,6 +225,30 @@ bloques de Publicidad con `ventana_publicidad.cargar_bloques(...)`.
 Si no hay nada guardado para el día, no toca lo que ya estaba
 cargado.
 
+**Play sobre el título del bloque (implementado, pedido explícito)**:
+si el ítem con foco (armado, o seleccionado en el árbol) es un nodo
+de BLOQUE (no una tanda — `item.parent() is None`), apretar Play ya
+no queda sin efecto: `GestorPublicidad._reproducir_seleccion_o_actual`
+detecta el caso y llama a `_reproducir_primero_del_bloque()`, que
+arranca desde el primer ítem reproducible de ESE bloque (mismo
+criterio que usa `disparar_bloque` para el modo automático, pero sin
+marcarlo como "bloque automático en curso").
+
+**La reproducción continua nunca adelanta un bloque futuro
+(implementado, pedido explícito)**: antes, la restricción de "no
+cruzar al bloque siguiente" en `_avanzar()` SOLO aplicaba mientras
+`_bloque_automatico_actual` estaba seteado (un bloque disparado por
+horario) — el avance manual/natural común (Siguiente, fin de tema)
+sí podía saltar de un bloque al próximo sin importar la hora. Ahora
+`_avanzar()` chequea SIEMPRE (`_bloque_ya_disponible()`, compara
+`ROL_HORA_BLOQUE` contra `QTime.currentTime()`) antes de cruzar a un
+bloque DISTINTO del actual: si su hora todavía no llegó, la
+reproducción se detiene ahí en vez de arrancarlo antes de tiempo — un
+bloque de las 14hs nunca empieza a sonar a las 13:50 solo porque se
+terminó el bloque anterior. Esto es una regla nueva, más estricta que
+la que ya tenía el modo automático (que sigue además NUNCA cruzando
+de bloque bajo ninguna circunstancia mientras dura su disparo).
+
 **Selección múltiple + indicador "en vivo" (implementado)**: el
 árbol admite Ctrl/Shift+click (`ExtendedSelection`); menú contextual
 "Quitar de la lista" opera sobre todos los seleccionados a la vez.
@@ -246,6 +270,38 @@ el rojo de emisión cuando está OFF). El relleno rojo + cambio de
 texto (`AUTOMÁTICO: ON`/`OFF`) al activarlo NO cambió, sigue siendo
 la única señal de estado real — el contorno es solo para ubicar el
 botón de un vistazo, no reemplaza esa señal.
+
+**Bug real corregido — la leyenda junto al botón AUTOMÁTICO mostraba
+el ítem en reproducción (pedido explícito: "ahí no pongas el nombre
+del item que se está reproduciendo")**: `marcar_reproduciendo_item()`
+pisaba `lbl_estado` con "Reproduciendo: X" (y un fallback de
+"Modo automático activo"/"Modo manual" con otro texto), mezclando dos
+responsabilidades en la misma etiqueta. Corregido sacando esas líneas
+de `marcar_reproduciendo_item()` por completo — `lbl_estado`
+(`objectName` `lblEstadoAutomatico`) ahora responde EXCLUSIVAMENTE al
+botón AUTOMÁTICO, seteado solo desde `_toggle_automatico()`: texto
+"Automático Activo" (rojo, `activo="true"`) o "Modo Manual" (gris,
+`activo="false"`) — mismo patrón de propiedad dinámica + QSS
+(`gui/styles.py`) que ya usaba `btnAutomatico[activo=...]`.
+
+**Bug real corregido — arrastrar un archivo siempre lo ubicaba en el
+primer bloque (pedido explícito: "no me deja ponerlo en donde yo
+quiera")**: dos causas combinadas. Primero, `ArbolConDrop.dropEvent()`
+(`gui/common_widgets.py`, base compartida — también la usa el árbol de
+categorías de Ventana 3 y el del Programador) resolvía `itemAt(punto)`
+y, si caía en un hueco vacío (frecuente en un árbol jerárquico disperso
+con pocos hijos por bloque), pasaba `item_destino=None` sin más.
+Segundo, el fallback en `MainWindow._on_archivo_soltado_publicidad`
+(`gui/main_window.py`) usaba ese `None` para ir SIEMPRE al
+`topLevelItem(0)` (el primer bloque) — contradiciendo el propio
+comentario de `ArbolConDrop` que decía que el fallback debía ser el
+ÚLTIMO bloque. Corregido con
+`ArbolConDrop._item_de_nivel_superior_mas_cercano()`, que busca el
+bloque de nivel superior cuyo centro vertical (`visualItemRect`) está
+más cerca del punto soltado — así soltar cerca de cualquier bloque cae
+en ESE bloque, no siempre en el primero. El fallback de árbol
+REALMENTE vacío en `main_window.py` se corrigió además para usar el
+último bloque, no el primero, consistente con la intención original.
 
 ### Ventana 2 — Emisión + Ventana Auxiliar
 Ambas son un envoltorio delgado sobre `PanelReproductor`
@@ -700,6 +756,27 @@ un día dado, una **fecha específica siempre prevalece** sobre el
 patrón semanal general de ese día (`config/settings.py:
 resolver_programacion_del_dia`). Ya está probado con tests.
 
+**Bug real corregido — el título del bloque se duplicaba en cada
+carga de programación (pedido explícito: "el nombre del bloque se
+añadió, no se cambió... quedó duplicado varias veces la hora
+finalizando en - Bloque")**: `_serializar_bloques()` guardaba
+`nodo.text(0)` — el texto VISIBLE ya concatenado "HH:MM:SS - Título" —
+como si fuera el título puro. Al recargar esa programación,
+`_cargar_programacion_existente()` volvía a concatenar
+`f"{hora} - {titulo}"` sobre ese valor ya prefijado, y el ciclo
+cargar/editar/guardar repetido iba acumulando cada vez más prefijos de
+hora. Corregido con un rol propio `ROL_TITULO_BLOQUE`
+(`gui/ventana_programador.py`, mismo patrón que `ROL_HORA_BLOQUE`) que
+guarda el título PURO por separado del texto mostrado, usado en
+`_agregar_bloque()`, `_cargar_programacion_existente()` y
+`_serializar_bloques()`. Además se agregó `titulo_bloque_sin_prefijo_hora()`
+(`config/settings.py`), un helper compartido que pela repetidamente el
+prefijo "HH:MM:SS - " de un título — usado también en
+`VentanaPublicidad.cargar_bloques()` y en
+`GestorPublicidad._guardar_estado_ahora()` — así una `programacion.json`
+que ya haya quedado corrupta por el bug se AUTOCURA sola la próxima vez
+que se carga, sin necesitar reparar los datos a mano.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -822,6 +899,18 @@ derecho/inferior válido es `disponible.left() + disponible.width() -
 ancho`, NO `disponible.right() - ancho` (`QRect.right()` devuelve
 `x + width - 1`, no `x + width` — usar `right()` ahí corta la ventana
 un píxel de más).
+
+**Segunda vuelta del mismo bug — "la ventana maximizada vuelve a
+salirse de pantalla"**: si la sesión anterior se cerró CON la
+ventana maximizada, `restoreGeometry()` la restaura ya maximizada, y
+en ese estado `frameGeometry()` no es confiable para decidir si
+"entra" en la pantalla actual (y mover una ventana maximizada con
+`setGeometry()` se comporta distinto según el gestor de ventanas).
+Corregido en `_asegurar_dentro_de_pantalla()`: si `isMaximized()` es
+True, primero `showNormal()`, se corrige esa geometría normal contra
+la pantalla actual, y recién ahí `showMaximized()` — así el gestor de
+ventanas maximiza sobre coordenadas válidas de la sesión actual, no
+sobre las que se guardaron la vez anterior.
 
 **Ventana 1/2 rediseñadas más compactas (pedido explícito, "otro
 skin")**: los relojes bajaron de 26pt a 14pt (`gui/styles.py`), y
@@ -1020,6 +1109,35 @@ todo el resto.
     ("como una FM"), que el Pisador repetido funciona en los 4 temas
     de su prueba, y que "Cargar Programación" resuelve bien sus casos
     de fecha específica vs. día genérico guardados.
+15. ~~Correcciones gráficas post-prueba (ventana maximizada, leyenda
+    Automático, drag&drop al bloque más cercano, título duplicado,
+    Play sobre bloque, corte por hora)~~ — segunda vuelta del bug de
+    ventana maximizada saliéndose de pantalla (ahora se restaura a
+    normal, se corrige la geometría, y recién ahí se vuelve a
+    maximizar — antes no se manejaba el caso de sesión cerrada YA
+    maximizada); la leyenda junto al botón AUTOMÁTICO en Ventana 1 ya
+    no muestra el ítem en reproducción, solo "Automático Activo"
+    (rojo) / "Modo Manual" (gris), reflejando exclusivamente el estado
+    del botón; arrastrar un archivo a un bloque de Publicidad ya no
+    cae siempre en el primero — `ArbolConDrop` (compartido con Ventana
+    3 y el Programador) resuelve el bloque de nivel superior más
+    cercano al punto soltado; el título de un bloque ya no se duplica
+    en cada ciclo de cargar/editar/guardar una programación (rol
+    `ROL_TITULO_BLOQUE` separado del texto concatenado, con
+    autocuración de programaciones ya corruptas vía
+    `titulo_bloque_sin_prefijo_hora()`); seleccionar el TÍTULO de un
+    bloque y apretar Play ahora reproduce ese bloque desde su primer
+    ítem; y la reproducción continua (no solo el modo automático) ya
+    nunca cruza a un bloque cuya hora todavía no llegó, deteniéndose
+    ahí en vez de adelantarlo — implementado y probado (17 scripts de
+    regresión + smoke test de la app completa, todo sin fallos). Falta
+    que Santiago confirme en su notebook real que la ventana ya no se
+    sale de pantalla al maximizar (el sandbox no puede probar
+    comportamiento real del gestor de ventanas), y que el resto se ve/
+    comporta como pidió. Cierre explícito de esta ronda: "Vamos con
+    eso. Así pasamos a la programación" — el próximo tema que Santiago
+    quiere encarar es el motor de programación/carga automática por
+    plantilla, todavía sin especificar en detalle.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

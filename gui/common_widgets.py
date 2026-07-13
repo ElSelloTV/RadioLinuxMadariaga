@@ -114,6 +114,8 @@ class ArbolConDrop(QTreeWidget):
 
         punto = event.position().toPoint() if hasattr(event, "position") else event.pos()
         item_destino = self.itemAt(punto)
+        if item_destino is None:
+            item_destino = self._item_de_nivel_superior_mas_cercano(punto)
 
         rutas_validas = [ruta for ruta in rutas if ruta]
         for ruta in rutas_validas:
@@ -122,6 +124,29 @@ class ArbolConDrop(QTreeWidget):
             self.archivos_soltados.emit(rutas_validas, item_destino)
 
         event.acceptProposedAction()
+
+    def _item_de_nivel_superior_mas_cercano(self, punto):
+        """Bug real corregido — "siempre lo ubica en el primer bloque,
+        no me deja ponerlo donde yo quiera": si se soltó en un hueco
+        vacío del árbol (`itemAt()` da None — algo muy común en un
+        árbol jerárquico con bloques que tienen pocos ítems, la mayor
+        parte del alto queda vacío), antes quien escuchaba
+        `archivo_soltado` con `item_destino=None` caía siempre en un
+        fallback fijo (el primer bloque). Ahora se resuelve acá,
+        buscando el ítem de NIVEL SUPERIOR cuya fila está más cerca
+        verticalmente del punto soltado — así soltar cerca del
+        bloque 3 cae en el bloque 3, aunque el punto exacto no caiga
+        sobre ninguna fila."""
+        mejor_item = None
+        mejor_distancia = None
+        for i in range(self.topLevelItemCount()):
+            item = self.topLevelItem(i)
+            centro_y = self.visualItemRect(item).center().y()
+            distancia = abs(punto.y() - centro_y)
+            if mejor_distancia is None or distancia < mejor_distancia:
+                mejor_distancia = distancia
+                mejor_item = item
+        return mejor_item
 
 
 class ArbolPublicidadConDrop(ArbolConDrop):

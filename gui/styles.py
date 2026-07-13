@@ -222,6 +222,16 @@ QLabel#lblTituloBloqueActivo {{
     color: {COLOR_TEXTO_SECUNDARIO};
     font-style: italic;
 }}
+/* Leyenda junto al botón AUTOMÁTICO (Ventana 1) — responde SOLO al
+   estado de ese botón (Activo/Manual), pedido explícito: nunca debe
+   mostrar el ítem en reproducción ahí. */
+QLabel#lblEstadoAutomatico[activo="true"] {{
+    color: {COLOR_REPRODUCIENDO};
+    font-weight: bold;
+}}
+QLabel#lblEstadoAutomatico[activo="false"] {{
+    color: {COLOR_TEXTO_SECUNDARIO};
+}}
 /* "Ahora:"/"Luego:" junto al título en Ventana 1/2/Auxiliar — pedido
    explícito, más robusto que depender solo del color de fila. */
 QLabel#lblEtiquetaAhoraLuego {{
