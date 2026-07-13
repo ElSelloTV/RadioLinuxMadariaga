@@ -34,7 +34,7 @@ sigue siendo el mismo.
 import os
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QLabel, QPushButton, QFrame,
+    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton, QFrame,
     QTreeWidgetItem, QHeaderView, QMenu, QMessageBox, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal
@@ -129,32 +129,39 @@ class PanelReproductor(QWidget):
         layout_grupo.addWidget(frame_luego)
 
         # 2) Controles de reproducción (debajo del tiempo, arriba de la
-        # lista). En GRILLA de 2 columnas (no una fila larga): una fila
-        # de 4-5 botones en línea es lo que fijaba un ancho mínimo
-        # grande y no dejaba achicar el panel ni notar "Expandir".
-        barra_botones = QGridLayout()
+        # lista) — pedido explícito: 1 SOLA fila (no 2), para ahorrar
+        # visibilidad de la lista. Botones más chicos/compactos
+        # (objectName btnTransporte, gui/styles.py) para que las 4-5
+        # entren cómodas en una línea sin volver a fijar un ancho
+        # mínimo grande.
+        barra_botones = QHBoxLayout()
         barra_botones.setSpacing(4)
         self.btn_play = QPushButton("▶ PLAY")
         self.btn_play.setObjectName("btnPlay")
+        self.btn_play.setProperty("class", "btnTransporte")
         self.btn_pausa = QPushButton("❚❚ PAUSA")
+        self.btn_pausa.setProperty("class", "btnTransporte")
         self.btn_stop = QPushButton("■ STOP")
         self.btn_stop.setObjectName("btnStop")
+        self.btn_stop.setProperty("class", "btnTransporte")
         self.btn_siguiente = QPushButton("⏭ SIGUIENTE")
+        self.btn_siguiente.setProperty("class", "btnTransporte")
 
         self.btn_play.clicked.connect(self.solicitud_play.emit)
         self.btn_pausa.clicked.connect(self.solicitud_pausa.emit)
         self.btn_stop.clicked.connect(self.solicitud_stop.emit)
         self.btn_siguiente.clicked.connect(self.solicitud_siguiente.emit)
 
-        barra_botones.addWidget(self.btn_play, 0, 0)
-        barra_botones.addWidget(self.btn_pausa, 0, 1)
-        barra_botones.addWidget(self.btn_stop, 1, 0)
-        barra_botones.addWidget(self.btn_siguiente, 1, 1)
+        barra_botones.addWidget(self.btn_play)
+        barra_botones.addWidget(self.btn_pausa)
+        barra_botones.addWidget(self.btn_stop)
+        barra_botones.addWidget(self.btn_siguiente)
 
         if mostrar_boton_auxiliar:
             self.btn_auxiliar = QPushButton("🎧 Auxiliar")
+            self.btn_auxiliar.setProperty("class", "btnTransporte")
             self.btn_auxiliar.clicked.connect(self.solicitud_abrir_auxiliar.emit)
-            barra_botones.addWidget(self.btn_auxiliar, 2, 0, 1, 2)
+            barra_botones.addWidget(self.btn_auxiliar)
 
         layout_grupo.addLayout(barra_botones)
 

@@ -162,19 +162,43 @@ ejemplo que traía la ventana al arrancar — una instalación nueva
 arranca sin bloques, igual que ya se hizo con Ventana 2 y Ventana 3.
 
 **Menú contextual completo (implementado, pedido explícito con
-estructura fija)**: Crear/Modificar/Eliminar/Cargar Programación
-(las cuatro, por ahora, simplemente abren el Programador que ya
-existe — `VentanaPublicidad.solicitud_abrir_programador` conectada a
+estructura fija)**: Crear/Modificar/Eliminar Programación (por ahora
+simplemente abren el Programador que ya existe —
+`VentanaPublicidad.solicitud_abrir_programador` conectada a
 `MainWindow.abrir_programador`, hasta que se pida una lógica propia
-para cada una), separador, **Sacar Item** (funcional, pide
-confirmación gateada por `general.confirmar_antes_de_eliminar`,
-bloqueado para tandas/bloques marcados), **Agregar Item**/
-**Reemplazar Item** (visibles pero DESHABILITADAS a propósito — sin
-lógica propia todavía, pedido explícito "andá agregando funciones ya
-creadas, las demás las vamos a ir creando"), separador, **Crear
-Bloque Nuevo** (funcional, título por defecto `"Bloque: HH:MM:SS"`
-con la hora actual, pide confirmación siempre — no gateada por el
-flag, ya que es una acción nueva y poco frecuente).
+para cada una), separador, **Cargar Programación** (lógica propia,
+ver abajo), separador, **Sacar Item** (funcional, pide confirmación
+gateada por `general.confirmar_antes_de_eliminar`, bloqueado para
+tandas/bloques marcados), **Agregar Item**/**Reemplazar Item**
+(visibles pero DESHABILITADAS a propósito — sin lógica propia
+todavía, pedido explícito "andá agregando funciones ya creadas, las
+demás las vamos a ir creando"), separador, **Crear Bloque Nuevo**
+(funcional, título por defecto `"Bloque: HH:MM:SS"` con la hora
+actual, pide confirmación siempre — no gateada por el flag, ya que es
+una acción nueva y poco frecuente).
+
+**"Cargar Programación" con lógica real + carga automática diaria
+(implementado, pedido explícito)**: `resolver_programacion_del_dia()`
+(`config/settings.py`, ya existía) resuelve la programación vigente
+para una fecha con la regla **fecha específica > patrón semanal
+genérico** — se reutiliza en dos lugares distintos:
+1) **Manual** (menú contextual → Cargar Programación,
+`VentanaPublicidad.solicitud_cargar_programacion_hoy` →
+`MainWindow._cargar_programacion_de_hoy_manual`): resuelve la
+programación de HOY y, si encuentra una, PIDE CONFIRMACIÓN antes de
+reemplazar los bloques actuales (siempre, no gateado por el flag de
+confirmaciones — es una acción explícita del operador); si no hay
+nada guardado para hoy, avisa con un mensaje informativo.
+2) **Automática** (`SchedulerAutomatico`): ahora corre también en
+`__init__` (antes solo se disparaba al detectar cambio de día
+calendario mientras la app ya estaba corriendo) — pedido explícito
+"a las 00 horas, O CUANDO INICIE EL SISTEMA". Al iniciar, si hay una
+programación resuelta para hoy, reemplaza SIN PREGUNTAR lo que
+`GestorPublicidad` haya restaurado de la sesión anterior
+(`playlist_publicidad.json`); si no hay nada programado para hoy, no
+toca lo restaurado — la persistencia de la sesión anterior actúa
+como red de seguridad solo cuando no hay una programación real
+guardada para el día.
 
 **Modo AUTOMÁTICO real (implementado)**: cada bloque guarda su hora
 real como dato (`ROL_HORA_BLOQUE` en `ventana_publicidad.py`, no solo
@@ -314,6 +338,26 @@ motor saliente sigue fundiéndose solo en paralelo hasta apagarse.
 propio Pisador, no se dispara (dos rampas de volumen peleando por el
 mismo motor a la vez) — pendiente de resolver si hace falta.
 
+**Bug real corregido — "mucho silencio y atenuación al encadenar
+temas" (pedido explícito: "que suene como debería sonar una FM")**:
+`MotorAudio.crossfade_a()` reproducía el tema ENTRANTE sin su recorte
+de silencio de entrada ni su nivelado de volumen (`analisis_en_fila`
+no se leía ni se pasaba) — cada crossfade arrancaba con el silencio
+de cabecera del tema siguiente todavía puesto y a un volumen sin
+nivelar, sonando como un "bache" en vez de un encadenado fluido.
+Ahora `_iniciar_crossfade` (`core/gestor_emision.py`) lee el análisis
+del ítem entrante y se lo pasa a `crossfade_a()`, que a su vez se lo
+pasa a `entrante.reproducir()` — mismo patrón que la reproducción
+normal. Además, la rampa de volumen del crossfade estaba en una
+escala fija 0-100 desconectada del volumen Master configurado: al
+arrancar el crossfade, el tema saliente saltaba momentáneamente a
+volumen 100 (aunque el Master estuviera en, por ejemplo, 70) antes de
+empezar a bajar, y el tema entrante siempre rampeaba hacia 100 planos
+sin su propio nivelado — corregido capturando el volumen REAL de
+salida (`obtener_volumen()`) como punto de partida del fade-out, y el
+volumen YA nivelado del entrante (leído después de su propio
+`reproducir()`) como techo del fade-in.
+
 **Bug real corregido — el Pisador no sonaba**: `GestorPlaylist.panel`
 es la ventana WRAPPER (`VentanaEmision`/`VentanaAuxiliar`), no
 `PanelReproductor` directo. `ruta_pisador_en_fila` existía en
@@ -349,6 +393,21 @@ más nuevo en curso y no hay que tocarlo. Probado simulando avance
 rápido por 3 temas con Pisador cada uno: el último en sonar siempre
 es el correcto, nunca uno de los intermedios cortado por un timer
 viejo.
+
+**Bug real corregido — "el mismo archivo de Pisador en varios temas,
+solo suena la primera vez"**: `MotorAudio.reproducir()` solo llama a
+`cargar()` (recarga el media en libVLC) si la ruta nueva es distinta
+de `self._ruta_actual` — si se reutiliza el MISMO archivo de Pisador
+en dos temas distintos, la segunda vez se saltea `cargar()` porque la
+ruta no cambió. El seek explícito a `punto_inicio_ms` que reinicia la
+posición, antes, solo se ejecutaba `if punto_inicio_ms and
+punto_inicio_ms > 0` — para un Pisador (que siempre arranca en 0) esa
+condición era falsa, así que la segunda reproducción quedaba con el
+reproductor "trabado" en el final de la reproducción anterior en vez
+de arrancar de nuevo, y no sonaba. Corregido haciendo el seek
+SIEMPRE (incluso a 0ms) después de cada `play()`, sin importar si
+`cargar()` se ejecutó o no — reproducir dos veces seguidas el mismo
+archivo ahora reinicia la posición de forma confiable.
 
 **Selección múltiple + arrastre múltiple (implementado)**: lista con
 `ExtendedSelection`; Quitar/Eliminar en el menú contextual operan
@@ -553,25 +612,24 @@ definitivo no se toca hasta que el `.tmp` está completo.
   `common_widgets.py`) — esto fue un bug reportado explícitamente por
   Santiago y ya está resuelto.
 
-**Indicador de previo + guard contra reproducción accidental por
-arrastre (implementado)**: Santiago reportó que el previo "se dispara
-sin querer" al arrastrar un archivo hacia otra ventana. Causa: el
-`itemDoubleClicked` del árbol de archivos se disparaba también al
-soltar un arrastre en ciertos casos. Solución de dos partes —
-1) `ArbolOrigenArrastre.acaba_de_arrastrar(margen_ms=400)`
-(`gui/common_widgets.py`) guarda `self._ultimo_arrastre_ms` al
-iniciar cada `startDrag` y expone si pasó menos de 400ms desde el
-último arrastre; `VentanaExplorador._on_doble_click_preview`
-(reemplaza el lambda directo a `solicitud_play_preview.emit()`)
-ignora el doble click si `acaba_de_arrastrar()` da True.
-2) `IndicadorEnVivo` (el mismo círculo titilante ya usado en
-Ventana 1/2) agregado junto al botón "▶ Previo"
-(`ventana3.indicador_preview`, `set_indicador_en_vivo()`), así
-además de evitar el disparo accidental, ahora hay señal visual clara
-de "estoy escuchando el previo". `GestorExplorador`
-(`core/playlist_manager.py`) quedó reescrito para actualizarlo desde
-`posicion_cambiada`/`finalizo_item`, igual patrón que
-`GestorPlaylist` en Ventana 2.
+**Indicador de previo (implementado)**: `IndicadorEnVivo` (el mismo
+círculo titilante ya usado en Ventana 1/2) junto al botón "▶ Previo"
+(`ventana3.indicador_preview`, `set_indicador_en_vivo()`) — señal
+visual clara de "estoy escuchando el previo". `GestorExplorador`
+(`core/playlist_manager.py`) lo actualiza desde
+`posicion_cambiada`/`finalizo_item`, igual patrón que `GestorPlaylist`
+en Ventana 2.
+
+**Bug real corregido — "el previo se dispara sin querer al
+arrastrar"**: primero se probó un guard de 400ms
+(`ArbolOrigenArrastre.acaba_de_arrastrar`) que ignoraba un doble
+click si venía justo después de un arrastre — pero seguía pasando
+igual en algunos casos. A pedido explícito, se sacó el trigger del
+doble click DE RAÍZ: `tree_archivos.itemDoubleClicked` ya no está
+conectado a nada, el único disparador de la preescucha es el botón
+"▶ Previo" (`btn_play_preview.clicked`). `acaba_de_arrastrar()` y el
+tracking de `_ultimo_arrastre_ms` en `ArbolOrigenArrastre` se
+eliminaron por completo (habían quedado sin uso).
 
 **Barra de progreso/seek del previo (implementado, pedido explícito
 "la misma barra de reproducción en la ventana 3")**: `slider_preview`
@@ -766,18 +824,24 @@ ancho`, NO `disponible.right() - ancho` (`QRect.right()` devuelve
 un píxel de más).
 
 **Ventana 1/2 rediseñadas más compactas (pedido explícito, "otro
-skin")**: los botones de transporte (Play/Pausa/Stop/Siguiente[/
-Auxiliar]) pasaron de una fila horizontal larga a una **grilla de 2
-columnas** (`QGridLayout` en `panel_reproductor.py` y
-`ventana_publicidad.py`) — una fila de 4-5 botones en línea fijaba
-un ancho mínimo grande que no dejaba achicar el panel NI notar el
-botón "Expandir" de Ventana 3 (Publicidad/Emisión se negaban a
-bajar de ~350-450px). Los relojes bajaron de 26pt a 14pt
-(`gui/styles.py`), y `EtiquetaMarquesina` (el sticker del título en
-Ventana 2) ahora tiene `minimumSizeHint()` propio de 40px en vez de
-heredar los 220px de `sizeHint()` como mínimo real. Resultado medido:
-`PanelReproductor.minimumSizeHint()` bajó a ~213px de ancho,
-`VentanaPublicidad` a ~269px (antes ninguna bajaba de ~350-450px).
+skin")**: los relojes bajaron de 26pt a 14pt (`gui/styles.py`), y
+`EtiquetaMarquesina` (el sticker del título en Ventana 2) tiene
+`minimumSizeHint()` propio de 40px en vez de heredar los 220px de
+`sizeHint()` como mínimo real.
+
+**Botones de transporte: de grilla 2x2 a 1 sola fila (pedido
+explícito, ronda posterior — "para ahorrar visibilidad de la
+lista")**: en una ronda anterior se habían puesto en grilla de 2
+columnas (`QGridLayout`) porque una sola fila de 4-5 botones fijaba
+un ancho mínimo grande que no dejaba achicar el panel. Con la
+tipografía/padding ya reducidos de rondas posteriores, Santiago pidió
+volver a 1 SOLA fila para priorizar altura (ver más lista) sobre
+ancho — `QHBoxLayout` en `panel_reproductor.py` y
+`ventana_publicidad.py`, con los botones marcados
+`setProperty("class", "btnTransporte")` y un padding/fuente más
+chicos (`gui/styles.py`, selector `QPushButton[class="btnTransporte"]`)
+para que las 4-5 entren cómodas en una línea sin repetir el problema
+de ancho de la ronda anterior.
 
 ## Testing — cómo probar cambios sin display real
 
@@ -925,8 +989,8 @@ todo el resto.
     persistencia de la playlist de Publicidad (mismo tratamiento que
     Emisión, sin bloques de ejemplo en instalación nueva), botón
     AUTOMÁTICO con contorno rojo permanente, menú contextual completo
-    (Crear/Modificar/Eliminar/Cargar Programación abren el Programador
-    por ahora; Sacar Item funcional; Agregar/Reemplazar Item visibles
+    (Crear/Modificar/Eliminar Programación abren el Programador por
+    ahora; Sacar Item funcional; Agregar/Reemplazar Item visibles
     pero deshabilitadas hasta que se pida esa lógica; Crear Bloque
     Nuevo funcional con confirmación) — implementado (ver Ventana 1
     más arriba). **Bug real corregido de paso, en Ventana 1 Y 2**: el
@@ -935,10 +999,27 @@ todo el resto.
     (`ROL_ANALISIS_AUDIO`) y se pasa a `MotorAudio.reproducir()`.
     Log temporalmente más detallado (`registrar_evento` en cada
     acción de Publicidad) mientras Santiago prueba esta ronda — pidió
-    volver a un nivel normal cuando avise. Falta que lo prueba con
-    música real: Crear Bloque Nuevo + arrastre de tandas, el flujo
-    completo armar/encolar/Play en Publicidad, y confirmar que ahora
-    sí se note el recorte de silencio al aire en ambas ventanas.
+    volver a un nivel normal cuando avise.
+14. ~~Correcciones de la ronda de pruebas de Ventana 1~~ — bug real
+    del Pisador reutilizado en varios temas (`MotorAudio.reproducir()`
+    ahora siempre hace seek, incluso a 0ms); botones de transporte de
+    vuelta a 1 sola fila (`btnTransporte`) para priorizar altura sobre
+    ancho; el previo de Ventana 3 ya NO se dispara con doble click,
+    solo con el botón (se sacó el trigger de raíz en vez de agrandar
+    el guard); "Cargar Programación" con lógica real (resuelve HOY con
+    prioridad fecha específica > día genérico, pide confirmación si es
+    manual, no pregunta si es automática al iniciar/medianoche); y el
+    crossfade ahora aplica el recorte de silencio/nivelado del tema
+    ENTRANTE (antes solo el saliente lo tenía) además de rampas de
+    volumen relativas al volumen real en vez de una escala fija 0-100
+    — los tres bugs de audio (Pisador, silencio al aire de la ronda
+    anterior, y ahora el crossfade) comparten la misma raíz: partes
+    del motor que llamaban a `MotorAudio.reproducir()`/`crossfade_a()`
+    sin pasarle el análisis completo del ítem. Falta que Santiago
+    confirme con música real que el encadenado ahora suena fluido
+    ("como una FM"), que el Pisador repetido funciona en los 4 temas
+    de su prueba, y que "Cargar Programación" resuelve bien sus casos
+    de fecha específica vs. día genérico guardados.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

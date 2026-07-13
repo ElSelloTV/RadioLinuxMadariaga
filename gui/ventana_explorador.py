@@ -184,7 +184,6 @@ class VentanaExplorador(QWidget):
 
         self.tree_archivos.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_archivos.customContextMenuRequested.connect(self._mostrar_menu_contextual)
-        self.tree_archivos.itemDoubleClicked.connect(self._on_doble_click_preview)
 
         layout_archivos.addWidget(self.tree_archivos)
 
@@ -233,15 +232,13 @@ class VentanaExplorador(QWidget):
         layout_principal.addWidget(grupo)
 
     # ------------------------------------------------------------------
-    # Previo (preescucha): indicador "en vivo" + guardia contra el
-    # doble click accidental que dispara arrastrar seguido hacia otras
-    # ventanas + barra de progreso.
+    # Previo (preescucha): indicador "en vivo" + barra de progreso.
+    # Pedido explícito: SOLO el botón "▶ Previo" dispara la
+    # reproducción — antes también el doble click en la lista, y a
+    # veces se disparaba solo al arrastrar seguido hacia otras
+    # ventanas (un guard de 400ms lo mitigaba, pero seguía pasando).
+    # Sacar el trigger del doble click de raíz lo resuelve del todo.
     # ------------------------------------------------------------------
-    def _on_doble_click_preview(self, item, columna):
-        if self.tree_archivos.acaba_de_arrastrar():
-            return  # esto es la cola de un arrastre, no un doble click de verdad
-        self.solicitud_play_preview.emit()
-
     def set_indicador_en_vivo(self, activo: bool):
         self.indicador_preview.set_activo(activo)
         self.indicador_preview.setToolTip("Escuchando el previo" if activo else "Sin previo")

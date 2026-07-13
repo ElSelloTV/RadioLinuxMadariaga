@@ -280,8 +280,18 @@ class GestorPlaylist:
         if not ruta_siguiente:
             return
 
+        # Bug real corregido: el tema entrante del crossfade se
+        # reproducía sin su recorte de silencio ni nivelado de
+        # volumen — ver nota completa en MotorAudio.crossfade_a().
+        analisis_siguiente = self.panel.analisis_en_fila(fila_siguiente)
         motor_saliente = self.motor
-        entrante = motor_saliente.crossfade_a(ruta_siguiente, self.duracion_fade_segundos)
+        entrante = motor_saliente.crossfade_a(
+            ruta_siguiente, self.duracion_fade_segundos,
+            punto_inicio_ms=analisis_siguiente.get("punto_inicio_ms") or 0,
+            punto_fin_ms=analisis_siguiente.get("punto_fin_ms"),
+            ganancia_db=analisis_siguiente.get("ganancia_db") or 0.0,
+            volumen_base=self._volumen_base,
+        )
         if entrante is None:
             return
 

@@ -28,7 +28,7 @@ lista hasta liberarse.
 from datetime import datetime
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QTreeWidgetItem,
+    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidgetItem,
     QPushButton, QLabel, QFrame, QAbstractItemView, QMenu, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal
@@ -59,6 +59,7 @@ class VentanaPublicidad(QWidget):
     solicitud_siguiente = Signal()
     solicitud_buscar_posicion = Signal(int)     # 0-1000 (por mil)
     solicitud_abrir_programador = Signal()
+    solicitud_cargar_programacion_hoy = Signal()
     item_doble_click = Signal(object)   # emite el QTreeWidgetItem clickeado
 
     def __init__(self, parent=None):
@@ -132,25 +133,29 @@ class VentanaPublicidad(QWidget):
         layout_grupo.addWidget(frame_luego)
 
         # --- 2) Controles de reproducción (debajo del tiempo) ---
-        # En GRILLA de 2 columnas (no una fila larga): una fila de 4
-        # botones en línea fijaba un ancho mínimo grande y no dejaba
-        # achicar el panel ni notar el botón "Expandir" de Ventana 3.
-        barra_botones = QGridLayout()
+        # 1 SOLA fila (no 2) — pedido explícito, para ahorrar
+        # visibilidad de la lista. Botones compactos (objectName
+        # btnTransporte, gui/styles.py) para que entren cómodos.
+        barra_botones = QHBoxLayout()
         barra_botones.setSpacing(4)
         self.btn_play = QPushButton("▶ PLAY")
         self.btn_play.setObjectName("btnPlay")
+        self.btn_play.setProperty("class", "btnTransporte")
         self.btn_pausa = QPushButton("❚❚ PAUSA")
+        self.btn_pausa.setProperty("class", "btnTransporte")
         self.btn_stop = QPushButton("■ STOP")
         self.btn_stop.setObjectName("btnStop")
+        self.btn_stop.setProperty("class", "btnTransporte")
         self.btn_siguiente = QPushButton("⏭ SIGUIENTE")
+        self.btn_siguiente.setProperty("class", "btnTransporte")
         self.btn_play.clicked.connect(self.solicitud_play.emit)
         self.btn_pausa.clicked.connect(self.solicitud_pausa.emit)
         self.btn_stop.clicked.connect(self.solicitud_stop.emit)
         self.btn_siguiente.clicked.connect(self.solicitud_siguiente.emit)
-        barra_botones.addWidget(self.btn_play, 0, 0)
-        barra_botones.addWidget(self.btn_pausa, 0, 1)
-        barra_botones.addWidget(self.btn_stop, 1, 0)
-        barra_botones.addWidget(self.btn_siguiente, 1, 1)
+        barra_botones.addWidget(self.btn_play)
+        barra_botones.addWidget(self.btn_pausa)
+        barra_botones.addWidget(self.btn_stop)
+        barra_botones.addWidget(self.btn_siguiente)
         layout_grupo.addLayout(barra_botones)
 
         # --- 2.1) Barra de progreso/seek (igual que Ventana 2) ---
@@ -334,10 +339,16 @@ class VentanaPublicidad(QWidget):
         accion_crear_bloque = menu.addAction("Crear Bloque Nuevo")
 
         elegida = menu.exec(self.tree.viewport().mapToGlobal(posicion))
-        if elegida in (accion_crear_prog, accion_modificar_prog, accion_eliminar_prog, accion_cargar_prog):
-            # Por el momento, todo lo relacionado a programación abre
-            # el Programador que ya existe — pedido explícito.
+        if elegida in (accion_crear_prog, accion_modificar_prog, accion_eliminar_prog):
+            # Por el momento, Crear/Modificar/Eliminar abren el
+            # Programador que ya existe — pedido explícito.
             self.solicitud_abrir_programador.emit()
+        elif elegida == accion_cargar_prog:
+            # "Cargar Programación" tiene lógica propia — ver
+            # MainWindow._cargar_programacion_de_hoy_manual: resuelve
+            # la programación de HOY (fecha específica > día genérico)
+            # y pide confirmación antes de reemplazar los bloques.
+            self.solicitud_cargar_programacion_hoy.emit()
         elif elegida == accion_sacar:
             self._sacar_items(seleccionados)
         elif elegida == accion_crear_bloque:
