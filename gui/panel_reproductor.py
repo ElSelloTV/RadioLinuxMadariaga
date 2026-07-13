@@ -73,6 +73,7 @@ class PanelReproductor(QWidget):
         self._item_siguiente = None
         self._arrastrando_slider = False
         self.slider_progreso = None
+        self._stop_bloqueado_por_automatico = False
         self._construir_ui(titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso)
 
     # ------------------------------------------------------------------
@@ -149,7 +150,7 @@ class PanelReproductor(QWidget):
 
         self.btn_play.clicked.connect(self.solicitud_play.emit)
         self.btn_pausa.clicked.connect(self.solicitud_pausa.emit)
-        self.btn_stop.clicked.connect(self.solicitud_stop.emit)
+        self.btn_stop.clicked.connect(self._on_click_stop)
         self.btn_siguiente.clicked.connect(self.solicitud_siguiente.emit)
 
         barra_botones.addWidget(self.btn_play)
@@ -247,11 +248,26 @@ class PanelReproductor(QWidget):
         self.indicador_en_vivo.set_activo(activo)
 
     def set_stop_habilitado(self, habilitado: bool):
-        """Pedido explícito (robustez de emisión): con el modo
-        AUTOMÁTICO de Ventana 1 activo, el STOP de Emisión queda
-        deshabilitado — la estación no se puede silenciar a mano
-        mientras el automático conduce el aire."""
-        self.btn_stop.setEnabled(habilitado)
+        """Con el modo AUTOMÁTICO de Ventana 1 activo, el STOP de
+        Emisión queda BLOQUEADO — la estación no se puede silenciar a
+        mano mientras el automático conduce el aire. Bug real
+        corregido: antes se deshabilitaba el botón (`setEnabled`), y
+        un botón deshabilitado no emite `clicked` — el operador
+        apretaba Stop y "no pasaba nada", sin ningún aviso. Ahora el
+        botón queda SIEMPRE clickeable y `_on_click_stop` avisa con un
+        mensaje explícito en vez de quedar mudo."""
+        self._stop_bloqueado_por_automatico = not habilitado
+
+    def _on_click_stop(self):
+        if self._stop_bloqueado_por_automatico:
+            QMessageBox.information(
+                self, "Automático activo",
+                "No se puede detener Emisión mientras el modo AUTOMÁTICO esté\n"
+                "activo.\n\nPara detener, primero desactivá el botón AUTOMÁTICO\n"
+                "en Publicidad (Ventana 1).",
+            )
+            return
+        self.solicitud_stop.emit()
 
     # ------------------------------------------------------------------
     # Barra de progreso (solo si mostrar_barra_progreso=True al construir)

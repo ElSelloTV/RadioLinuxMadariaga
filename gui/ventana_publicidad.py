@@ -153,7 +153,7 @@ class VentanaPublicidad(QWidget):
         self.btn_siguiente.setProperty("class", "btnTransporte")
         self.btn_play.clicked.connect(self.solicitud_play.emit)
         self.btn_pausa.clicked.connect(self.solicitud_pausa.emit)
-        self.btn_stop.clicked.connect(self.solicitud_stop.emit)
+        self.btn_stop.clicked.connect(self._on_click_stop)
         self.btn_siguiente.clicked.connect(self.solicitud_siguiente.emit)
         barra_botones.addWidget(self.btn_play)
         barra_botones.addWidget(self.btn_pausa)
@@ -271,16 +271,26 @@ class VentanaPublicidad(QWidget):
             self.lbl_estado.setText("Modo Manual")
             self.lbl_estado.setProperty("activo", "false")
 
-        # Pedido explícito (robustez de emisión): con el Automático
-        # activo, el STOP de Publicidad queda deshabilitado — la
-        # emisión no se puede detener a mano mientras la estación está
-        # en modo automático. Se rehabilita al apagar el botón.
-        self.btn_stop.setEnabled(not self._modo_automatico)
-
         for widget in (self.btn_automatico, self.lbl_estado):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
         self.automatico_cambiado.emit(self._modo_automatico)
+
+    def _on_click_stop(self):
+        # Bug real corregido: antes, con el Automático activo, el STOP
+        # quedaba DESHABILITADO (`setEnabled(False)`) — un botón
+        # deshabilitado no emite `clicked`, así que el operador
+        # apretaba Stop y "no pasaba nada", sin ningún aviso. Ahora el
+        # botón queda siempre clickeable y avisa con un mensaje
+        # explícito en vez de quedar mudo (pedido explícito).
+        if self._modo_automatico:
+            QMessageBox.information(
+                self, "Automático activo",
+                "No se puede detener Publicidad mientras el modo AUTOMÁTICO esté\n"
+                "activo.\n\nPara detener, primero desactivá el botón AUTOMÁTICO.",
+            )
+            return
+        self.solicitud_stop.emit()
 
     def esta_en_automatico(self) -> bool:
         return self._modo_automatico

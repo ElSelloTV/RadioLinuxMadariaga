@@ -269,13 +269,21 @@ Automático)**:
   `config_general.json` se ignora sin romper). El operador puede
   apagarlo a mano después de abrir.
 - **Con el Automático activo, los botones STOP de Ventana 1 y
-  Ventana 2 quedan DESHABILITADOS** (la estación no se puede
-  silenciar a mano mientras el automático conduce el aire): Ventana 1
-  en `VentanaPublicidad._toggle_automatico()` (`btn_stop`), Ventana 2
-  vía `automatico_cambiado` → `MainWindow._on_automatico_cambiado` →
+  Ventana 2 quedan BLOQUEADOS** (la estación no se puede silenciar a
+  mano mientras el automático conduce el aire): Ventana 1 vía
+  `VentanaPublicidad._modo_automatico`, Ventana 2 vía
+  `automatico_cambiado` → `MainWindow._on_automatico_cambiado` →
   `VentanaEmision.set_stop_habilitado()` (delegado a
-  `PanelReproductor`). La Auxiliar no se toca. Se rehabilitan al
-  apagar el botón.
+  `PanelReproductor._stop_bloqueado_por_automatico`). La Auxiliar no
+  se toca. Se desbloquean al apagar el botón. **Bug real corregido,
+  ronda posterior**: originalmente esto deshabilitaba el botón
+  (`setEnabled(False)`) — un botón deshabilitado no emite `clicked`,
+  así que el operador apretaba STOP y "no pasaba nada", sin ningún
+  aviso (pedido explícito: "avisar con un mensaje... indicando que
+  para detener, primero debo sacar el automático"). Ahora el botón
+  queda SIEMPRE clickeable (`ventana_publicidad._on_click_stop` /
+  `PanelReproductor._on_click_stop`) y, si el Automático está activo,
+  muestra un `QMessageBox.information` explícito en vez de detener.
 - **Aviso "No se encontró Bloque Horario en este momento en la
   programación"** (texto textual pedido): si `_arrancar_al_iniciar`
   no encuentra bloque vigente, dispara el callback
@@ -546,6 +554,41 @@ de arrancar de nuevo, y no sonaba. Corregido haciendo el seek
 SIEMPRE (incluso a 0ms) después de cada `play()`, sin importar si
 `cargar()` se ejecutó o no — reproducir dos veces seguidas el mismo
 archivo ahora reinicia la posición de forma confiable.
+
+**Bug real corregido — "el Pisador funciona si aprieto Siguiente,
+pero no cuando la lista avanza sola" (pedido explícito, prioridad
+alta)**: la única función que disparaba el Pisador era
+`_reproducir_fila()` (la usan Play manual, Siguiente, y el avance
+natural SIN crossfade) — pero con `crossfade_activado` en
+Configuración → Fade/Transiciones (que es como Santiago usa la radio
+en producción), la transición NATURAL entre dos temas pasa por
+`_iniciar_crossfade()`, que nunca llamaba a `_reproducir_fila()` ni
+disparaba el Pisador del tema ENTRANTE — antes documentado como
+"limitación conocida" (dos rampas de volumen peleando por el mismo
+motor a la vez). Esto explicaba también el síntoma "a veces sí, a
+veces no": dependía de si esa transición puntual terminó pasando por
+crossfade o no. Corregido: `_iniciar_crossfade()` ahora guarda la fila
+entrante y programa `_liberar_crossfade(fila_entrante)` (antes solo
+limpiaba banderas); ahí, una vez que la propia rampa de volumen del
+crossfade ya terminó (el motor entrante queda "quieto" en su volumen
+final, sin ninguna otra rampa corriendo), se llama recién ahí a
+`_disparar_pisador_si_corresponde(fila_entrante)` — sin competir con
+la rampa del crossfade por el mismo motor. Antes de disparar, chequea
+que `panel.fila_reproduciendo() == fila_entrante` (nadie tomó control
+manual —Siguiente, doble click, Stop— mientras tanto) para no
+disparar el Pisador de una fila que ya no está sonando.
+
+**Log del Pisador (pedido explícito, para diagnosticar "por qué unas
+veces suena y otras no")**: antes el ciclo de vida completo del
+Pisador (disparo, cancelación, fin natural) no dejaba NINGÚN rastro en
+`config/data/log_aplicacion.txt` — solo se veía qué tema principal
+sonaba. Ahora `_disparar_pisador_si_corresponde()` /
+`_on_pisador_finalizado()` / `_cancelar_pisador_en_curso()` (y el
+arranque de cada crossfade) llaman a `registrar_evento()` con la fila,
+la ruta del Pisador y el volumen de bajada — sirve para reconstruir en
+el log exactamente cuándo se disparó, cuándo se canceló y cuándo
+terminó solo, sin tener que reproducir el problema en vivo con
+Santiago para verlo.
 
 **Selección múltiple + arrastre múltiple (implementado)**: lista con
 `ExtendedSelection`; Quitar/Eliminar en el menú contextual operan
@@ -957,6 +1000,35 @@ buscador de biblioteca siempre trae el registro completo, y
 `_serializar_bloques()`/`_cargar_programacion_existente()` leen y
 escriben esos tres campos igual que ya hace Ventana 1.
 
+**Ventana compacta + maximizable (pedido explícito: "queda muy larga,
+se me va de pantalla la última parte" / "no maximiza ni minimiza")**:
+dos causas combinadas. (1) Las 6 acciones del grupo "PROGRAMACIÓN
+GUARDADA" (Nueva/Cargar/Eliminar/Eliminar varias/Duplicar/Aplicar
+ahora) ocupaban 3 filas — ahora entran en UNA sola fila con etiquetas
+cortas (el detalle de cada botón vive en su tooltip); el campo nombre
+y el botón "💾 Guardar" del grupo GUARDAR también se unificaron en una
+fila en vez de dos, y la nota debajo se acortó a una sola línea. Entre
+los dos cambios el alto mínimo bajó de 780 a 560px. (2) `QDialog` NO
+pide los botones minimizar/maximizar de la barra de título por
+defecto (a diferencia de `QMainWindow`) — quedaba solo el de cerrar,
+por eso "no maximiza ni minimiza" no era un bug de layout sino que
+esos botones nunca se pidieron. Corregido con
+`self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMinimizeButtonHint
+| Qt.WindowType.WindowMaximizeButtonHint)` en el `__init__`.
+
+**"Nueva" carga una plantilla básica de 24 bloques (pedido explícito,
+punto f)**: apretar el botón "🗎 Nueva" de verdad (no los usos
+INTERNOS de `_nueva_programacion()`, como vaciar el editor antes de
+volcar una programación recién cargada) arma solo un esqueleto de 24
+bloques vacíos, uno por cada hora del día ("00:00:00 - Bloque 00hs" ...
+"23:00:00 - Bloque 23hs", `_cargar_plantilla_basica()`) — el operador
+completa cada uno con sus ítems en vez de tener que crear los 24 a
+mano. Parámetro nuevo `con_plantilla: bool` en `_nueva_programacion()`,
+default `False` — SOLO el botón real lo pasa en `True`; si el uso
+interno (antes de `_cargar_programacion_existente()`) también lo
+trajera, la plantilla de 24 bloques vacíos quedaría mezclada con los
+bloques recién cargados.
+
 **Regla de negocio importante**: al resolver qué programación aplica
 un día dado, una **fecha específica siempre prevalece** sobre el
 patrón semanal general de ese día (`config/settings.py:
@@ -1236,9 +1308,13 @@ todo el resto.
    `MotorAudio` (`listar_dispositivos`, `set_dispositivo_salida`) y
    el combo en Configuración, pero no se probó contra hardware real
    (el sandbox no tiene tarjeta de sonido).
-6. Integrar crossfade + Pisador para cuando el tema ENTRANTE de un
-   crossfade tiene su propio Pisador (limitación conocida, ver nota
-   en Ventana 2).
+6. ~~Integrar crossfade + Pisador para cuando el tema ENTRANTE de un
+   crossfade tiene su propio Pisador~~ — era la causa real de "el
+   Pisador funciona si aprieto Siguiente, pero no cuando la lista
+   avanza sola": con crossfade activado, la transición natural nunca
+   pasaba por la única función que disparaba el Pisador. Corregido
+   disparándolo en `_liberar_crossfade()` una vez que la rampa del
+   crossfade ya terminó (ver Ventana 2 más abajo).
 7. ~~El Pisador no sonaba~~ — era un bug real de delegación faltante
    (ver Ventana 2 más arriba), corregido, y de paso se le agregó fade
    en vez de saltos de volumen. Falta confirmar con audio real que
@@ -1443,6 +1519,32 @@ todo el resto.
     que Santiago lo pruebe con su biblioteca real: navegar categorías
     profundas en el buscador, y confirmar que el layout de 3 grupos se
     entiende de un vistazo sin tener que releer nada.
+19. ~~Pisador+crossfade, log del Pisador, aviso de STOP con Automático,
+    Programador compacto/maximizable, plantilla en "Nueva"~~ — (a)
+    bug real corregido, prioridad alta: con crossfade activado (cómo
+    usa la radio Santiago en producción), la transición NATURAL entre
+    temas nunca disparaba el Pisador del tema entrante — solo pasaba
+    si el operador apretaba Siguiente a mano; corregido disparándolo
+    en `_liberar_crossfade()` una vez que la propia rampa del
+    crossfade ya terminó, sin competir por el mismo motor; (b) el log
+    ahora registra todo el ciclo de vida del Pisador (disparo con fila/
+    ruta/volumen, cancelación, fin natural) y el inicio de cada
+    crossfade, antes invisible; (c) el STOP de Ventana 1/2 ya NO se
+    deshabilita con el Automático activo (un botón deshabilitado no
+    avisaba nada) — queda siempre clickeable y muestra un mensaje
+    explícito ("primero desactivá el Automático") en vez de quedar
+    mudo; (d+e) el Programador bajó su alto mínimo de 780 a 560px
+    (las 6 acciones de "Programación guardada" pasaron de 3 filas a
+    1, nombre+Guardar se unificaron en una fila) y ahora pide los
+    botones minimizar/maximizar de la barra de título (un `QDialog`
+    no los pide por defecto, por eso no aparecían); (f) "Nueva" arma
+    solo una plantilla de 24 bloques vacíos (00 a 23hs) para completar,
+    en vez de tener que crear cada uno a mano — implementado y probado
+    (13 tests nuevos + suite de regresión completa, incluida la
+    actualización de los tests de la ronda anterior que asumían el
+    STOP deshabilitado). Falta que Santiago confirme con audio real
+    que el Pisador ahora suena siempre en las transiciones con
+    crossfade, y que el Programador entra cómodo en su pantalla.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

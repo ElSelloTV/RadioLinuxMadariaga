@@ -81,8 +81,16 @@ class VentanaProgramador(QDialog):
     def __init__(self, parent=None, ventana_explorador=None):
         super().__init__(parent)
         self.setWindowTitle("Programador de emisión")
-        self.setMinimumSize(640, 780)
+        self.setMinimumSize(760, 560)
         self.setWindowModality(Qt.WindowModality.NonModal)
+        # Bug real corregido — "no maximiza ni minimiza": un QDialog NO
+        # pide esos botones de la barra de título por defecto (a
+        # diferencia de QMainWindow), quedaba solo el de cerrar.
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+        )
         self._ventana_explorador = ventana_explorador
         self._construir_ui()
 
@@ -96,34 +104,37 @@ class VentanaProgramador(QDialog):
         grupo_prog = QGroupBox("PROGRAMACIÓN GUARDADA")
         layout_prog = QVBoxLayout(grupo_prog)
 
-        fila1 = QHBoxLayout()
+        # Pedido explícito (la ventana quedaba muy larga, "se me va de
+        # pantalla la última parte"): las 6 acciones de este grupo
+        # entran en UNA sola fila — etiquetas cortas, el detalle de
+        # cada una queda en el tooltip.
+        fila_prog = QHBoxLayout()
         self.btn_nueva = QPushButton("🗎 Nueva")
-        self.btn_nueva.clicked.connect(self._nueva_programacion)
+        self.btn_nueva.setToolTip("Vacía el editor y arranca con una plantilla de 24 bloques (00 a 23hs).")
+        self.btn_nueva.clicked.connect(lambda: self._nueva_programacion(confirmar=True, con_plantilla=True))
         self.btn_cargar = QPushButton("📂 Cargar...")
         self.btn_cargar.clicked.connect(self._cargar_programacion_existente)
         self.btn_eliminar = QPushButton("🗑 Eliminar...")
         self.btn_eliminar.clicked.connect(self._eliminar_programacion_guardada)
-        for boton in (self.btn_nueva, self.btn_cargar, self.btn_eliminar):
-            fila1.addWidget(boton, 1)
-        layout_prog.addLayout(fila1)
-
-        fila2 = QHBoxLayout()
-        self.btn_duplicar = QPushButton("⧉ Duplicar para otro día...")
-        self.btn_duplicar.clicked.connect(self._duplicar_programacion)
         self.btn_eliminar_varias = QPushButton("🗑📑 Eliminar varias...")
         self.btn_eliminar_varias.clicked.connect(self._eliminar_varias_programaciones)
-        for boton in (self.btn_duplicar, self.btn_eliminar_varias):
-            fila2.addWidget(boton, 1)
-        layout_prog.addLayout(fila2)
-
-        self.btn_aplicar_ahora = QPushButton("▶ Aplicar AHORA en Ventana 1 (al aire)")
+        self.btn_duplicar = QPushButton("⧉ Duplicar...")
+        self.btn_duplicar.setToolTip("Duplicar para otro día: guarda una copia bajo un nombre y día/fecha nuevos.")
+        self.btn_duplicar.clicked.connect(self._duplicar_programacion)
+        self.btn_aplicar_ahora = QPushButton("▶ Aplicar Ahora")
         self.btn_aplicar_ahora.setObjectName("btnStop")
         self.btn_aplicar_ahora.setToolTip(
-            "Reemplaza YA MISMO los bloques de la Ventana 1 en vivo por lo que\n"
-            "está cargado acá en el editor. Puede cortar lo que esté sonando."
+            "Aplicar AHORA en Ventana 1 (al aire): reemplaza YA MISMO los bloques\n"
+            "de la Ventana 1 en vivo por lo que está cargado acá en el editor.\n"
+            "Puede cortar lo que esté sonando."
         )
         self.btn_aplicar_ahora.clicked.connect(self._aplicar_ahora)
-        layout_prog.addWidget(self.btn_aplicar_ahora)
+        for boton in (
+            self.btn_nueva, self.btn_cargar, self.btn_eliminar,
+            self.btn_eliminar_varias, self.btn_duplicar, self.btn_aplicar_ahora,
+        ):
+            fila_prog.addWidget(boton, 1)
+        layout_prog.addLayout(fila_prog)
 
         layout.addWidget(grupo_prog)
 
@@ -175,9 +186,15 @@ class VentanaProgramador(QDialog):
         grupo_guardar = QGroupBox("GUARDAR PROGRAMACIÓN")
         layout_guardar = QVBoxLayout(grupo_guardar)
 
+        fila_nombre = QHBoxLayout()
         self.txt_nombre_programacion = QLineEdit()
         self.txt_nombre_programacion.setPlaceholderText("Nombre de la programación")
-        layout_guardar.addWidget(self.txt_nombre_programacion)
+        self.btn_guardar = QPushButton("💾 Guardar")
+        self.btn_guardar.setObjectName("btnPlay")
+        self.btn_guardar.clicked.connect(self._guardar)
+        fila_nombre.addWidget(self.txt_nombre_programacion, 1)
+        fila_nombre.addWidget(self.btn_guardar)
+        layout_guardar.addLayout(fila_nombre)
 
         fila_fecha = QHBoxLayout()
         self.chk_fecha_especifica = QCheckBox("Fecha específica:")
@@ -198,17 +215,9 @@ class VentanaProgramador(QDialog):
             fila_dias.addWidget(chk)
         layout_guardar.addLayout(fila_dias)
 
-        lbl_nota = QLabel(
-            "Nota: si guardás para una fecha específica, esa programación\n"
-            "reemplaza al patrón semanal general SOLO para ese día puntual."
-        )
+        lbl_nota = QLabel("Nota: una fecha específica prevalece sobre el patrón semanal de ese día.")
         lbl_nota.setObjectName("lblTituloBloqueActivo")
         layout_guardar.addWidget(lbl_nota)
-
-        self.btn_guardar = QPushButton("💾 Guardar programación")
-        self.btn_guardar.setObjectName("btnPlay")
-        self.btn_guardar.clicked.connect(self._guardar)
-        layout_guardar.addWidget(self.btn_guardar)
 
         layout.addWidget(grupo_guardar)
 
@@ -472,7 +481,13 @@ class VentanaProgramador(QDialog):
             for dia_clave, chk in self.checks_dias.items():
                 chk.setChecked(dia_clave == clave)
 
-    def _nueva_programacion(self, confirmar: bool = True):
+    def _nueva_programacion(self, confirmar: bool = True, con_plantilla: bool = False):
+        """`con_plantilla=True` SOLO cuando el operador aprieta el
+        botón "Nueva" de verdad (pedido explícito, punto f: arrancar
+        con un esqueleto de 24 bloques ya listos). Los usos INTERNOS
+        de este método (vaciar el editor antes de volcar una
+        programación cargada) nunca deben traer la plantilla — si la
+        trajeran, quedaría mezclada con los bloques recién cargados."""
         if confirmar and self.tree.topLevelItemCount() > 0:
             respuesta = QMessageBox.question(
                 self, "Nueva programación",
@@ -487,6 +502,25 @@ class VentanaProgramador(QDialog):
         self.chk_fecha_especifica.setChecked(False)
         for chk in self.checks_dias.values():
             chk.setChecked(False)
+
+        if con_plantilla:
+            self._cargar_plantilla_basica()
+
+    def _cargar_plantilla_basica(self):
+        """Pedido explícito (punto f): "Nueva" arranca con una
+        plantilla básica de bloques de 00 a 23hs, uno por cada hora
+        del día, vacíos — el operador solo tiene que completarlos con
+        ítems en vez de crear los 24 bloques a mano."""
+        for hora_num in range(24):
+            hora = f"{hora_num:02d}:00:00"
+            titulo = f"Bloque {hora_num:02d}hs"
+            nodo = QTreeWidgetItem([f"{hora} - {titulo}", "", ""])
+            fuente = nodo.font(0)
+            fuente.setBold(True)
+            nodo.setFont(0, fuente)
+            nodo.setData(0, ROL_HORA_BLOQUE, hora)
+            nodo.setData(0, ROL_TITULO_BLOQUE, titulo)
+            self.tree.addTopLevelItem(nodo)
 
     def _eliminar_programacion_guardada(self):
         disponibles = listar_programaciones()
