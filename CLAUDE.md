@@ -567,16 +567,35 @@ disparaba el Pisador del tema ENTRANTE — antes documentado como
 "limitación conocida" (dos rampas de volumen peleando por el mismo
 motor a la vez). Esto explicaba también el síntoma "a veces sí, a
 veces no": dependía de si esa transición puntual terminó pasando por
-crossfade o no. Corregido: `_iniciar_crossfade()` ahora guarda la fila
-entrante y programa `_liberar_crossfade(fila_entrante)` (antes solo
-limpiaba banderas); ahí, una vez que la propia rampa de volumen del
-crossfade ya terminó (el motor entrante queda "quieto" en su volumen
-final, sin ninguna otra rampa corriendo), se llama recién ahí a
-`_disparar_pisador_si_corresponde(fila_entrante)` — sin competir con
-la rampa del crossfade por el mismo motor. Antes de disparar, chequea
-que `panel.fila_reproduciendo() == fila_entrante` (nadie tomó control
-manual —Siguiente, doble click, Stop— mientras tanto) para no
-disparar el Pisador de una fila que ya no está sonando.
+crossfade o no.
+
+Primera corrección (insuficiente, corregida en la ronda siguiente):
+disparar el Pisador recién en `_liberar_crossfade()`, al terminar la
+rampa de volumen del crossfade — pero eso dejaba varios segundos SIN
+NINGÚN sonido de Pisador, indistinguible en la práctica de "no sonó"
+(así lo reportó Santiago probándolo con audio real: "seleccioné otro
+ítem con el mismo pisador... terminó el rojo y al iniciarse no se
+escuchó el pisador").
+
+**Corrección definitiva**: `_disparar_pisador_si_corresponde()` ganó
+un parámetro `aplicar_ducking: bool` que separa DOS cosas que antes
+viajaban juntas: el AUDIO del Pisador (`motor_pisador.reproducir()`,
+un motor totalmente independiente del principal — nunca compite con
+nada) y el DUCKING (bajar el volumen del tema principal mientras
+suena, que si se aplica INMEDIATO sobre el motor entrante SÍ compite
+con la propia rampa de volumen del crossfade). `_iniciar_crossfade()`
+ahora llama a `_disparar_pisador_si_corresponde(fila_siguiente,
+aplicar_ducking=False)` YA MISMO, apenas arranca el crossfade — el
+Pisador se escucha desde el primer instante, siempre. El ducking se
+sigue difiriendo a `_liberar_crossfade(fila_entrante)`, una vez que la
+rampa del crossfade ya terminó, con dos guards: solo se aplica si el
+Pisador sigue activo (`_pisador_activo` — si ya terminó solo, por ser
+corto, no hay nada que "duckear") y si `panel.fila_reproduciendo() ==
+fila_entrante` (nadie tomó control manual mientras tanto). Regla de
+diseño explícita para el futuro: si hay que elegir entre que el
+Pisador suene siempre (aunque el ducking llegue un instante después) o
+que el ducking esté perfectamente sincronizado (arriesgando que el
+Pisador no se escuche), gana SIEMPRE lo primero.
 
 **Log del Pisador (pedido explícito, para diagnosticar "por qué unas
 veces suena y otras no")**: antes el ciclo de vida completo del
@@ -1542,9 +1561,32 @@ todo el resto.
     en vez de tener que crear cada uno a mano — implementado y probado
     (13 tests nuevos + suite de regresión completa, incluida la
     actualización de los tests de la ronda anterior que asumían el
-    STOP deshabilitado). Falta que Santiago confirme con audio real
-    que el Pisador ahora suena siempre en las transiciones con
-    crossfade, y que el Programador entra cómodo en su pantalla.
+    STOP deshabilitado).
+20. ~~Corrección definitiva del Pisador+crossfade (la de la ronda 19 no
+    alcanzaba)~~ — Santiago probó la ronda 19 con audio real y reportó
+    que el Pisador SEGUÍA sin sonar en una transición con crossfade
+    (adelantó la barra cerca del final, encoló otro ítem con el mismo
+    Pisador en verde, terminó el rojo y "no se escuchó el pisador").
+    Causa: la corrección anterior disparaba el Pisador recién en
+    `_liberar_crossfade()`, ~`duracion_fade_segundos` (3s por defecto)
+    DESPUÉS de arrancar el tema entrante — un silencio de varios
+    segundos indistinguible de "no sonó". Corregido separando el AUDIO
+    del Pisador (arranca YA, siempre, apenas empieza el crossfade —
+    `motor_pisador.reproducir()` es un motor aparte, nunca compite con
+    nada) del DUCKING (bajar el volumen del tema principal, que sí
+    puede pelear con la rampa del crossfade — ese sí se sigue
+    difiriendo a `_liberar_crossfade()`, con guards para no aplicarlo
+    tarde si el Pisador ya terminó solo o si el operador tomó control
+    manual mientras tanto). Regla de diseño para el futuro: ante la
+    duda, que el Pisador SIEMPRE se escuche gana por sobre que el
+    ducking quede perfectamente sincronizado — probado con 4 tests
+    nuevos (audio inmediato al iniciar el crossfade, ducking diferido
+    al liberarlo, sin ducking tardío si el Pisador ya terminó solo, sin
+    ducking sobre una fila vieja si el operador intervino) + suite de
+    regresión completa sin fallos nuevos. Falta que Santiago repita la
+    prueba exacta que hizo (adelantar la barra, encolar en verde un
+    ítem con Pisador, dejar que termine solo) y confirme que ahora sí
+    se escucha siempre.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
