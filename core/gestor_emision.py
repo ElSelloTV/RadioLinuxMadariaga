@@ -83,11 +83,21 @@ sola, sin apretar Siguiente": el tema ENTRANTE de un crossfade no
 disparaba su propio Pisador (única función que lo hacía era
 `_reproducir_fila()`, y la transición con crossfade NUNCA pasaba por
 ahí) — esto era antes una "limitación conocida" documentada acá.
-Corregido: el Pisador del entrante se dispara en `_liberar_crossfade()`,
-una vez que la propia rampa de volumen del crossfade ya terminó (el
-motor entrante queda "quieto" en su volumen final, así que el fade de
-ducking del Pisador no compite con la rampa del crossfade por el
-mismo motor a la vez).
+Primera corrección: disparar el Pisador recién en `_liberar_crossfade()`
+(al terminar la rampa de volumen del crossfade, ~duracion_fade_segundos
+después) para que no compitiera con esa rampa por el mismo motor —
+PERO eso dejaba varios segundos sin NINGÚN sonido de Pisador,
+indistinguible en la práctica de "no sonó" (reportado en pruebas
+reales). Corrección definitiva: `_disparar_pisador_si_corresponde()`
+ahora separa el AUDIO del Pisador (arranca siempre YA, apenas empieza
+el crossfade — `motor_pisador.reproducir()` es independiente del
+motor principal, nunca compite con nada) del DUCKING (bajar el
+volumen del tema mientras suena, parámetro `aplicar_ducking`) — el
+ducking sí se sigue difiriendo a `_liberar_crossfade()` para no pelear
+con la rampa del crossfade, pero el Pisador YA se escucha desde el
+primer instante sin importar eso. Prioridad explícita: que el Pisador
+suene SIEMPRE es más importante que el ducking quede perfectamente
+sincronizado.
 --------------------------------------------------------
 """
 
@@ -321,9 +331,22 @@ class GestorPlaylist:
 
         registrar_evento(f"Crossfade: iniciado hacia fila {fila_siguiente} ('{ruta_siguiente}')")
 
-        # El tema entrante NO dispara su propio Pisador acá todavía —
-        # se dispara en _liberar_crossfade(), una vez que la rampa de
-        # volumen del crossfade ya terminó (ver nota ahí abajo).
+        # Bug real corregido — "el Pisador no sonaba si la lista
+        # avanzaba sola": una primera corrección lo disparaba recién
+        # en _liberar_crossfade() (al terminar la rampa del crossfade,
+        # ~duracion_fade_segundos después) para no competir con esa
+        # rampa — pero eso significaba varios segundos SIN NINGÚN
+        # sonido de Pisador, indistinguible en la práctica de "no
+        # sonó". Pedido explícito: el Pisador debe sonar SIEMPRE. Se
+        # dispara el AUDIO ya mismo (aplicar_ducking=False: el
+        # ducking, bajar el volumen del tema mientras suena el
+        # Pisador, se aplica recién en _liberar_crossfade para no
+        # pelear con la rampa de volumen del propio crossfade sobre
+        # el mismo motor) — la prioridad es que el audio del Pisador
+        # arranque en el momento correcto, aunque el ducking llegue
+        # un instante después.
+        self._disparar_pisador_si_corresponde(fila_siguiente, aplicar_ducking=False)
+
         QTimer.singleShot(
             int(self.duracion_fade_segundos * 1000) + 200,
             lambda: self._liberar_crossfade(fila_siguiente),
@@ -333,25 +356,18 @@ class GestorPlaylist:
         self._crossfade_en_curso = False
         self._motor_saliente_crossfade = None
 
-        # Bug real corregido — "el Pisador no sonaba si pasaba solo,
-        # sin apretar Siguiente": con crossfade activado, la
-        # transición NATURAL entre dos temas pasaba por acá, no por
-        # `_reproducir_fila()` (que es la única función que disparaba
-        # el Pisador) — el tema entrante de un crossfade NUNCA
-        # disparaba su Pisador, solo lo hacía si se avanzaba a mano
-        # (Siguiente/error, que sí pasan por `_reproducir_fila()`).
-        # Antes esto estaba documentado como "limitación conocida" (dos
-        # rampas de volumen peleando por el mismo motor); se resuelve
-        # disparando el Pisador ACÁ, una vez que la propia rampa del
-        # crossfade ya terminó de mover el volumen del entrante — para
-        # ese momento el motor ya está "quieto" en su volumen final, así
-        # que el fade de ducking del Pisador no compite con nada.
-        # Se chequea que la fila que entró por el crossfade siga
-        # siendo la que está sonando (nadie tomó control manual
-        # mientras tanto — Siguiente, doble click, Stop) antes de
-        # dispararlo.
-        if self.panel.fila_reproduciendo() == fila_entrante:
-            self._disparar_pisador_si_corresponde(fila_entrante)
+        # El ducking (bajar el volumen del tema mientras suena el
+        # Pisador) se aplica recién ACÁ, una vez que la propia rampa
+        # de volumen del crossfade ya terminó — así no compiten dos
+        # fades por el mismo motor a la vez. Si el Pisador ya terminó
+        # solo antes de que esto se ejecute (uno corto, duracion_fade_
+        # segundos largo), `_pisador_activo` ya está en False y no hay
+        # nada que "duckear" — no hace falta hacer nada. Tampoco si
+        # el operador tomó control manual mientras tanto (Siguiente,
+        # doble click, Stop) y la fila entrante ya no es la que suena.
+        if self._pisador_activo and self.panel.fila_reproduciendo() == fila_entrante:
+            volumen_pisado = volumen_ajustado_por_ganancia(self._volumen_base, self.bajada_db_pisador)
+            self.motor.fade_volumen_a(volumen_pisado, DURACION_FADE_PISADOR_SEGUNDOS)
 
     # ------------------------------------------------------------------
     # Motor "Agregar Pisador": toda subida/bajada de volumen es un
@@ -372,7 +388,7 @@ class GestorPlaylist:
     # mientras tanto (si cambió, significa que ya hay un Pisador más
     # nuevo en curso y no hay que tocarlo).
     # ------------------------------------------------------------------
-    def _disparar_pisador_si_corresponde(self, fila: int):
+    def _disparar_pisador_si_corresponde(self, fila: int, aplicar_ducking: bool = True):
         ruta_pisador = self.panel.ruta_pisador_en_fila(fila)
         if not ruta_pisador:
             return
@@ -381,9 +397,14 @@ class GestorPlaylist:
         volumen_pisado = volumen_ajustado_por_ganancia(self._volumen_base, self.bajada_db_pisador)
         registrar_evento(
             f"Pisador: disparado sobre fila {fila} ('{self.panel.ruta_en_fila(fila)}') -> "
-            f"'{ruta_pisador}' (baja de {self._volumen_base} a {volumen_pisado})"
+            f"'{ruta_pisador}' (baja de {self._volumen_base} a {volumen_pisado}, "
+            f"ducking {'inmediato' if aplicar_ducking else 'diferido (crossfade en curso)'})"
         )
-        self.motor.fade_volumen_a(volumen_pisado, DURACION_FADE_PISADOR_SEGUNDOS)
+        if aplicar_ducking:
+            self.motor.fade_volumen_a(volumen_pisado, DURACION_FADE_PISADOR_SEGUNDOS)
+        # El audio del Pisador arranca SIEMPRE ya mismo, sin importar
+        # si el ducking del tema principal se aplica ahora o más tarde
+        # (pedido explícito: nunca debe quedar en silencio esperando).
         self.motor_pisador.reproducir(ruta_pisador)
 
     def _on_pisador_finalizado(self):
