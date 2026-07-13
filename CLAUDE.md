@@ -45,6 +45,12 @@ radio, uso diario en producción.
   trabajo terminado sin subir a `claude/radio-app-design-yu3mcp` (y
   avisar si hace falta fusionarlo a `main` para que el botón
   Actualizar de Configuración lo traiga — main no se actualiza sola).
+- **Pedido explícito: el repo es público, `README.md` lleva un aviso
+  de "PROYECTO EN DESARROLLO" y una línea "Última actualización:
+  YYYY-MM-DD".** Actualizar esa fecha (formato ISO, fecha del día en
+  que se hace el cambio) en CADA ronda que termine con push a `main`
+  — no alcanza con pushear a la rama de trabajo, la fecha debe
+  reflejar lo que ve cualquiera que mire el repo público.
 
 ## Arquitectura (estricta separación GUI / core / config)
 
