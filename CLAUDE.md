@@ -836,11 +836,126 @@ bien, un "bache" de 300ms a mitad del tema queda intacto, y un
 silencio de 30s pegado a un extremo se limita a los 20s del techo.
 
 ### Ventana Programador
-Editor de programaciones: arrastrás desde el Explorador, armás
-bloques horarios (hora + título), y guardás para una fecha específica
-o para uno o varios días de la semana (checkboxes L-D). Botón
-"📂 Cargar programación existente..." lista todo lo guardado y lo
-vuelca en el editor.
+Editor de programaciones: arrastrás desde el Explorador (o usás el
+buscador de biblioteca, ver abajo), armás bloques horarios (hora +
+título), y guardás para una fecha específica o para uno o varios días
+de la semana (checkboxes L-D).
+
+**Rediseño completo (pedido explícito, "diferenciar bien cargar,
+editar, eliminar... la programación, y por otro lado, añadir, borrar,
+reemplazar los ítems del bloque, y las mismas opciones para los
+bloques horarios")**: la ventana ahora tiene TRES grupos separados a
+propósito, cada uno con su propio nivel de acción — Santiago fue
+explícito en que mezclarlos en la cabeza del operador era el problema
+real, no solo estético:
+
+1. **PROGRAMACIÓN GUARDADA** (nivel "archivo entero": nombre + día/
+   fecha + todos sus bloques) — fila simétrica **Nueva / Cargar... /
+   Eliminar...** (mismo stretch, mismo tamaño — pedido explícito punto
+   a), fila **Duplicar para otro día... / Eliminar varias...**, y el
+   botón **▶ Aplicar AHORA en Ventana 1 (al aire)** (`objectName`
+   `btnStop`, rojo — es una acción que corta lo que esté sonando).
+2. **BLOQUES HORARIOS Y SUS ÍTEMS** (nivel estructura) — el botón que
+   antes decía solo "＋ Bloque horario" ahora dice **"＋ Añadir Bloque
+   Horario"** (pedido explícito punto b: "no queda intuitivo, para
+   diferenciar de Cargar puede ser Añadir"); fila de ítems **➕ Añadir
+   Ítem... / 🔁 Reemplazar seleccionado... / ✕ Quitar
+   seleccionado(s)**.
+3. **GUARDAR PROGRAMACIÓN** (nombre + fecha/día + botón Guardar) —
+   sin cambios de fondo, es la identidad de dónde se graba lo que ya
+   está en el editor.
+
+**"Reemplazar" es UNA sola acción contextual para bloques E ítems**
+(confirmado con Santiago, no dos botones separados):
+`_reemplazar_seleccionado()` mira qué hay seleccionado — un BLOQUE
+(`item.parent() is None`) abre `DialogoEditarBloque` (hora + título,
+conserva sus ítems intactos); un ÍTEM abre el buscador de biblioteca
+en modo single y le cambia el archivo (título/duración/código/ruta/
+análisis de audio) **sin mover su posición** dentro del bloque. Con
+0 o 2+ seleccionados, avisa que hay que elegir uno solo.
+
+**"Quitar seleccionado(s)" ahora admite selección múltiple**
+(`self.tree.setSelectionMode(ExtendedSelection)`, pedido explícito
+punto h ampliado: "también selección múltiple de bloques/ítems en el
+editor") — Ctrl/Shift para elegir varios bloques y/o ítems sueltos a
+la vez y sacarlos con un solo clic + una sola confirmación.
+`_quitar_seleccionados()` separa los bloques de nivel superior
+seleccionados de los ítems sueltos cuyo padre NO esté también
+seleccionado (si el padre se va a borrar, no hace falta procesar el
+hijo aparte) — evita procesar dos veces o con índices corridos.
+
+**Buscador de biblioteca a dos columnas** (`gui/dialogo_seleccionar_biblioteca.py`,
+pedido explícito punto e: "opción clara para añadir ítem... navegar
+por categorías y dentro de ellas, el ítem que deseo agregar", "minimalista
+del explorador"): izquierda categorías (recursivo, sin límite de
+niveles), derecha los archivos de la categoría seleccionada
+(Título/Duración/Código). Lee directamente
+`ventana_explorador.tree_categorias` (la Ventana 3 tiene que estar
+construida, se la pasa `MainWindow.abrir_programador` al crear
+`VentanaProgramador`) — copia la ESTRUCTURA a un árbol propio (nunca
+reparenta los `QTreeWidgetItem` originales, un ítem solo puede
+pertenecer a un `QTreeWidget` a la vez), así siempre refleja lo último
+de la biblioteca en memoria sin releer el disco. `permitir_multiple=True`
+para "Añadir Ítem" (Ctrl/Shift, agrega varios de una), `False` para
+"Reemplazar" (uno solo, doble click confirma directo).
+
+**Recordar la última categoría navegada** (pedido explícito punto f:
+"que guarde la última carpeta/categoría... así no tengo que volver a
+hacer toda la búsqueda"): `gui/estado_ui.py` ganó un par genérico
+`guardar_valor()`/`restaurar_valor()` (sección `estado/` de
+`ui_state.ini`, mismo QSettings de siempre) — `VentanaProgramador`
+guarda la ruta de nombres (`["Publicidad", "Comerciales"]`) cada vez
+que se confirma el buscador, y se la pasa como `categoria_inicial` la
+próxima vez que se abre — sobrevive tanto a cerrar y reabrir el
+diálogo como a cerrar y reabrir la aplicación entera (persiste en
+disco). Ojo con una trampa real de QSettings: una lista guardada de
+UN solo elemento vuelve como string suelto al leerla, no como lista
+de 1 — `_restaurar_ultima_categoria()` normaliza ese caso.
+
+**Duplicar para otro día — subsisten las dos** (`gui/dialogo_duplicar_programacion.py`,
+pedido explícito punto g: "copiar la misma programación para
+cambiarla por otro día, generando una nueva... que subsistan las
+dos"): pide nombre + fecha específica o días de la semana NUEVOS, y
+guarda el contenido ACTUAL del editor (`_serializar_bloques()`) bajo
+esa clave nueva con `guardar_programacion()` — como es una clave
+distinta (otro día/fecha) en `programacion.json`, la programación de
+origen nunca se toca, quedan las dos guardadas.
+
+**Cargar / Eliminar / Eliminar varias unificados en un solo diálogo**
+(`gui/dialogo_programaciones_guardadas.py`): reemplaza el viejo
+`QInputDialog.getItem` — la MISMA clase sirve para "Cargar" (lista de
+selección única) y para "Eliminar varias" (`permitir_multiple=True`,
+Ctrl/Shift, una sola confirmación con la lista de nombres a borrar).
+`config/settings.py` ganó `eliminar_programacion(tipo, clave)` (borra
+esa clave puntual de `dias_semana`/`fechas_especificas` y persiste)
+para que Eliminar/Eliminar varias tengan de dónde tirar.
+
+**"Aplicar AHORA en Ventana 1" — al aire, sin pasar por el disco**
+(pedido explícito punto d: "no hay una acción que si yo deseo cargar
+esa programación en el momento"): `VentanaProgramador` pide
+confirmación (texto explícito: "puede cortar lo que esté sonando") y
+emite `solicitud_aplicar_ahora(bloques)` con el contenido YA
+serializado del editor — no hace falta guardarlo primero.
+`MainWindow.abrir_programador()` conecta esa señal a
+`_aplicar_programacion_ahora()`, que llama directo a
+`self.ventana_publicidad.cargar_bloques(bloques)` (mismo método que ya
+usa el arranque automático y "Cargar Programación" de Ventana 1) — la
+confirmación de impacto ya la dio el Programador, acá solo se aplica.
+
+**Bug real corregido de paso — el Programador nunca guardaba el
+recorte de silencio/nivelado de los ítems**: ni el drag&drop
+(`_on_archivo_soltado`) ni `_serializar_bloques()` conocían
+`punto_inicio_ms`/`punto_fin_ms`/`ganancia_db` — cualquier tanda
+armada en el Programador y guardada llegaba a Ventana 1 sin ese
+análisis (mismo tipo de bug ya corregido antes en Ventana 1/2 "al
+aire", pero este rincón se había quedado afuera). Corregido: ahora se
+guarda con `ROL_ANALISIS_AUDIO` (mismo rol que usa `gui/styles.py` en
+el resto de la app) en cada ítem — `_on_archivo_soltado` busca el
+registro completo vía `ventana_explorador.buscar_registro_por_ruta()`
+(mismo patrón que `MainWindow._on_archivo_soltado_publicidad`), el
+buscador de biblioteca siempre trae el registro completo, y
+`_serializar_bloques()`/`_cargar_programacion_existente()` leen y
+escriben esos tres campos igual que ya hace Ventana 1.
 
 **Regla de negocio importante**: al resolver qué programación aplica
 un día dado, una **fecha específica siempre prevalece** sobre el
@@ -1293,6 +1408,41 @@ todo el resto.
     guardada). Falta que Santiago lo pruebe en su notebook con audio
     real, en particular que el STOP bloqueado no le moleste en la
     operación diaria (se desbloquea apagando el Automático).
+18. ~~Rediseño completo del Programador de Emisión (3 niveles de
+    acción, buscador de biblioteca, duplicar, eliminar varias, aplicar
+    ahora)~~ — pedido explícito de diferenciar con claridad
+    programación/bloques/ítems: tres grupos separados en la UI
+    (Programación Guardada / Bloques y sus Ítems / Guardar); fila
+    simétrica Nueva/Cargar/Eliminar; "＋ Bloque horario" renombrado a
+    "＋ Añadir Bloque Horario" (verbo explícito); "Reemplazar" como
+    ACCIÓN CONTEXTUAL única para bloques (edita hora/título,
+    `gui/dialogo_editar_bloque.py`) e ítems (cambia el archivo sin
+    mover la posición); "Quitar" con selección múltiple real de
+    bloques e ítems mezclados; buscador de biblioteca a dos columnas
+    (`gui/dialogo_seleccionar_biblioteca.py`, categorías recursivo +
+    archivos de la categoría, copia la estructura del árbol vivo del
+    Explorador sin reparentar ítems); última categoría navegada
+    persistida en disco (`estado_ui.guardar_valor`/`restaurar_valor`,
+    nuevo par genérico); "Duplicar para otro día"
+    (`gui/dialogo_duplicar_programacion.py`, guarda bajo una clave
+    nueva sin tocar la original — subsisten las dos); Cargar/Eliminar
+    varias unificados en `gui/dialogo_programaciones_guardadas.py`
+    (`config/settings.eliminar_programacion` nuevo); "Aplicar AHORA en
+    Ventana 1" (`solicitud_aplicar_ahora` → `MainWindow.
+    _aplicar_programacion_ahora` → `ventana_publicidad.cargar_bloques()`,
+    con confirmación de que puede cortar lo que esté sonando). Bug
+    real corregido de paso: el Programador nunca guardaba
+    `punto_inicio_ms`/`punto_fin_ms`/`ganancia_db` de sus ítems (ni
+    por drag&drop ni por el buscador) — cualquier tanda armada ahí
+    llegaba a Ventana 1 sin el recorte de silencio/nivelado aplicado;
+    corregido con `ROL_ANALISIS_AUDIO` igual que el resto de la app.
+    Implementado y probado (13 tests nuevos + integración real de
+    punta a punta vía `MainWindow.abrir_programador()` → agregar
+    bloque/ítem → Aplicar ahora → verificado en el árbol real de
+    Ventana 1 + suite de regresión completa sin fallos nuevos). Falta
+    que Santiago lo pruebe con su biblioteca real: navegar categorías
+    profundas en el buscador, y confirmar que el layout de 3 grupos se
+    entiende de un vistazo sin tener que releer nada.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

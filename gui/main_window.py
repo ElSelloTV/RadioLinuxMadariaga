@@ -622,15 +622,25 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def abrir_programador(self):
         if self._ventana_programador is None:
-            self._ventana_programador = VentanaProgramador(self)
+            self._ventana_programador = VentanaProgramador(self, ventana_explorador=self.ventana_explorador)
             configurar_columnas_ajustables(self._ventana_programador.tree, [200, 90])
             self._ventana_programador.tree.header().setMinimumSectionSize(45)
             estado_ui.restaurar_columnas("programador", self._ventana_programador.tree)
             estado_ui.restaurar_geometria_ventana(self._ventana_programador, "programador")
+            self._ventana_programador.solicitud_aplicar_ahora.connect(self._aplicar_programacion_ahora)
 
         self._ventana_programador.show()
         self._ventana_programador.raise_()
         self._ventana_programador.activateWindow()
+
+    def _aplicar_programacion_ahora(self, bloques: list):
+        """Pedido explícito del Programador (punto d): "cargar esa
+        programación en el momento" — la confirmación de que puede
+        cortar lo que está sonando ya la pidió VentanaProgramador antes
+        de emitir esta señal; acá solo se aplica en vivo."""
+        self.ventana_publicidad.cargar_bloques(bloques)
+        registrar_evento("Publicidad: bloques aplicados en vivo desde el Programador")
+        self.statusBar().showMessage("Programación aplicada ahora mismo en Ventana 1.", 4000)
 
     def _cargar_programacion_de_hoy_manual(self):
         """"Cargar Programación" del menú contextual de Ventana 1 —
