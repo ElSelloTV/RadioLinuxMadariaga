@@ -1,5 +1,10 @@
 # RadioLinuxMadariaga
 
+> 🚧 **PROYECTO EN DESARROLLO.** Uso en producción bajo tu propio
+> riesgo — puede haber cambios frecuentes y funciones incompletas.
+>
+> **Última actualización:** 2026-07-13
+
 Automatización radial para Linux (clon funcional de Dinesat 9), en
 Python + PySide6 + VLC. Publicidad, música y explorador de medios,
 con motor de reproducción real, análisis de audio y programación
