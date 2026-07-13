@@ -555,6 +555,34 @@ SIEMPRE (incluso a 0ms) después de cada `play()`, sin importar si
 `cargar()` se ejecutó o no — reproducir dos veces seguidas el mismo
 archivo ahora reinicia la posición de forma confiable.
 
+**Segunda vuelta del mismo bug — el seek NO alcanzaba cuando el
+archivo llegó a su fin NATURAL**: Santiago probó con audio real
+(mismo Pisador reutilizado en 3 temas de una lista con crossfade) y
+reportó que solo sonó la PRIMERA vez — la segunda y la tercera,
+silencio total. Causa real: cuando libVLC llega al fin natural de un
+media (evento `MediaPlayerEndReached`, sin que nadie llame a `stop()`
+a mano — es justo lo que le pasa a un Pisador corto, siempre termina
+solo), el reproductor queda en estado interno "Ended"; en ese estado,
+un simple `play()` NO reinicia la reproducción de forma confiable en
+varias versiones de libVLC (el seek a `punto_inicio_ms` de la
+corrección anterior no alcanzaba, porque el problema no era la
+posición sino que el `play()` mismo no "revivía" al reproductor).
+Corregido con un `self._player.stop()` explícito ANTES de cada
+`play()`, sin importar si `cargar()` se ejecutó arriba o no — fuerza
+a libVLC a resetear ese estado. De paso se corrigió un segundo bug
+relacionado, encontrado en el mismo log real: al cancelar un Pisador
+en curso (`_cancelar_pisador_en_curso`) queda un fundido a volumen 0
+corriendo en `motor_pisador` durante 0.8s; si un Pisador NUEVO se
+dispara en ese mismo motor antes de que ese fundido termine (pasa de
+tema rápido con Pisador en cada uno), el fundido viejo seguía
+pisándole el volumen al nuevo — sonaba pero en silencio. Corregido
+cancelando cualquier `_timer_fade_volumen` en curso al inicio de
+`reproducir()`, para cualquier motor, no solo el del Pisador.
+**Advertencia**: este bug de estado de libVLC no se puede reproducir
+en el sandbox (no hay VLC instalado acá) — el fix se basa en un
+comportamiento documentado de libVLC y en el log real que mandó
+Santiago, pero falta que él lo confirme con audio real de nuevo.
+
 **Bug real corregido — "el Pisador funciona si aprieto Siguiente,
 pero no cuando la lista avanza sola" (pedido explícito, prioridad
 alta)**: la única función que disparaba el Pisador era
@@ -1587,6 +1615,38 @@ todo el resto.
     prueba exacta que hizo (adelantar la barra, encolar en verde un
     ítem con Pisador, dejar que termine solo) y confirme que ahora sí
     se escucha siempre.
+21. ~~Bug real de libVLC: el Pisador reutilizado dejaba de sonar a
+    partir de la segunda vez~~ — Santiago mandó el log real de una
+    prueba (24hs de programación real, Pisador "PISADOR RADIO HITS
+    91" reutilizado en 3 temas distintos): sonó la primera vez, las
+    otras dos NO — a pesar del fix de la ronda 20. El log reveló que
+    en realidad estaba corriendo la versión INTERMEDIA (la de la
+    ronda 19, sin el sufijo de log "ducking inmediato/diferido" de la
+    ronda 20) — pero investigando igual apareció un bug real
+    independiente y más profundo: cuando libVLC llega al fin NATURAL
+    de un archivo (`MediaPlayerEndReached`, que es exactamente cómo
+    termina un Pisador corto todas las veces), el reproductor queda
+    en estado "Ended" — un simple `play()` sobre ese estado no
+    reinicia la reproducción de forma confiable en varias versiones
+    de libVLC, sin importar el seek a `punto_inicio_ms` que ya se
+    hacía (ronda de "reuso de Pisador" anterior). Corregido con un
+    `self._player.stop()` explícito ANTES de cada `play()` en
+    `MotorAudio.reproducir()`, siempre, para forzar el reset de
+    estado. De paso, un segundo bug relacionado encontrado en el
+    mismo log: al cancelar un Pisador en curso queda un fundido a
+    volumen 0 corriendo 0.8s en `motor_pisador` — si un Pisador nuevo
+    se dispara en ese mismo motor antes de que termine ese fundido
+    (pasar de tema rápido, cada uno con Pisador), el fundido viejo le
+    seguía pisando el volumen al nuevo, sonando pero en silencio;
+    corregido cancelando cualquier fade en curso al inicio de
+    `reproducir()`. **Este bug es imposible de reproducir en el
+    sandbox** (no hay libVLC instalado acá) — el fix se basa en el
+    log real de Santiago y en un comportamiento documentado de
+    libVLC, probado acá solo estructuralmente (orden de llamadas
+    `stop()`→`play()`, cancelación del fade viejo, mockeando el
+    reproductor). Falta que Santiago lo confirme con audio real —
+    repetir la prueba de reutilizar el mismo Pisador en varios temas
+    seguidos de una lista real.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
