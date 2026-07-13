@@ -1137,6 +1137,170 @@ prefijo "HH:MM:SS - " de un título — usado también en
 que ya haya quedado corrupta por el bug se AUTOCURA sola la próxima vez
 que se carga, sin necesitar reparar los datos a mano.
 
+### Paridad de diseño con Hardata Dinesat 9 (Ventana 1 y Ventana 2)
+Pedido explícito de Santiago, con 4 fotos de referencia de Dinesat 9
+("el mejor a mi gusto"): igualar lo más posible el display y la
+distribución de controles de arriba, el comportamiento de los colores
+rojo/verde en las listas, y fusionar Play+Siguiente en un solo botón
+como hace Dinesat. Antes de implementar se confirmaron 4 decisiones
+con Santiago (todas la opción recomendada): el medidor de nivel es
+**solo decorativo** (python-vlc no expone nivel de audio real en vivo,
+y un número inventado sería peor que no tener nada); el botón
+"Siguiente" de toda la vida **se convierte en "Cut"** (mismo
+comportamiento de corte seco, solo renombrado/reubicado); el nuevo
+botón "Stop diferido" se bloquea con el Automático activo **igual que
+el Stop actual** (mismo aviso); los íconos nuevos son **símbolos/
+emoji + tooltip** (no hay assets reales de Dinesat, solo fotos
+borrosas de referencia).
+
+**Display superior (`gui/panel_reproductor.py` Ventana 2/Auxiliar,
+`gui/ventana_publicidad.py` Ventana 1)**: cartel de nombre de emisora
+(`lbl_nombre_estacion`, objectName `lblNombreEstacion`, texto "RADIO
+TUYÚ FM 92.5") arriba de los contadores, y `MedidorNivelDecorativo`
+(`gui/medidor_nivel.py`, NUEVO) — barra vertical de 5 segmentos verde/
+amarillo/rojo estilo VU-meter, pegada a los contadores. Es puramente
+visual: `set_activo(bool)` prende/apaga los segmentos según
+`motor.esta_reproduciendo()` (mismo lugar donde ya se actualiza
+`IndicadorEnVivo`, `set_indicador_en_vivo()` ahora llama a los dos).
+No mide señal real — si en algún momento se consigue una forma
+confiable de leer nivel de audio real de python-vlc, este widget es
+el punto de enganche, pero hoy es decorativo a propósito.
+
+**Selección celeste, rojo/verde nunca se pisan (pedido explícito, "en
+ningún momento pierden su color, el celeste es solo para una
+selección")**: `gui/styles.py` — `COLOR_SELECCION = "#5dade2"` (antes
+la selección usaba el mismo amarillo que ya usaba otra cosa, quedaba
+ambiguo). `QTreeWidget#tree_reproductor::item:selected` y
+`#tree_publicidad::item:selected` ahora tienen fondo transparente +
+borde celeste de 2px — como el color rojo/verde de estado ya se pinta
+aparte (fondo de fila) y la selección solo agrega el borde, un ítem
+puede estar SELECCIONADO (celeste) Y en punta/en cola (rojo/verde) al
+mismo tiempo sin que ninguno tape al otro; seleccionar OTRO ítem solo
+mueve el borde celeste, nunca toca el rojo/verde de fondo.
+
+**Botón verde grande = Play + Siguiente-con-fundido, fusionados
+(pedido explícito, punto c)**: un solo botón (`btnPlayPrincipal`,
+`"▶ PLAY /\nSIG."`, grande, a la izquierda de la grilla de transporte)
+reemplaza la vieja dualidad de apretar Play y aparte Siguiente para
+avanzar. `_on_click_play()` (en `GestorPlaylist` y `GestorPublicidad`)
+decide según el estado real del motor:
+- **En silencio**: comportamiento de Play de siempre — arranca el
+  ítem armado/seleccionado (`reproducir_actual()` /
+  `_reproducir_seleccion_o_actual()`), sin cambios.
+- **Sonando algo**: actúa como "Siguiente" pero SIEMPRE con fundido
+  (nunca corte seco) — avanza al ítem en cola (verde) si hay uno, si
+  no al próximo válido, respetando todas las reglas ya existentes de
+  `_avanzar()` (freno de hora de bloque, límites del árbol, etc.).
+  Usa una duración de fundido FIJA y corta,
+  `DURACION_FUNDIDO_MANUAL_SEGUNDOS = 1.2` (separada a propósito de
+  `duracion_fade_segundos` de Configuración — este botón siempre
+  funde, sin importar si el operador tiene el crossfade automático
+  apagado en Configuración → Fade/Transiciones).
+- **Diferencia de arquitectura V1 vs. V2, documentada y deliberada**:
+  Ventana 2 (`GestorPlaylist._avanzar_con_fundido`) reutiliza el
+  motor DUAL de crossfade que ya existía (`_iniciar_crossfade`, ahora
+  con un parámetro `duracion_segundos` opcional en vez de siempre leer
+  la config) — es un fundido SUPERPUESTO real, igual que el crossfade
+  automático de fin de tema. Ventana 1 (`GestorPublicidad`) NO tiene
+  motor dual (siempre tuvo un solo `MotorAudio`) — implementar un
+  crossfade real ahí era alcance grande con riesgo de regresión sobre
+  `_avanzar()` (método históricamente delicado, con las reglas de
+  freno por hora de bloque). Se optó por un fundido SECUENCIAL con el
+  mismo botón (`_avanzar_con_fundido`/`_completar_avance_con_fundido`
+  en `core/playlist_manager.py`): baja el volumen del ítem actual a 0
+  en 1.2s, y RECIÉN AHÍ llama a `_avanzar()` sin modificarlo (para
+  heredar todas sus reglas tal cual están), y sube el volumen del
+  ítem nuevo desde 0. No se superpone (no suena simultáneo un
+  instante como en V2), pero tampoco es un corte seco — sigue siendo
+  un fundido, solo que uno atrás del otro. Mejora futura si Santiago
+  pide overlap real en Ventana 1: armar el mismo motor dual que ya
+  tiene `GestorPlaylist`.
+- Un fundido manual en curso no se puede superponer con otro
+  (`_crossfade_en_curso` en V2, `_fundido_en_curso` en V1) — apretar
+  el botón verde de nuevo mientras el fundido está corriendo no hace
+  nada.
+
+**Botón "Fade" / Fade-Stop (nuevo, 2do botón de la fila de arriba,
+`btnFadeStop`)**: fundido de volumen hasta apagar el ítem en
+reproducción y detenerlo — distinto de Stop (corte seco inmediato) y
+de Stop diferido (dejar terminar solo). `_fade_stop()` en ambos
+gestores: `motor.fade_volumen_a(0, DURACION_FUNDIDO_MANUAL_SEGUNDOS)`
++ `QTimer.singleShot` que llama a Stop real una vez terminada la
+rampa (con margen de 150ms). Si no hay nada sonando, actúa como Stop
+directo (nada que fundir).
+
+**Botón "Cut" (antes "Siguiente", renombrado — pedido explícito,
+comportamiento SIN CAMBIOS)**: corte seco e inmediato al siguiente
+ítem, tal cual funcionaba el viejo botón Siguiente — a propósito el
+nombre interno de la señal (`solicitud_siguiente`) y del slot
+(`_avanzar_al_siguiente`) no cambiaron, solo el texto/objectName/
+tooltip visibles (`btnCut`), para minimizar puntos de contacto y
+riesgo de regresión sobre un botón que ya funcionaba bien.
+
+**Botón "Stop diferido" (nuevo, `btnStopDiferido`, con contorno
+naranja permanente + relleno cuando está armado — mismo patrón visual
+que `btnAutomatico`)**: es un TOGGLE, no una acción inmediata — un
+primer click lo ARMA (deja terminar el ítem actual solo, y ahí
+detiene TODA la emisión en vez de avanzar al siguiente); un segundo
+click lo DESARMA sin tocar nada más. `_toggle_stop_diferido()` /
+`_cancelar_stop_diferido()` en ambos gestores, con
+`panel.set_stop_diferido_armado(bool)` reflejando el estado en la UI
+(`COLOR_ARMADO = "#e67e22"` en `gui/styles.py`). El guard vive en UN
+solo lugar por gestor — el TOPE de `_avanzar()` (V1) / `_avanzar()`
+(V2) — así cubre TODOS los disparadores por igual (fin natural de
+ítem, Cut manual, cascada de reintentos por error): si está armado,
+se desarma y se llama a Stop en vez de continuar. En V2 además se
+frena `_chequear_crossfade()`/`_iniciar_crossfade()` mientras está
+armado, para que no arranque una transición automática que
+`_avanzar()` tendría que cortar de nuevo.
+
+**Automático como 4to botón de la fila de abajo (solo Ventana 1,
+pedido explícito "la ventana 1 tiene un 4to botón abajo")**: el botón
+ya existente se movió de la barra superior (`barra_superior`, donde
+convivía con `lbl_estado`) a la grilla de transporte, como último
+botón de `fila_inferior` junto a Pausa/Cut/Stop-diferido. Texto
+acortado de "AUTOMÁTICO: ON/OFF" a "AUTO"/"MAN" para entrar en el
+espacio compacto de la grilla — el estado completo sigue disponible
+en `lbl_estado` ("Automático Activo"/"Modo Manual", sin cambios) y en
+el tooltip del botón. Su lógica (`_toggle_automatico`, contorno rojo
+permanente, bloqueo de Stop) no cambió, solo la ubicación visual.
+
+**Bloqueo por Automático extendido a Fade-Stop y Stop diferido
+(pedido explícito, mismo criterio ya usado para Stop)**: con el
+Automático activo, los tres botones (Stop, Fade-Stop, Stop diferido)
+de Ventana 1 y Ventana 2 muestran el mismo aviso ("primero desactivá
+el Automático") en vez de actuar — mismo helper
+`_avisar_bloqueado_por_automatico()` reutilizado por los tres
+handlers en cada ventana. La Auxiliar no se toca (nunca recibe
+`set_stop_habilitado()`), así que sus tres botones nunca quedan
+bloqueados — consistente con la regla ya establecida.
+
+**Fila de transporte reorganizada (2 filas + botón grande)**: en vez
+de una sola fila de 4-5 botones, ahora es `btn_play` grande a la
+izquierda + una grilla de 2x2 a la derecha (`fila_superior`: Stop,
+Fade-Stop / `fila_inferior`: Pausa, Cut, Stop-diferido [, Automático
+en V1]) — necesario para sumar los 2 botones nuevos sin volver a la
+fila ancha de una sola línea que ya se había descartado en una ronda
+anterior por ocupar demasiado ancho.
+
+Probado con 15 tests nuevos dedicados (botón verde Play-vs-fundido en
+ambos estados y en ambas ventanas, no superposición de fundidos, Cut
+sin cambios, Fade-Stop con y sin audio sonando, Stop diferido armado/
+desarmado/disparado por fin natural, bloqueo por Automático de los
+tres botones, color celeste de selección en la QSS, existencia de los
+6 botones + Automático) + suite de regresión completa (26 scripts)
+sin fallos nuevos — los 2 fallos preexistentes (`test_confirmaciones.py`,
+`test_log_git.py`, de rondas anteriores, entorno) y 2 fallos de
+horario dependientes de la hora real del sistema
+(`test_ciclo_automatico.py`, `test_play_bloque_y_hora.py`, ya fallaban
+igual en el commit anterior a esta ronda, confirmado con `git stash`)
+siguen igual, sin relación con este cambio. Falta que Santiago lo
+compare con Dinesat en su pantalla real y confirme: si el layout de
+2 filas + botón grande se parece lo suficiente a las fotos que mandó,
+si el medidor de nivel decorativo cumple su función visual aunque no
+mida audio real, y si el fundido secuencial de Ventana 1 (a diferencia
+del solapado de Ventana 2) se nota o le alcanza así.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -1709,6 +1873,30 @@ todo el resto.
     siempre con libVLC: el sandbox no tiene VLC, falta la
     confirmación de Santiago con audio real — misma prueba (un solo
     Pisador reutilizado en varios ítems, lista con crossfade).
+23. ~~Paridad de diseño con Hardata Dinesat 9~~ — pedido explícito con
+    4 fotos de referencia: cartel de nombre de emisora + medidor de
+    nivel decorativo arriba de los contadores (Ventana 1 y 2); color
+    celeste exclusivo de selección, ya no pisa el rojo/verde de
+    estado; botón verde grande que fusiona Play y "Siguiente con
+    fundido" (crossfade solapado real en Ventana 2, fundido
+    secuencial en Ventana 1 por no tener motor dual — diferencia
+    documentada y deliberada); botón nuevo Fade-Stop (fundido hasta
+    apagar); botón nuevo Stop diferido (toggle: deja terminar el
+    ítem actual y recién ahí frena todo, sin avanzar — guard único en
+    el tope de `_avanzar()` de cada gestor, cubre fin natural/Cut/
+    cascada de error por igual); "Siguiente" renombrado a "Cut" sin
+    tocar su lógica; Automático reubicado como 4to botón de la grilla
+    de transporte de Ventana 1; bloqueo por Automático extendido a
+    Fade-Stop y Stop diferido (mismo aviso que ya tenía Stop) —
+    implementado y probado (15 tests nuevos dedicados + suite de
+    regresión completa de 26 scripts sin fallos nuevos; confirmado
+    con `git stash` que los 2 fallos de horario preexistentes ya
+    fallaban igual antes de esta ronda). Falta que Santiago compare
+    el resultado con las fotos reales de Dinesat en su pantalla y
+    confirme si el layout se parece lo suficiente, si el medidor
+    decorativo cumple su función aunque no mida audio real, y si el
+    fundido secuencial de Ventana 1 le alcanza o prefiere pedir el
+    crossfade solapado real ahí también más adelante.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
