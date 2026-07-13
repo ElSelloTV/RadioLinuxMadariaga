@@ -90,6 +90,29 @@ class MotorAudio(QObject):
 
         self._punto_fin_ms = punto_fin_ms
 
+        # Bug real corregido — "el mismo archivo de Pisador reusado en
+        # varios temas, deja de sonar después de la primera vez, ni
+        # siquiera con el seek a 0ms de más abajo": cuando libVLC llega
+        # al FIN NATURAL de un media (evento MediaPlayerEndReached, sin
+        # que nadie llame a stop() explícitamente), el reproductor
+        # queda en estado "Ended" — en ese estado, un simple play() NO
+        # reinicia la reproducción de forma confiable en varias
+        # versiones de libVLC (queda "vivo" pero mudo). Un stop()
+        # explícito ANTES de play() fuerza a libVLC a resetear ese
+        # estado, sin importar si cargar() se ejecutó arriba o no —
+        # así reproducir dos, tres o más veces el MISMO archivo
+        # siempre vuelve a sonar, no solo la primera.
+        self._player.stop()
+
+        # Cualquier fade de volumen que haya quedado corriendo de una
+        # reproducción anterior en ESTE MISMO motor (ej. el fundido a
+        # 0 de "cancelar un Pisador en curso") se cancela acá — si no,
+        # ese timer viejo puede seguir pisando el volumen de la
+        # reproducción recién arrancada varios pasos más, dejándola
+        # sonando pero en silencio.
+        if self._timer_fade_volumen is not None:
+            self._timer_fade_volumen.stop()
+
         self._player.play()
         self._timer_posicion.start()
 
@@ -101,13 +124,9 @@ class MotorAudio(QObject):
 
         # El seek necesita que el media ya haya arrancado a
         # reproducirse; libvlc lo tolera con un pequeño retardo.
-        # SIEMPRE se hace, incluso a 0ms — bug real corregido: si se
-        # reproduce dos veces el MISMO archivo (ej. un Pisador
-        # reutilizado en varios temas), como la ruta no cambió
-        # cargar() se saltea arriba y el reproductor quedaba parado
-        # en el fin de la reproducción anterior en vez de arrancar de
-        # nuevo desde el principio — sin este seek explícito, la
-        # segunda vez simplemente no sonaba.
+        # SIEMPRE se hace, incluso a 0ms, por la misma razón que el
+        # stop() de arriba — reproducir dos veces seguidas el mismo
+        # archivo debe reiniciar la posición de forma confiable.
         QTimer.singleShot(150, lambda: self._player.set_time(max(0, punto_inicio_ms)) if self._disponible else None)
 
     def pausar(self):
