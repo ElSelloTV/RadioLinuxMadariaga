@@ -76,9 +76,18 @@ para el final, vía la señal restante_ms_cambio de MotorAudio, no
 esperando a que termine) y luego self.motor pasa a ser el motor
 entrante (se reconectan las señales). Solo aplica a la transición
 "de fin de tema" — Siguiente manual, error y cascada siguen siendo
-cortes directos. Si el tema entrante tiene su propio Pisador, no se
-dispara (evita que dos rampas de volumen distintas peleen por el
-mismo motor a la vez) — limitación conocida, documentada acá.
+cortes directos.
+
+Bug real corregido — "el Pisador no sonaba si la lista avanzaba
+sola, sin apretar Siguiente": el tema ENTRANTE de un crossfade no
+disparaba su propio Pisador (única función que lo hacía era
+`_reproducir_fila()`, y la transición con crossfade NUNCA pasaba por
+ahí) — esto era antes una "limitación conocida" documentada acá.
+Corregido: el Pisador del entrante se dispara en `_liberar_crossfade()`,
+una vez que la propia rampa de volumen del crossfade ya terminó (el
+motor entrante queda "quieto" en su volumen final, así que el fade de
+ducking del Pisador no compite con la rampa del crossfade por el
+mismo motor a la vez).
 --------------------------------------------------------
 """
 
@@ -310,14 +319,39 @@ class GestorPlaylist:
         if candidata_siguiente >= 0:
             self.panel.marcar_siguiente(candidata_siguiente)
 
-        # El tema entrante no dispara su propio Pisador acá — ver
-        # limitación documentada al inicio del archivo.
+        registrar_evento(f"Crossfade: iniciado hacia fila {fila_siguiente} ('{ruta_siguiente}')")
 
-        QTimer.singleShot(int(self.duracion_fade_segundos * 1000) + 200, self._liberar_crossfade)
+        # El tema entrante NO dispara su propio Pisador acá todavía —
+        # se dispara en _liberar_crossfade(), una vez que la rampa de
+        # volumen del crossfade ya terminó (ver nota ahí abajo).
+        QTimer.singleShot(
+            int(self.duracion_fade_segundos * 1000) + 200,
+            lambda: self._liberar_crossfade(fila_siguiente),
+        )
 
-    def _liberar_crossfade(self):
+    def _liberar_crossfade(self, fila_entrante: int):
         self._crossfade_en_curso = False
         self._motor_saliente_crossfade = None
+
+        # Bug real corregido — "el Pisador no sonaba si pasaba solo,
+        # sin apretar Siguiente": con crossfade activado, la
+        # transición NATURAL entre dos temas pasaba por acá, no por
+        # `_reproducir_fila()` (que es la única función que disparaba
+        # el Pisador) — el tema entrante de un crossfade NUNCA
+        # disparaba su Pisador, solo lo hacía si se avanzaba a mano
+        # (Siguiente/error, que sí pasan por `_reproducir_fila()`).
+        # Antes esto estaba documentado como "limitación conocida" (dos
+        # rampas de volumen peleando por el mismo motor); se resuelve
+        # disparando el Pisador ACÁ, una vez que la propia rampa del
+        # crossfade ya terminó de mover el volumen del entrante — para
+        # ese momento el motor ya está "quieto" en su volumen final, así
+        # que el fade de ducking del Pisador no compite con nada.
+        # Se chequea que la fila que entró por el crossfade siga
+        # siendo la que está sonando (nadie tomó control manual
+        # mientras tanto — Siguiente, doble click, Stop) antes de
+        # dispararlo.
+        if self.panel.fila_reproduciendo() == fila_entrante:
+            self._disparar_pisador_si_corresponde(fila_entrante)
 
     # ------------------------------------------------------------------
     # Motor "Agregar Pisador": toda subida/bajada de volumen es un
@@ -345,15 +379,21 @@ class GestorPlaylist:
         self._generacion_pisador += 1
         self._pisador_activo = True
         volumen_pisado = volumen_ajustado_por_ganancia(self._volumen_base, self.bajada_db_pisador)
+        registrar_evento(
+            f"Pisador: disparado sobre fila {fila} ('{self.panel.ruta_en_fila(fila)}') -> "
+            f"'{ruta_pisador}' (baja de {self._volumen_base} a {volumen_pisado})"
+        )
         self.motor.fade_volumen_a(volumen_pisado, DURACION_FADE_PISADOR_SEGUNDOS)
         self.motor_pisador.reproducir(ruta_pisador)
 
     def _on_pisador_finalizado(self):
+        registrar_evento("Pisador: terminó solo, el tema principal vuelve a su volumen normal")
         self._pisador_activo = False
         self.motor.fade_volumen_a(self._volumen_base, DURACION_FADE_PISADOR_SEGUNDOS)
 
     def _cancelar_pisador_en_curso(self):
         if self._pisador_activo:
+            registrar_evento("Pisador: cancelado — se avanzó de tema antes de que terminara solo")
             self._generacion_pisador += 1
             generacion_al_cancelar = self._generacion_pisador
             self.motor_pisador.fade_volumen_a(0, DURACION_FADE_PISADOR_SEGUNDOS)
