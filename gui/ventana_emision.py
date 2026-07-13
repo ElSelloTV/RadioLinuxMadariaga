@@ -63,8 +63,10 @@ class VentanaEmision(QWidget):
     def actualizar_contadores(self, transcurrido, restante):
         self.panel.actualizar_contadores(transcurrido, restante)
 
-    def agregar_item(self, titulo, duracion, codigo, ruta=""):
-        return self.panel.agregar_item(titulo, duracion, codigo, ruta)
+    def agregar_item(self, titulo, duracion, codigo, ruta="",
+                      punto_inicio_ms=0, punto_fin_ms=None, ganancia_db=0.0):
+        return self.panel.agregar_item(titulo, duracion, codigo, ruta,
+                                        punto_inicio_ms, punto_fin_ms, ganancia_db)
 
     def agregar_pisador(self, fila_padre, titulo, duracion, codigo, ruta):
         return self.panel.agregar_pisador(fila_padre, titulo, duracion, codigo, ruta)
@@ -77,6 +79,9 @@ class VentanaEmision(QWidget):
 
     def ruta_en_fila(self, fila):
         return self.panel.ruta_en_fila(fila)
+
+    def analisis_en_fila(self, fila):
+        return self.panel.analisis_en_fila(fila)
 
     def fila_reproduciendo(self):
         return self.panel.fila_reproduciendo()

@@ -16,6 +16,7 @@ ARCHIVO_CONFIG_GENERAL = os.path.join(DIRECTORIO_CONFIG, "config_general.json")
 ARCHIVO_PROGRAMACION = os.path.join(DIRECTORIO_CONFIG, "programacion.json")
 ARCHIVO_BIBLIOTECA = os.path.join(DIRECTORIO_CONFIG, "biblioteca.json")
 ARCHIVO_PLAYLIST_EMISION = os.path.join(DIRECTORIO_CONFIG, "playlist_emision.json")
+ARCHIVO_PLAYLIST_PUBLICIDAD = os.path.join(DIRECTORIO_CONFIG, "playlist_publicidad.json")
 ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
 TAMAÑO_MAXIMO_LOG_BYTES = 2 * 1024 * 1024  # 2 MB — más allá de esto, rota a .anterior.txt
 
@@ -323,3 +324,32 @@ def cargar_playlist_emision() -> dict:
 
 def guardar_playlist_emision(datos: dict):
     _guardar_json_atomico(ARCHIVO_PLAYLIST_EMISION, datos)
+
+
+# ----------------------------------------------------------------------
+# Playlist de Ventana 1 (Publicidad): mismo tratamiento que Emisión —
+# pedido explícito, sobrevive a un cierre/corte de luz.
+# ----------------------------------------------------------------------
+# Estructura de config/data/playlist_publicidad.json:
+#   {"bloques": [{"hora","titulo","items":[{...}]}, ...],
+#    "indice_armado": [indice_bloque, indice_tanda] | None,
+#    "indice_siguiente": [indice_bloque, indice_tanda] | None}
+
+PLAYLIST_PUBLICIDAD_VACIA = {"bloques": [], "indice_armado": None, "indice_siguiente": None}
+
+
+def cargar_playlist_publicidad() -> dict:
+    _asegurar_directorio()
+    if not os.path.exists(ARCHIVO_PLAYLIST_PUBLICIDAD):
+        return dict(PLAYLIST_PUBLICIDAD_VACIA)
+    try:
+        with open(ARCHIVO_PLAYLIST_PUBLICIDAD, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+            return {**PLAYLIST_PUBLICIDAD_VACIA, **datos}
+    except (json.JSONDecodeError, OSError) as error:
+        registrar_error(f"Error leyendo playlist de Publicidad: {error}")
+        return dict(PLAYLIST_PUBLICIDAD_VACIA)
+
+
+def guardar_playlist_publicidad(datos: dict):
+    _guardar_json_atomico(ARCHIVO_PLAYLIST_PUBLICIDAD, datos)

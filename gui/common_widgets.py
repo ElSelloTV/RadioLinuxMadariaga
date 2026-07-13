@@ -124,6 +124,22 @@ class ArbolConDrop(QTreeWidget):
         event.acceptProposedAction()
 
 
+class ArbolPublicidadConDrop(ArbolConDrop):
+    """ArbolConDrop + tecla Enter para Ventana 1 (Publicidad) — mismo
+    "robustez del sistema" ya usado en Ventana 2: Enter sobre una
+    tanda seleccionada dispara la misma acción que el doble click
+    (armar en rojo si está en silencio, encolar en verde si algo ya
+    suena). Los nodos de bloque (sin ruta propia) no reaccionan."""
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            item = self.currentItem()
+            if item is not None and item.data(0, Qt.ItemDataRole.UserRole):
+                self.itemDoubleClicked.emit(item, 0)
+                return
+        super().keyPressEvent(event)
+
+
 class ArbolReproductorConDrop(QTreeWidget):
     """QTreeWidget de una lista de reproducción (Ventana 2 / Auxiliar):
     combina DOS comportamientos de Drag&Drop a la vez —

@@ -96,12 +96,85 @@ seguir ese mismo patrón.
 ## Estado de cada ventana
 
 ### Ventana 1 — Publicidad
-Árbol de bloques horarios (bloque -> tandas). Botón AUTOMÁTICO
-(rojo=ON). Contadores de tiempo arriba, controles Play/Pausa/Stop/
-Siguiente debajo del tiempo, lista al final. Doble click: si el
-reproductor está detenido, arranca desde ahí (rojo); si está sonando,
-no interrumpe. `GestorPublicidad` en `playlist_manager.py` maneja todo
+Árbol de bloques horarios (bloque -> tandas), reescrita a pedido
+explícito para traer la misma robustez que ya tenía Ventana 2, con
+algunos cambios: **sin Pisador ni reproductor Auxiliar** (exclusivos
+de Ventana 2), y con un menú contextual propio orientado a
+Programación + bloques (ver más abajo). Botón AUTOMÁTICO (rojo=ON,
+contorno rojo permanente para ubicarlo mejor — ver abajo). Contadores
+de tiempo arriba, frames "Ahora"/"Luego" con contorno rojo/verde,
+controles Play/Pausa/Stop/Siguiente, barra de progreso/seek, lista al
+final. `GestorPublicidad` en `core/playlist_manager.py` maneja todo
 esto y el salto en cascada si un ítem falla.
+
+**Máquina de estados en punta (rojo)/en cola (verde) — igual que
+Ventana 2 (implementado, pedido explícito)**: doble click (o Enter,
+`ArbolPublicidadConDrop.keyPressEvent` en `common_widgets.py`) sobre
+una tanda, con el reproductor EN SILENCIO, la ARMA en rojo sin
+arrancar sola — recién suena al apretar Play
+(`GestorPublicidad._reproducir_seleccion_o_actual` usa
+`ventana.item_reproduciendo()`, que apunta a la tanda ya armada). Con
+el reproductor sonando, doble click/Enter encola en verde sin
+interrumplir (antes, a propósito, Ventana 1 no tenía cola — este es
+el cambio de comportamiento explícito de esta ronda). Al avanzar
+naturalmente (fin de tanda / botón Siguiente / cascada de error) se
+prioriza la tanda ya encolada en verde si hay una, y se marca
+automáticamente la tanda siguiente como nueva candidata verde. Las
+tandas rojo/verde (o un BLOQUE que contenga alguna) no se pueden
+"Sacar" hasta liberarse (`VentanaPublicidad._bloqueado_por_reproduccion`,
+recorre también los hijos — sacar un bloque que contiene la tanda al
+aire está bloqueado igual que sacar la tanda sola).
+
+**"Ahora"/"Luego" con contorno + barra de progreso (implementado,
+pedido explícito, mismo patrón que Ventana 2)**: `lbl_titulo_actual`/
+`lbl_titulo_siguiente` (`EtiquetaMarquesina`) dentro de `QFrame`
+con `objectName` `frameAhora`/`frameLuego` — contorno rojo/verde
+(`gui/styles.py`) alrededor de toda la fila, no solo el texto. Mismo
+concepto aplicado también a Ventana 2 (`panel_reproductor.py`) en esta
+misma ronda. `slider_progreso` es un `SliderBusqueda` (ver Ventana 2
+más abajo — clic directo, no solo arrastre).
+
+**Bug real corregido — el recorte de silencio nunca se aplicaba al
+aire**: al arrastrar un tema desde el Explorador a Publicidad o
+Emisión, antes solo viajaba la RUTA del archivo — el
+`punto_inicio_ms`/`punto_fin_ms`/`ganancia_db` ya calculados por
+`core/analizador_audio.py` se perdían en el camino, y solo se
+aplicaban en el "Previo" de Ventana 3 (`GestorExplorador`). Corregido
+guardando ese análisis junto al ítem (`ROL_ANALISIS_AUDIO` en
+`gui/styles.py`, poblado por `VentanaPublicidad.agregar_tanda()` /
+`PanelReproductor.agregar_item()`) y pasándolo a
+`MotorAudio.reproducir()` en `GestorPublicidad._reproducir_item` /
+`GestorPlaylist._reproducir_fila` — mismo patrón que ya usaba
+`GestorExplorador`. Corregido en Ventana 1 Y Ventana 2 a la vez (raíz
+común). `MainWindow._on_archivo_soltado_publicidad`/`_emision`/
+`_auxiliar` ahora buscan el registro completo (no solo la ruta) para
+threadear ese análisis al soltar el archivo.
+
+**Persistencia de la playlist de Publicidad (implementado, pedido
+explícito: "mismo tratamiento que Emisión")**: `GestorPublicidad(
+persistir=True)` guarda en `config/data/playlist_publicidad.json`
+(escritura atómica, debounce, mismo patrón que Emisión) — bloques +
+tandas + análisis de audio + qué tanda estaba armada/en cola (por
+índice `[indice_bloque, indice_tanda]`, ya que acá el árbol es
+jerárquico, no una lista plana como en Ventana 2). Al restaurar, la
+tanda armada NO arranca a sonar sola. Esto reemplazó los bloques de
+ejemplo que traía la ventana al arrancar — una instalación nueva
+arranca sin bloques, igual que ya se hizo con Ventana 2 y Ventana 3.
+
+**Menú contextual completo (implementado, pedido explícito con
+estructura fija)**: Crear/Modificar/Eliminar/Cargar Programación
+(las cuatro, por ahora, simplemente abren el Programador que ya
+existe — `VentanaPublicidad.solicitud_abrir_programador` conectada a
+`MainWindow.abrir_programador`, hasta que se pida una lógica propia
+para cada una), separador, **Sacar Item** (funcional, pide
+confirmación gateada por `general.confirmar_antes_de_eliminar`,
+bloqueado para tandas/bloques marcados), **Agregar Item**/
+**Reemplazar Item** (visibles pero DESHABILITADAS a propósito — sin
+lógica propia todavía, pedido explícito "andá agregando funciones ya
+creadas, las demás las vamos a ir creando"), separador, **Crear
+Bloque Nuevo** (funcional, título por defecto `"Bloque: HH:MM:SS"`
+con la hora actual, pide confirmación siempre — no gateada por el
+flag, ya que es una acción nueva y poco frecuente).
 
 **Modo AUTOMÁTICO real (implementado)**: cada bloque guarda su hora
 real como dato (`ROL_HORA_BLOQUE` en `ventana_publicidad.py`, no solo
@@ -141,14 +214,25 @@ play/pausa/stop y también cada 500ms (self-corrige solo).
 columna bajó de 45px a 24px — antes ese 45px no dejaba achicar más
 las columnas, era el motivo real del reclamo "no me deja achicar".
 
+**Contorno rojo permanente en el botón AUTOMÁTICO (implementado,
+pedido explícito "para ubicarlo mejor")**: `gui/styles.py`,
+`QPushButton#btnAutomatico[activo="true"/"false"]` — ahora ambos
+estados tienen `border: 2px solid` en rojo (más claro cuando está ON,
+el rojo de emisión cuando está OFF). El relleno rojo + cambio de
+texto (`AUTOMÁTICO: ON`/`OFF`) al activarlo NO cambió, sigue siendo
+la única señal de estado real — el contorno es solo para ubicar el
+botón de un vistazo, no reemplaza esa señal.
+
 ### Ventana 2 — Emisión + Ventana Auxiliar
 Ambas son un envoltorio delgado sobre `PanelReproductor`
 (`gui/panel_reproductor.py`) — la misma clase de UI, reutilizada por
-composición. Rojo = sonando, verde = próximo. Doble click: detenido =
-arranca ahí; sonando = marca como "siguiente" sin interrumpir.
-`GestorPlaylist` maneja avance normal, avance manual, y cascada de
-errores (reintentos configurables antes de rendirse), respetando
-"repetir lista al finalizar" de Configuración.
+composición. Rojo = armado/sonando, verde = en cola. Doble click: en
+silencio ARMA (rojo) sin arrancar solo, hace falta Play; sonando =
+marca como "en cola" sin interrumpir (ver "Máquina de estados de
+selección" más abajo para el detalle completo — cambió respecto de
+como arrancó este panel). `GestorPlaylist` maneja avance normal,
+avance manual, y cascada de errores (reintentos configurables antes
+de rendirse), respetando "repetir lista al finalizar" de Configuración.
 
 Botón "🎧 Auxiliar" en Emisión abre la ventana flotante — por decisión
 explícita de Santiago, el Auxiliar **comparte la salida de audio
@@ -305,7 +389,10 @@ texto plano — `lbl_titulo_actual` ("Ahora:", ya existía) y
 `marcar_reproduciendo()`/`marcar_siguiente()` y limpiados a texto
 vacío si no hay ítem marcado. Da una segunda confirmación textual de
 qué está sonando y qué viene después, sin depender solo de ubicar la
-fila coloreada en la lista.
+fila coloreada en la lista. **Contorno rojo/verde (ronda siguiente,
+pedido explícito)**: cada fila vive en un `QFrame` (`frameAhora`/
+`frameLuego`, `gui/styles.py`) con un borde del mismo color que la
+fila en la lista — mismo concepto aplicado también a Ventana 1.
 
 **Motor de Ventana 2 en archivo aparte (implementado, pedido
 explícito de cara a la futura programación automática)**: `GestorPlaylist`
@@ -741,6 +828,21 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
+## Dirección futura (mencionado por Santiago, todavía no arrancado)
+
+Antes de encarar los "motores principales" (programación/carga
+automática de ítems por plantilla), Santiago adelantó que más
+adelante quiere poder agregar **Módulos o Plugins** (siempre
+aditivos, nunca reemplazando lo existente) para incorporar
+funcionalidad nueva sin tocar el core. Todavía no se diseñó nada
+concreto — el primer paso ya dado en esa dirección es la separación
+`core/gestor_emision.py` (motor de Ventana 2) vs
+`core/playlist_manager.py` (Publicidad/Explorador/Scheduler): cuando
+se diseñe el sistema de plugins, mantener ese mismo espíritu de
+"cada motor en su archivo, con una interfaz clara hacia GUI/config"
+para que sea fácil enchufar algo nuevo sin tener que entender/tocar
+todo el resto.
+
 ## Pendiente (roadmap acordado con Santiago, en orden de prioridad)
 
 1. ~~Modo AUTOMÁTICO real~~ — implementado (`SchedulerAutomatico`,
@@ -814,6 +916,29 @@ python3 main.py
     música real de su biblioteca: si el Pisador ahora dispara siempre
     al pasar de tema rápido, y si el umbral por defecto (-40 dBFS)
     necesita ajuste para sus archivos.
+13. ~~Ventana 1 con la misma robustez de Ventana 2~~ — máquina de
+    estados en punta (rojo)/en cola (verde) con Play manual
+    obligatorio (cambio de comportamiento explícito respecto de como
+    arrancó Publicidad), bloqueo de "Sacar" para tandas/bloques
+    marcados, frames "Ahora"/"Luego" con contorno rojo/verde (también
+    agregado a Ventana 2), barra de progreso/seek con clic directo,
+    persistencia de la playlist de Publicidad (mismo tratamiento que
+    Emisión, sin bloques de ejemplo en instalación nueva), botón
+    AUTOMÁTICO con contorno rojo permanente, menú contextual completo
+    (Crear/Modificar/Eliminar/Cargar Programación abren el Programador
+    por ahora; Sacar Item funcional; Agregar/Reemplazar Item visibles
+    pero deshabilitadas hasta que se pida esa lógica; Crear Bloque
+    Nuevo funcional con confirmación) — implementado (ver Ventana 1
+    más arriba). **Bug real corregido de paso, en Ventana 1 Y 2**: el
+    recorte de silencio/nivelado calculado en Ventana 3 nunca se
+    aplicaba al aire (solo en el Previo) — ahora viaja con el ítem
+    (`ROL_ANALISIS_AUDIO`) y se pasa a `MotorAudio.reproducir()`.
+    Log temporalmente más detallado (`registrar_evento` en cada
+    acción de Publicidad) mientras Santiago prueba esta ronda — pidió
+    volver a un nivel normal cuando avise. Falta que lo prueba con
+    música real: Crear Bloque Nuevo + arrastre de tandas, el flujo
+    completo armar/encolar/Play en Publicidad, y confirmar que ahora
+    sí se note el recorte de silencio al aire en ambas ventanas.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
