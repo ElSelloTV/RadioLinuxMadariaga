@@ -44,6 +44,18 @@ class MotorAudio(QObject):
         self._player = None
         self._punto_fin_ms = None
         self._timer_fade_volumen = None
+        # Volumen que ESTE motor debería tener ahora mismo — la fuente
+        # de verdad del volumen ya no es el reproductor de libVLC sino
+        # este atributo (ver set_volumen / _emitir_posicion). Bug real
+        # corregido: audio_set_volume() llamado justo después de
+        # play() puede ser DESCARTADO en silencio por libVLC (la
+        # salida de audio del reproductor todavía no terminó de
+        # crearse, sobre todo después de un stop()) — el resultado era
+        # un ítem o un Pisador reproduciéndose entero PERO MUDO, sin
+        # ningún error. Ahora el volumen deseado se recuerda acá y se
+        # re-aplica solo (en el arranque diferido y en cada tick de
+        # posición) hasta que el reproductor lo tome de verdad.
+        self._volumen_deseado = 100
 
         try:
             self._instancia = vlc.Instance()
@@ -127,7 +139,20 @@ class MotorAudio(QObject):
         # SIEMPRE se hace, incluso a 0ms, por la misma razón que el
         # stop() de arriba — reproducir dos veces seguidas el mismo
         # archivo debe reiniciar la posición de forma confiable.
-        QTimer.singleShot(150, lambda: self._player.set_time(max(0, punto_inicio_ms)) if self._disponible else None)
+        # En el mismo diferido se RE-APLICA el volumen deseado: el
+        # set_volumen() de arriba corre justo después de play(), y en
+        # ese instante libVLC puede descartarlo en silencio porque la
+        # salida de audio del reproductor todavía no existe (sobre
+        # todo tras el stop() de arriba, que la desarma) — el síntoma
+        # real era un Pisador o un tema reproduciéndose entero pero
+        # MUDO. La red de seguridad final es _emitir_posicion(), que
+        # re-aplica el volumen deseado en cada tick de posición.
+        def _tras_arranque():
+            if not self._disponible:
+                return
+            self._player.set_time(max(0, punto_inicio_ms))
+            self._player.audio_set_volume(self._volumen_deseado)
+        QTimer.singleShot(150, _tras_arranque)
 
     def pausar(self):
         if not self._disponible:
@@ -148,9 +173,21 @@ class MotorAudio(QObject):
         return self._player.is_playing() == 1
 
     def set_volumen(self, volumen_0_a_100: int):
+        # El volumen deseado se recuerda SIEMPRE (aunque libVLC no
+        # esté disponible o descarte la llamada) — es la fuente de
+        # verdad que _emitir_posicion() re-aplica en cada tick.
+        self._volumen_deseado = max(0, min(100, volumen_0_a_100))
         if not self._disponible:
             return
-        self._player.audio_set_volume(max(0, min(100, volumen_0_a_100)))
+        self._player.audio_set_volume(self._volumen_deseado)
+
+    def volumen_deseado(self) -> int:
+        """El volumen que este motor DEBERÍA tener ahora (el último
+        pedido vía set_volumen) — a diferencia de obtener_volumen(),
+        nunca depende del estado interno de libVLC, así que es seguro
+        leerlo inmediatamente después de reproducir() (cuando el
+        reproductor real todavía puede devolver 0/-1)."""
+        return self._volumen_deseado
 
     def obtener_volumen(self) -> int:
         if not self._disponible:
@@ -174,7 +211,11 @@ class MotorAudio(QObject):
             self._timer_fade_volumen.stop()
 
         volumen_objetivo = max(0, min(100, volumen_objetivo))
-        volumen_inicial = self.obtener_volumen()
+        # El punto de partida de la rampa es el volumen DESEADO, no el
+        # que reporta libVLC — leído justo después de un play() el
+        # reproductor puede devolver 0/-1 espurio y la rampa saldría
+        # de un valor falso.
+        volumen_inicial = self._volumen_deseado
 
         if duracion_segundos <= 0 or volumen_inicial == volumen_objetivo:
             self.set_volumen(volumen_objetivo)
@@ -271,14 +312,26 @@ class MotorAudio(QObject):
             self.error_reproduccion.emit(MENSAJE_VLC_NO_DISPONIBLE)
             return None
 
-        volumen_inicial_saliente = self.obtener_volumen()
+        # Punto de partida del fade-out: el volumen real del saliente,
+        # con el deseado como respaldo si libVLC devuelve 0/-1 espurio.
+        volumen_inicial_saliente = self.obtener_volumen() or self._volumen_deseado
 
         entrante = motor_entrante or MotorAudio(self._id_dispositivo)
         entrante.reproducir(
             ruta_siguiente, punto_inicio_ms=punto_inicio_ms, punto_fin_ms=punto_fin_ms,
             ganancia_db=ganancia_db, volumen_base=volumen_base,
         )
-        volumen_objetivo_entrante = entrante.obtener_volumen()
+        # Bug real corregido — "el tema entrante del crossfade quedaba
+        # MUDO (el reloj avanzaba pero sin sonido)": el techo del
+        # fade-in se leía con entrante.obtener_volumen() justo después
+        # de reproducir() — con el reproductor recién arrancado libVLC
+        # puede devolver 0/-1 (la salida de audio todavía no existe), y
+        # entonces la rampa subía "hacia 0": el tema entero en
+        # silencio, sin ningún error, hasta que un Stop+Play manual lo
+        # "arreglaba". Ahora el techo es el volumen DESEADO calculado
+        # por reproducir() (volumen_base + ganancia_db), que nunca
+        # depende del estado interno de libVLC.
+        volumen_objetivo_entrante = entrante.volumen_deseado()
         entrante.set_volumen(0)
 
         pasos = 30
@@ -305,6 +358,18 @@ class MotorAudio(QObject):
     def _emitir_posicion(self):
         if not self._disponible:
             return
+
+        # Red de seguridad del volumen (bug real: "el ítem se
+        # reproduce pero está MUDO"): si el volumen real del
+        # reproductor no coincide con el deseado — porque libVLC
+        # descartó un audio_set_volume() hecho antes de que su salida
+        # de audio existiera — se re-aplica acá, en cada tick (500ms),
+        # hasta que quede efectivo. Los fades no se rompen: cada paso
+        # de rampa pasa por set_volumen(), que actualiza el deseado.
+        volumen_real = self._player.audio_get_volume()
+        if volumen_real != self._volumen_deseado:
+            self._player.audio_set_volume(self._volumen_deseado)
+
         largo_ms = self._player.get_length()
         actual_ms = self._player.get_time()
         if largo_ms <= 0 or actual_ms < 0:

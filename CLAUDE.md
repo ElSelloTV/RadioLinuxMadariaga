@@ -583,6 +583,41 @@ en el sandbox (no hay VLC instalado acá) — el fix se basa en un
 comportamiento documentado de libVLC y en el log real que mandó
 Santiago, pero falta que él lo confirme con audio real de nuevo.
 
+**Tercera vuelta — LA CAUSA DE FONDO del "se reproduce pero está
+MUDO" (ítems Y Pisadores)**: Santiago probó la ronda anterior y fue
+PEOR: el Pisador sonó solo la primera vez, y además un tema musical
+entero quedó mudo (el reloj avanzaba, cero sonido; Stop+Play manual
+lo "arregló"). Su log mostró que el Pisador de las 17:24:32 se
+reprodujo ENTERO (7s, "terminó solo") pero inaudible — reproducción
+corriendo + cero sonido = el volumen nunca se aplicó. Causa real:
+**libVLC DESCARTA en silencio un `audio_set_volume()` llamado antes
+de que la salida de audio del reproductor exista** — y esa salida se
+crea de forma asíncrona después de `play()` (y se DESARMA con cada
+`stop()`, así que el fix anterior de stop()-antes-de-play() agrandó
+la ventana del problema: por eso fue peor). Dos síntomas del mismo
+bug: (1) el Pisador reusado quedaba mudo (su `set_volumen(100)` tras
+`play()` se descartaba); (2) el tema ENTRANTE de un crossfade quedaba
+mudo porque el techo del fade-in se leía con
+`entrante.obtener_volumen()` recién arrancado → 0/-1 → la rampa subía
+"hacia 0". Corrección de fondo en `MotorAudio`:
+- `_volumen_deseado`: el volumen que el motor DEBERÍA tener es un
+  atributo propio, la fuente de verdad ya no es libVLC.
+  `set_volumen()` lo actualiza siempre; `volumen_deseado()` lo expone.
+- `_emitir_posicion()` (tick de 500ms) **re-aplica el volumen deseado
+  si el real no coincide** — cualquier volumen descartado se
+  autocorrige en <=500ms, para ítems y Pisadores por igual. Los fades
+  no se rompen: cada paso de rampa pasa por `set_volumen()`.
+- `reproducir()` re-aplica el volumen en el mismo diferido de 150ms
+  del seek (achica la ventana muda inicial).
+- `crossfade_a()` usa `entrante.volumen_deseado()` (calculado) como
+  techo del fade-in, nunca una lectura del reproductor recién
+  arrancado; el piso del fade-out usa `obtener_volumen()` con el
+  deseado como respaldo.
+- `fade_volumen_a()` parte del deseado, no de una lectura espuria.
+**Regla para el futuro**: nunca confiar en UNA llamada de volumen a
+libVLC ni en leer el volumen de un reproductor recién arrancado — el
+volumen se declara (deseado) y el tick lo garantiza.
+
 **Bug real corregido — "el Pisador funciona si aprieto Siguiente,
 pero no cuando la lista avanza sola" (pedido explícito, prioridad
 alta)**: la única función que disparaba el Pisador era
@@ -1647,6 +1682,33 @@ todo el resto.
     reproductor). Falta que Santiago lo confirme con audio real —
     repetir la prueba de reutilizar el mismo Pisador en varios temas
     seguidos de una lista real.
+22. ~~LA CAUSA DE FONDO del audio mudo: libVLC descarta el volumen si
+    la salida de audio no existe todavía~~ — la ronda 21 fue PEOR en
+    la prueba real de Santiago: el Pisador solo sonó la primera vez Y
+    un tema musical entero quedó MUDO (reloj avanzando, cero sonido;
+    Stop+Play manual lo "arregló" — inaceptable para una radio). El
+    log demostró que el Pisador "mudo" se reprodujo completo (7s,
+    "terminó solo"): el problema no era la reproducción sino el
+    VOLUMEN. Causa de fondo: libVLC descarta en silencio
+    `audio_set_volume()` llamado antes de que la salida de audio del
+    reproductor exista (se crea asíncrona tras `play()`, y cada
+    `stop()` la desarma — el stop()-antes-de-play() de la ronda 21
+    agrandó la ventana del bug, por eso empeoró). El tema mudo del
+    crossfade era lo mismo del otro lado: el techo del fade-in se
+    leía del reproductor recién arrancado (0/-1) y la rampa subía
+    "hacia 0". Corrección de fondo en `MotorAudio` (ver nota completa
+    en Ventana 2): `_volumen_deseado` como fuente de verdad propia,
+    re-aplicación en el diferido de 150ms del arranque, red de
+    seguridad en `_emitir_posicion()` (re-aplica el deseado en cada
+    tick de 500ms si el real no coincide — un ítem mudo se
+    autocorrige solo), techo del fade-in del crossfade CALCULADO
+    (`volumen_deseado()`) en vez de leído, y rampas que parten del
+    deseado. Probado con 5 tests nuevos usando un player falso que
+    replica el comportamiento real de libVLC (descarta sets hasta que
+    la salida "existe") + suite completa sin fallos nuevos. Como
+    siempre con libVLC: el sandbox no tiene VLC, falta la
+    confirmación de Santiago con audio real — misma prueba (un solo
+    Pisador reutilizado en varios ítems, lista con crossfade).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
