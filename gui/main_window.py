@@ -17,7 +17,7 @@ import os
 
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QWidget, QVBoxLayout, QLabel,
-    QToolBar, QStatusBar, QMenuBar, QSizePolicy, QTreeWidgetItem,
+    QToolBar, QStatusBar, QMenuBar, QSizePolicy,
     QMessageBox
 )
 from PySide6.QtCore import Qt, QTimer, QDateTime
@@ -291,6 +291,7 @@ class MainWindow(QMainWindow):
     def _conectar_señales(self):
         self.ventana_publicidad.automatico_cambiado.connect(self._on_automatico_cambiado)
         self.ventana_publicidad.archivo_soltado.connect(self._on_archivo_soltado_publicidad)
+        self.ventana_publicidad.solicitud_abrir_programador.connect(self.abrir_programador)
 
         self.ventana_emision.archivo_soltado.connect(self._on_archivo_soltado_emision)
         self.ventana_emision.solicitud_abrir_auxiliar.connect(self.abrir_ventana_auxiliar)
@@ -332,7 +333,12 @@ class MainWindow(QMainWindow):
 
         titulo = os.path.splitext(os.path.basename(ruta))[0]
         duracion = obtener_duracion_formateada(ruta)
-        self.ventana_emision.agregar_item(titulo, duracion, "—", ruta)
+        self.ventana_emision.agregar_item(
+            titulo, duracion, "—", ruta,
+            (registro or {}).get("punto_inicio_ms") or 0,
+            (registro or {}).get("punto_fin_ms"),
+            (registro or {}).get("ganancia_db") or 0.0,
+        )
         self.statusBar().showMessage(f"Agregado a Emisión: {titulo}", 3000)
 
     # ------------------------------------------------------------------
@@ -375,8 +381,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Ese archivo no estaba registrado en la biblioteca del Explorador.", 4000)
 
     def _on_archivo_soltado_publicidad(self, ruta: str, item_destino):
-        titulo = os.path.splitext(os.path.basename(ruta))[0]
+        registro = self.ventana_explorador.buscar_registro_por_ruta(ruta)
+        titulo = (registro or {}).get("titulo") or os.path.splitext(os.path.basename(ruta))[0]
         duracion = obtener_duracion_formateada(ruta)
+        codigo = (registro or {}).get("codigo", "—")
 
         bloque = item_destino
         while bloque is not None and bloque.parent() is not None:
@@ -387,9 +395,12 @@ class MainWindow(QMainWindow):
                 return
             bloque = self.ventana_publicidad.tree.topLevelItem(0)
 
-        hijo = QTreeWidgetItem([titulo, duracion, "—"])
-        hijo.setData(0, Qt.ItemDataRole.UserRole, ruta)
-        bloque.addChild(hijo)
+        self.ventana_publicidad.agregar_tanda(
+            bloque, titulo, duracion, codigo, ruta,
+            (registro or {}).get("punto_inicio_ms") or 0,
+            (registro or {}).get("punto_fin_ms"),
+            (registro or {}).get("ganancia_db") or 0.0,
+        )
         bloque.setExpanded(True)
         self.statusBar().showMessage(f"Agregado a Publicidad: {titulo}", 3000)
 
@@ -407,7 +418,12 @@ class MainWindow(QMainWindow):
 
         titulo = os.path.splitext(os.path.basename(ruta))[0]
         duracion = obtener_duracion_formateada(ruta)
-        self._ventana_auxiliar.agregar_item(titulo, duracion, "—", ruta)
+        self._ventana_auxiliar.agregar_item(
+            titulo, duracion, "—", ruta,
+            (registro or {}).get("punto_inicio_ms") or 0,
+            (registro or {}).get("punto_fin_ms"),
+            (registro or {}).get("ganancia_db") or 0.0,
+        )
 
     # ------------------------------------------------------------------
     # Motor de audio real (core/)
@@ -435,10 +451,11 @@ class MainWindow(QMainWindow):
             id_dispositivo=id_dispositivo_master,
             avanzar_en_error=reproduccion["avanzar_automaticamente_en_error"],
             reintentos_maximos=reproduccion["reintentos_antes_de_detener"],
+            persistir=True,
         )
 
         self.gestor_emision.set_volumen_base(audio["volumen_master"])
-        self.gestor_publicidad.motor.set_volumen(audio["volumen_master"])
+        self.gestor_publicidad.set_volumen_base(audio["volumen_master"])
 
         self.gestor_explorador = GestorExplorador(self.ventana_explorador, id_dispositivo=id_dispositivo_master)
 
@@ -500,7 +517,7 @@ class MainWindow(QMainWindow):
         self.gestor_publicidad.reintentos_maximos = max(1, reproduccion["reintentos_antes_de_detener"])
         if self.gestor_publicidad.motor.id_dispositivo() != id_dispositivo_master:
             self.gestor_publicidad.motor.set_dispositivo_salida(id_dispositivo_master)
-        self.gestor_publicidad.motor.set_volumen(audio["volumen_master"])
+        self.gestor_publicidad.set_volumen_base(audio["volumen_master"])
 
         if self.gestor_explorador.motor.id_dispositivo() != id_dispositivo_master:
             self.gestor_explorador.motor.set_dispositivo_salida(id_dispositivo_master)

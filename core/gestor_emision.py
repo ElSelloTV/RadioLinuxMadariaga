@@ -231,7 +231,20 @@ class GestorPlaylist:
         if not ruta:
             return
         self._cancelar_pisador_en_curso()
-        self.motor.reproducir(ruta)
+        # Bug real corregido: antes se llamaba motor.reproducir(ruta)
+        # sin el recorte de silencio ni el nivelado ya calculados por
+        # core/analizador_audio.py — solo el "Previo" de Ventana 3 los
+        # aplicaba. Ahora se leen del propio ítem (ROL_ANALISIS_AUDIO,
+        # ver gui/panel_reproductor.py) y se pasan igual que ya hacía
+        # GestorExplorador.
+        analisis = self.panel.analisis_en_fila(fila)
+        self.motor.reproducir(
+            ruta,
+            punto_inicio_ms=analisis.get("punto_inicio_ms") or 0,
+            punto_fin_ms=analisis.get("punto_fin_ms"),
+            ganancia_db=analisis.get("ganancia_db") or 0.0,
+            volumen_base=self._volumen_base,
+        )
         self.panel.set_indicador_en_vivo(True)
         self._disparar_pisador_si_corresponde(fila)
 
@@ -431,11 +444,15 @@ class GestorPlaylist:
         tree = self.panel.tree
         for i in range(tree.topLevelItemCount()):
             item = tree.topLevelItem(i)
+            analisis = self.panel.analisis_en_fila(i)
             registro = {
                 "titulo": item.text(0),
                 "duracion": item.text(1),
                 "codigo": item.text(2),
                 "ruta": item.data(0, Qt.ItemDataRole.UserRole) or "",
+                "punto_inicio_ms": analisis.get("punto_inicio_ms") or 0,
+                "punto_fin_ms": analisis.get("punto_fin_ms"),
+                "ganancia_db": analisis.get("ganancia_db") or 0.0,
             }
             if item.childCount() > 0:
                 hijo = item.child(0)
@@ -462,6 +479,8 @@ class GestorPlaylist:
                 self.panel.agregar_item(
                     registro.get("titulo", ""), registro.get("duracion", ""),
                     registro.get("codigo", ""), registro.get("ruta", ""),
+                    registro.get("punto_inicio_ms") or 0, registro.get("punto_fin_ms"),
+                    registro.get("ganancia_db") or 0.0,
                 )
                 pisador = registro.get("pisador")
                 if pisador:

@@ -138,13 +138,14 @@ QTreeWidget#tree_publicidad::item, QTreeWidget#tree_reproductor::item {{
     padding: 1px;
 }}
 
-/* Ventana 2 (Emisión): el resaltado de selección de Qt (azul sólido,
-   regla ::item:selected de más arriba) tapaba el rojo/verde de "en
-   punta"/"en cola" — pedido explícito, tiene que quedar siempre a la
-   vista. Acá la selección deja de pintar un relleno propio (queda
-   transparente) y se marca solo con un borde, así el fondo rojo/verde
-   del ítem nunca se cubre, esté seleccionado o no. */
-QTreeWidget#tree_reproductor::item:selected {{
+/* Ventana 1 (Publicidad) y Ventana 2 (Emisión): el resaltado de
+   selección de Qt (azul sólido, regla ::item:selected de más arriba)
+   tapaba el rojo/verde de "en punta"/"en cola" — pedido explícito,
+   tiene que quedar siempre a la vista. Acá la selección deja de
+   pintar un relleno propio (queda transparente) y se marca solo con
+   un borde, así el fondo rojo/verde del ítem nunca se cubre, esté
+   seleccionado o no. */
+QTreeWidget#tree_reproductor::item:selected, QTreeWidget#tree_publicidad::item:selected {{
     background-color: transparent;
     border: 1px solid #f1c40f;
 }}
@@ -175,14 +176,18 @@ QPushButton#btnStop {{
 }}
 QPushButton#btnStop:hover {{ background-color: #c0392b; }}
 
+/* Contorno rojo PERMANENTE (esté ON u OFF) para ubicarlo mejor de un
+   vistazo — pedido explícito. El relleno rojo + cambio de texto al
+   activarlo NO cambia, sigue siendo la única señal de estado real. */
 QPushButton#btnAutomatico[activo="true"] {{
     background-color: {COLOR_AUTOMATICO_ON};
-    border: 1px solid #ff6b5b;
+    border: 2px solid #ff6b5b;
     font-weight: bold;
     color: white;
 }}
 QPushButton#btnAutomatico[activo="false"] {{
     background-color: {COLOR_AUTOMATICO_OFF};
+    border: 2px solid {COLOR_REPRODUCIENDO};
     font-weight: bold;
     color: #cccccc;
 }}
@@ -206,12 +211,24 @@ QLabel#lblTituloBloqueActivo {{
     color: {COLOR_TEXTO_SECUNDARIO};
     font-style: italic;
 }}
-/* "Ahora:"/"Luego:" junto al título en Ventana 2/Auxiliar — pedido
+/* "Ahora:"/"Luego:" junto al título en Ventana 1/2/Auxiliar — pedido
    explícito, más robusto que depender solo del color de fila. */
 QLabel#lblEtiquetaAhoraLuego {{
     color: {COLOR_TEXTO_SECUNDARIO};
     font-size: 8pt;
     font-weight: bold;
+}}
+/* Contorno rojo/verde alrededor de cada fila "Ahora"/"Luego" — mismo
+   concepto de color que la fila de la lista, pedido explícito. */
+QFrame#frameAhora {{
+    border: 2px solid {COLOR_REPRODUCIENDO};
+    border-radius: 3px;
+    padding: 1px 3px;
+}}
+QFrame#frameLuego {{
+    border: 2px solid {COLOR_SIGUIENTE};
+    border-radius: 3px;
+    padding: 1px 3px;
 }}
 
 /* ---------- Barra de estado ---------- */
@@ -250,6 +267,16 @@ ROL_ESTADO_ITEM = 1000  # Qt.UserRole + N
 ESTADO_NORMAL = 0
 ESTADO_REPRODUCIENDO = 1
 ESTADO_SIGUIENTE = 2
+
+# Bug real corregido: al arrastrar un tema desde el Explorador a
+# Ventana 1/2/Auxiliar, antes solo viajaba la RUTA del archivo — el
+# recorte de silencio y el nivelado de volumen ya calculados por
+# core/analizador_audio.py se perdían (solo se aplicaban en el
+# "Previo" de Ventana 3, nunca al aire). Este rol guarda ese análisis
+# {"punto_inicio_ms", "punto_fin_ms", "ganancia_db"} junto al ítem,
+# para que GestorPlaylist/GestorPublicidad lo pasen a
+# MotorAudio.reproducir() igual que ya hacía GestorExplorador.
+ROL_ANALISIS_AUDIO = 1002
 
 # Colores por género, usados en la Ventana 3 (Explorador) para pintar
 # el fondo de cada fila según el tipo de material (pedido explícito).

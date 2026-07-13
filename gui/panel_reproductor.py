@@ -34,7 +34,7 @@ sigue siendo el mismo.
 import os
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QLabel, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QLabel, QPushButton, QFrame,
     QTreeWidgetItem, QHeaderView, QMenu, QMessageBox, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal
@@ -44,7 +44,7 @@ from gui.common_widgets import ArbolReproductorConDrop, SliderBusqueda
 from gui.etiqueta_marquesina import EtiquetaMarquesina
 from gui.indicador_en_vivo import IndicadorEnVivo
 from gui.styles import (
-    COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM,
+    COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
     GENERO_COLORES, color_texto_legible,
 )
@@ -102,7 +102,12 @@ class PanelReproductor(QWidget):
         # explícito: además del nombre que suena AHORA, mostrar el
         # nombre del que viene LUEGO (ítem marcado en verde) — más
         # robusto que depender solo del color de la fila en la lista.
-        fila_titulo = QHBoxLayout()
+        # Cada fila va en un QFrame con contorno rojo/verde (mismo
+        # concepto de color que la fila de la lista) — pedido explícito.
+        frame_ahora = QFrame()
+        frame_ahora.setObjectName("frameAhora")
+        fila_titulo = QHBoxLayout(frame_ahora)
+        fila_titulo.setContentsMargins(2, 2, 2, 2)
         self.indicador_en_vivo = IndicadorEnVivo()
         fila_titulo.addWidget(self.indicador_en_vivo)
         lbl_ahora = QLabel("Ahora:")
@@ -110,15 +115,18 @@ class PanelReproductor(QWidget):
         fila_titulo.addWidget(lbl_ahora)
         self.lbl_titulo_actual = EtiquetaMarquesina()
         fila_titulo.addWidget(self.lbl_titulo_actual)
-        layout_grupo.addLayout(fila_titulo)
+        layout_grupo.addWidget(frame_ahora)
 
-        fila_siguiente = QHBoxLayout()
+        frame_luego = QFrame()
+        frame_luego.setObjectName("frameLuego")
+        fila_siguiente = QHBoxLayout(frame_luego)
+        fila_siguiente.setContentsMargins(2, 2, 2, 2)
         lbl_luego = QLabel("Luego:")
         lbl_luego.setObjectName("lblEtiquetaAhoraLuego")
         fila_siguiente.addWidget(lbl_luego)
         self.lbl_titulo_siguiente = EtiquetaMarquesina()
         fila_siguiente.addWidget(self.lbl_titulo_siguiente)
-        layout_grupo.addLayout(fila_siguiente)
+        layout_grupo.addWidget(frame_luego)
 
         # 2) Controles de reproducción (debajo del tiempo, arriba de la
         # lista). En GRILLA de 2 columnas (no una fila larga): una fila
@@ -195,10 +203,16 @@ class PanelReproductor(QWidget):
     # ------------------------------------------------------------------
     # API pública usada por core/playlist_manager.py
     # ------------------------------------------------------------------
-    def agregar_item(self, titulo: str, duracion: str, codigo: str, ruta: str = ""):
+    def agregar_item(
+        self, titulo: str, duracion: str, codigo: str, ruta: str = "",
+        punto_inicio_ms: int = 0, punto_fin_ms: int = None, ganancia_db: float = 0.0,
+    ):
         item = QTreeWidgetItem([titulo, duracion, codigo])
         item.setData(0, ROL_ESTADO_ITEM, ESTADO_NORMAL)
         item.setData(0, Qt.ItemDataRole.UserRole, ruta)
+        item.setData(0, ROL_ANALISIS_AUDIO, {
+            "punto_inicio_ms": punto_inicio_ms, "punto_fin_ms": punto_fin_ms, "ganancia_db": ganancia_db,
+        })
         self.tree.addTopLevelItem(item)
         return item
 
@@ -252,6 +266,16 @@ class PanelReproductor(QWidget):
     def ruta_en_fila(self, fila: int) -> str:
         item = self.tree.topLevelItem(fila)
         return item.data(0, Qt.ItemDataRole.UserRole) if item else ""
+
+    def analisis_en_fila(self, fila: int) -> dict:
+        """Recorte de silencio + ganancia calculados por
+        core/analizador_audio.py al agregar el archivo a la
+        biblioteca (Ventana 3) — bug real corregido: antes se perdían
+        al arrastrar a esta lista, nunca se aplicaban al aire."""
+        item = self.tree.topLevelItem(fila)
+        if item is None:
+            return {"punto_inicio_ms": 0, "punto_fin_ms": None, "ganancia_db": 0.0}
+        return item.data(0, ROL_ANALISIS_AUDIO) or {"punto_inicio_ms": 0, "punto_fin_ms": None, "ganancia_db": 0.0}
 
     # ------------------------------------------------------------------
     # Motor "Agregar Pisador" (lado UI): como mucho un Pisador anidado
