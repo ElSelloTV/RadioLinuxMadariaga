@@ -92,6 +92,9 @@ class VentanaEmision(QWidget):
     def set_indicador_en_vivo(self, activo: bool):
         self.panel.set_indicador_en_vivo(activo)
 
+    def set_stop_habilitado(self, habilitado: bool):
+        self.panel.set_stop_habilitado(habilitado)
+
     def actualizar_progreso(self, permille: int):
         self.panel.actualizar_progreso(permille)
 

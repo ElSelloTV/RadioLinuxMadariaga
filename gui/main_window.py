@@ -257,21 +257,33 @@ class MainWindow(QMainWindow):
         self._cerrando_por_actualizacion = True
 
     def closeEvent(self, evento):
-        # Pedido explícito: la música no se corta sola por nada salvo
-        # Stop o cerrar el programa — y cerrar el programa avisa antes,
-        # porque eso SÍ va a interrumpir la emisión al aire. Única
-        # excepción: el reinicio por actualización, que ya avisó lo suyo.
-        if self._hay_emision_en_curso() and not self._cerrando_por_actualizacion:
+        # Pedido explícito (robustez de emisión): cerrar el programa
+        # SIEMPRE pide confirmación — esto es una radio al aire y un
+        # cierre accidental corta la emisión. Si además hay audio
+        # sonando ahora mismo, el texto lo advierte explícitamente.
+        # Única excepción: el reinicio por actualización, que ya pidió
+        # su propia confirmación en Configuración → Actualizaciones.
+        if not self._cerrando_por_actualizacion:
+            if self._hay_emision_en_curso():
+                titulo = "Hay una emisión en curso"
+                texto = (
+                    "Se está reproduciendo audio ahora mismo (Publicidad, Emisión y/o "
+                    "Auxiliar).\n\nCerrar el programa va a CORTAR la emisión al aire.\n"
+                    "¿Confirmás que querés cerrar de todos modos?"
+                )
+            else:
+                titulo = "Cerrar el programa"
+                texto = (
+                    "Vas a cerrar el automatizador de la radio.\n"
+                    "¿Confirmás que querés cerrar el programa?"
+                )
             respuesta = QMessageBox.question(
-                self, "Hay una emisión en curso",
-                "Se está reproduciendo audio ahora mismo (Publicidad, Emisión y/o "
-                "Auxiliar).\n\nCerrar el programa va a interrumpir la emisión al aire.\n"
-                "¿Confirmás que querés cerrar de todos modos?",
+                self, titulo, texto,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if respuesta != QMessageBox.StandardButton.Yes:
-                registrar_evento("Cierre cancelado por el operador: había emisión en curso")
+                registrar_evento("Cierre cancelado por el operador")
                 evento.ignore()
                 return
 
@@ -315,6 +327,31 @@ class MainWindow(QMainWindow):
 
     def _on_automatico_cambiado(self, activo: bool):
         self.lbl_status_modo.setText(f"Modo: {'AUTOMÁTICO' if activo else 'MANUAL'}")
+        # Pedido explícito (robustez de emisión): mientras el
+        # Automático está activo, el STOP de Emisión (Ventana 2)
+        # queda deshabilitado — igual que el de Publicidad, que se
+        # deshabilita en VentanaPublicidad._toggle_automatico(). La
+        # Auxiliar no se toca (es preescucha, no el aire).
+        self.ventana_emision.set_stop_habilitado(not activo)
+
+    def _avisar_sin_bloque_horario(self):
+        """Aviso del arranque automático (pedido explícito, texto
+        textual de Santiago): no hay bloque horario vigente en la
+        programación al abrir. NO es modal-bloqueante (show(), no
+        exec()): Emisión arranca sola inmediatamente después de este
+        aviso y no debe quedar esperando un click en OK."""
+        registrar_evento("Inicio: no se encontró bloque horario vigente en la programación")
+        self.statusBar().showMessage(
+            "No se encontró Bloque Horario en este momento en la programación.", 10000
+        )
+        self._aviso_sin_bloque = QMessageBox(self)
+        self._aviso_sin_bloque.setIcon(QMessageBox.Icon.Warning)
+        self._aviso_sin_bloque.setWindowTitle("Programación")
+        self._aviso_sin_bloque.setText(
+            "No se encontró Bloque Horario en este momento en la programación"
+        )
+        self._aviso_sin_bloque.setStandardButtons(QMessageBox.StandardButton.Ok)
+        self._aviso_sin_bloque.show()
 
     def _on_archivo_agregado(self, ruta: str):
         self.statusBar().showMessage(f"Agregado: {ruta}", 4000)
@@ -472,15 +509,21 @@ class MainWindow(QMainWindow):
 
         self.gestor_explorador = GestorExplorador(self.ventana_explorador, id_dispositivo=id_dispositivo_master)
 
-        if reproduccion["modo_automatico_al_iniciar"]:
-            self.ventana_publicidad.btn_automatico.setChecked(True)
-            self.ventana_publicidad._toggle_automatico()
+        # Pedido explícito (robustez de emisión): el botón AUTOMÁTICO
+        # arranca SIEMPRE encendido al abrir el programa — la estación
+        # debe retomar el aire sola sin intervención del operador
+        # (reemplaza al viejo checkbox "modo automático al iniciar" de
+        # Configuración, que quedaba en OFF y contradecía esta regla).
+        # El operador puede apagarlo a mano después de abrir.
+        self.ventana_publicidad.btn_automatico.setChecked(True)
+        self.ventana_publicidad._toggle_automatico()
 
         if getattr(self, "scheduler_automatico", None) is not None:
             self.scheduler_automatico.detener()
         self.scheduler_automatico = SchedulerAutomatico(
             self.ventana_publicidad, self.gestor_publicidad, self.gestor_emision
         )
+        self.scheduler_automatico.al_no_encontrar_bloque = self._avisar_sin_bloque_horario
 
         if not self.gestor_emision.motor.esta_disponible():
             self.statusBar().showMessage(

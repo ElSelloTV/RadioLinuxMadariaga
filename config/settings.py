@@ -40,7 +40,11 @@ CONFIG_POR_DEFECTO = {
         "avanzar_automaticamente_en_error": True,
         "reintentos_antes_de_detener": 3,
         "repetir_lista_al_finalizar": True,
-        "modo_automatico_al_iniciar": False,
+        # "modo_automatico_al_iniciar" se retiró a pedido explícito:
+        # el botón AUTOMÁTICO ahora arranca SIEMPRE encendido al abrir
+        # (robustez de emisión) — la clave vieja puede seguir presente
+        # en config_general.json de instalaciones anteriores y se
+        # ignora sin romper nada.
         "tolerancia_silencio_segundos": 2.0,
         "umbral_silencio_dbfs": -40.0,
         "pisador_bajada_db": -4.0,
