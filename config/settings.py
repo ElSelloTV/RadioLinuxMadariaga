@@ -268,6 +268,24 @@ def resolver_programacion_del_dia(fecha) -> dict | None:
     return datos["dias_semana"].get(nombre_dia)
 
 
+def titulo_bloque_sin_prefijo_hora(hora: str, texto: str) -> str:
+    """Bug real corregido: `VentanaProgramador._serializar_bloques()`
+    guardaba `nodo.text(0)` (el texto VISIBLE "HH:MM:SS - Título")
+    como si fuera el título puro — al recargar esa programación y
+    volver a concatenar `f"{hora} - {titulo}"`, la hora quedaba
+    duplicada, y si se repetía el ciclo (cargar/editar/guardar varias
+    veces) se iba acumulando cada vez más. Corregido guardando el
+    título puro aparte (rol propio), pero esto además "autocura" en
+    el momento de leer/mostrar cualquier título que ya haya quedado
+    corrupto en una `programacion.json` guardada por una versión
+    anterior — pela repetidamente el prefijo "HH:MM:SS - " de
+    `texto` si está duplicado."""
+    prefijo = f"{hora} - "
+    while texto.startswith(prefijo):
+        texto = texto[len(prefijo):]
+    return texto
+
+
 # ----------------------------------------------------------------------
 # Biblioteca (Ventana 3 - Explorador): categorías + archivos
 # ----------------------------------------------------------------------

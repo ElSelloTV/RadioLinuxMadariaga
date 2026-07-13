@@ -75,24 +75,42 @@ def _asegurar_dentro_de_pantalla(widget):
     pantalla actual, la reacomoda para que entre entera. Esto es lo
     que causaba perder de vista los controles de la derecha al
     maximizar: la ventana arrancaba mal posicionada y el gestor de
-    ventanas maximizaba en base a esa posición inválida."""
+    ventanas maximizaba en base a esa posición inválida.
+
+    Bug real corregido — "la ventana maximizada vuelve a salirse de
+    pantalla": si la sesión anterior se cerró CON la ventana
+    maximizada, `restoreGeometry()` la restaura ya maximizada, y
+    `frameGeometry()` en ese estado no es confiable para decidir si
+    "entra" en la pantalla actual (además, mover una ventana
+    maximizada con `setGeometry()` se comporta distinto según el
+    gestor de ventanas — a veces la ignora, a veces la desmaximiza a
+    medias). Ahora, si estaba maximizada, primero se restaura a
+    tamaño normal (`showNormal()`), se corrige esa geometría normal
+    contra la pantalla ACTUAL, y recién ahí se vuelve a maximizar
+    (`showMaximized()`) — así el gestor de ventanas maximiza sobre
+    coordenadas válidas de esta sesión, no sobre las que se guardaron
+    la vez anterior (que podían ser de otro monitor/resolución)."""
     pantalla = widget.screen() or QApplication.primaryScreen()
     if pantalla is None:
         return
 
     disponible = pantalla.availableGeometry()
+    estaba_maximizada = widget.isMaximized()
+    if estaba_maximizada:
+        widget.showNormal()
+
     geometria = widget.frameGeometry()
 
-    if disponible.contains(geometria):
-        return  # ya entra entera, no hay nada que corregir
+    if not disponible.contains(geometria):
+        ancho = min(geometria.width(), disponible.width())
+        alto = min(geometria.height(), disponible.height())
+        # OJO: QRect.right()/.bottom() devuelven x+width-1 (no x+width), así
+        # que el límite derecho/inferior válido es left()+width()-ancho, NO
+        # right()-ancho (eso da un valor de más, corta la ventana 1px afuera
+        # cuando ancho == disponible.width()).
+        x = min(max(geometria.x(), disponible.left()), disponible.left() + disponible.width() - ancho)
+        y = min(max(geometria.y(), disponible.top()), disponible.top() + disponible.height() - alto)
+        widget.setGeometry(x, y, ancho, alto)
 
-    ancho = min(geometria.width(), disponible.width())
-    alto = min(geometria.height(), disponible.height())
-    # OJO: QRect.right()/.bottom() devuelven x+width-1 (no x+width), así
-    # que el límite derecho/inferior válido es left()+width()-ancho, NO
-    # right()-ancho (eso da un valor de más, corta la ventana 1px afuera
-    # cuando ancho == disponible.width()).
-    x = min(max(geometria.x(), disponible.left()), disponible.left() + disponible.width() - ancho)
-    y = min(max(geometria.y(), disponible.top()), disponible.top() + disponible.height() - alto)
-
-    widget.setGeometry(x, y, ancho, alto)
+    if estaba_maximizada:
+        widget.showMaximized()

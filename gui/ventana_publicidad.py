@@ -41,7 +41,7 @@ from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
 )
-from config.settings import cargar_configuracion
+from config.settings import cargar_configuracion, titulo_bloque_sin_prefijo_hora
 
 # Rol de dato propio: hora "HH:mm:ss" guardada en el nodo de bloque
 # (por encima de Qt.UserRole), separado del texto visible del título
@@ -80,9 +80,12 @@ class VentanaPublicidad(QWidget):
         layout_grupo = QVBoxLayout(grupo)
 
         # --- Barra superior: estado + automático ---
+        # Pedido explícito: esta leyenda responde SOLO al botón
+        # AUTOMÁTICO (Activo/Manual), nunca al ítem que esté sonando.
         barra_superior = QHBoxLayout()
-        self.lbl_estado = QLabel("Modo manual")
-        self.lbl_estado.setObjectName("lblTituloBloqueActivo")
+        self.lbl_estado = QLabel("Modo Manual")
+        self.lbl_estado.setObjectName("lblEstadoAutomatico")
+        self.lbl_estado.setProperty("activo", "false")
         self.btn_automatico = QPushButton("AUTOMÁTICO: OFF")
         self.btn_automatico.setObjectName("btnAutomatico")
         self.btn_automatico.setCheckable(True)
@@ -196,7 +199,10 @@ class VentanaPublicidad(QWidget):
         self.lbl_titulo_siguiente.setText("")
         for bloque in bloques:
             hora = bloque.get("hora", "00:00:00")
-            titulo = bloque.get("titulo", "")
+            # titulo_bloque_sin_prefijo_hora "autocura" cualquier
+            # título ya duplicado por el bug de rondas anteriores del
+            # Programador (ver nota en config/settings.py).
+            titulo = titulo_bloque_sin_prefijo_hora(hora, bloque.get("titulo", ""))
             nodo_bloque = QTreeWidgetItem([f"{hora} - {titulo}", "", ""])
             fuente = nodo_bloque.font(0)
             fuente.setBold(True)
@@ -257,14 +263,17 @@ class VentanaPublicidad(QWidget):
         if self._modo_automatico:
             self.btn_automatico.setText("AUTOMÁTICO: ON")
             self.btn_automatico.setProperty("activo", "true")
-            self.lbl_estado.setText("Modo automático activo")
+            self.lbl_estado.setText("Automático Activo")
+            self.lbl_estado.setProperty("activo", "true")
         else:
             self.btn_automatico.setText("AUTOMÁTICO: OFF")
             self.btn_automatico.setProperty("activo", "false")
-            self.lbl_estado.setText("Modo manual")
+            self.lbl_estado.setText("Modo Manual")
+            self.lbl_estado.setProperty("activo", "false")
 
-        self.btn_automatico.style().unpolish(self.btn_automatico)
-        self.btn_automatico.style().polish(self.btn_automatico)
+        for widget in (self.btn_automatico, self.lbl_estado):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
         self.automatico_cambiado.emit(self._modo_automatico)
 
     def esta_en_automatico(self) -> bool:
@@ -435,10 +444,8 @@ class VentanaPublicidad(QWidget):
         if item is not None:
             self._pintar_item(item, ESTADO_REPRODUCIENDO)
             self.lbl_titulo_actual.setText(item.text(0))
-            self.lbl_estado.setText(f"Reproduciendo: {item.text(0)}")
         else:
             self.lbl_titulo_actual.setText("")
-            self.lbl_estado.setText("Modo automático activo" if self._modo_automatico else "Modo manual")
 
     def marcar_siguiente_item(self, item):
         if self._item_siguiente is not None:

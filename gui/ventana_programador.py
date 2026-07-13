@@ -27,7 +27,9 @@ from PySide6.QtCore import Qt, QDate, QTime
 
 from gui.common_widgets import ArbolConDrop
 from core.audio_engine import obtener_duracion_formateada
-from config.settings import guardar_programacion, listar_programaciones, obtener_programacion
+from config.settings import (
+    guardar_programacion, listar_programaciones, obtener_programacion, titulo_bloque_sin_prefijo_hora,
+)
 
 DIAS_SEMANA = [
     ("lunes", "L"), ("martes", "M"), ("miercoles", "X"),
@@ -35,6 +37,12 @@ DIAS_SEMANA = [
 ]
 
 ROL_HORA_BLOQUE = Qt.ItemDataRole.UserRole + 1
+# Bug real corregido: antes se guardaba nodo.text(0) (el texto VISIBLE
+# "hora - título") como si fuera el título puro — al recargar y volver
+# a concatenar la hora, quedaba duplicada (y se acumulaba en cada
+# ciclo de cargar/editar/guardar). Ahora el título puro se guarda acá
+# aparte, separado del texto mostrado.
+ROL_TITULO_BLOQUE = Qt.ItemDataRole.UserRole + 2
 
 
 class VentanaProgramador(QDialog):
@@ -140,6 +148,7 @@ class VentanaProgramador(QDialog):
         fuente.setBold(True)
         nodo.setFont(0, fuente)
         nodo.setData(0, ROL_HORA_BLOQUE, hora)
+        nodo.setData(0, ROL_TITULO_BLOQUE, titulo)
         self.tree.addTopLevelItem(nodo)
         nodo.setExpanded(True)
         self.txt_titulo_bloque.clear()
@@ -204,11 +213,17 @@ class VentanaProgramador(QDialog):
         self.txt_nombre_programacion.setText(contenido.get("nombre", ""))
 
         for bloque in contenido.get("bloques", []):
-            nodo = QTreeWidgetItem([f"{bloque.get('hora', '00:00:00')} - {bloque.get('titulo', '')}", "", ""])
+            hora = bloque.get("hora", "00:00:00")
+            # titulo_bloque_sin_prefijo_hora "autocura" cualquier
+            # título que ya haya quedado duplicado por el bug de
+            # rondas anteriores (ver nota en config/settings.py).
+            titulo = titulo_bloque_sin_prefijo_hora(hora, bloque.get("titulo", ""))
+            nodo = QTreeWidgetItem([f"{hora} - {titulo}", "", ""])
             fuente = nodo.font(0)
             fuente.setBold(True)
             nodo.setFont(0, fuente)
-            nodo.setData(0, ROL_HORA_BLOQUE, bloque.get("hora", "00:00:00"))
+            nodo.setData(0, ROL_HORA_BLOQUE, hora)
+            nodo.setData(0, ROL_TITULO_BLOQUE, titulo)
             self.tree.addTopLevelItem(nodo)
             for item in bloque.get("items", []):
                 hijo = QTreeWidgetItem([item.get("titulo", ""), item.get("duracion", ""), item.get("codigo", "—")])
@@ -271,6 +286,13 @@ class VentanaProgramador(QDialog):
         for i in range(self.tree.topLevelItemCount()):
             nodo = self.tree.topLevelItem(i)
             hora = nodo.data(0, ROL_HORA_BLOQUE) or "00:00:00"
+            # Título PURO desde su rol propio (nunca nodo.text(0),
+            # que incluye la hora concatenada — bug real corregido,
+            # ver nota en config/settings.py). Si por algún motivo
+            # faltara el rol (dato viejo), se autocura peor.
+            titulo = nodo.data(0, ROL_TITULO_BLOQUE)
+            if not titulo:
+                titulo = titulo_bloque_sin_prefijo_hora(hora, nodo.text(0))
             items = []
             for j in range(nodo.childCount()):
                 hijo = nodo.child(j)
@@ -280,5 +302,5 @@ class VentanaProgramador(QDialog):
                     "codigo": hijo.text(2),
                     "ruta": hijo.data(0, Qt.ItemDataRole.UserRole) or "",
                 })
-            bloques.append({"hora": hora, "titulo": nodo.text(0), "items": items})
+            bloques.append({"hora": hora, "titulo": titulo, "items": items})
         return bloques
