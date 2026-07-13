@@ -567,6 +567,11 @@ class SchedulerAutomatico:
         # — mismo destino que el fin de un bloque disparado.
         self.gestor_publicidad.al_finalizar_reproduccion = self._al_terminar_publicidad
 
+        # Aviso al operador cuando el arranque automático no encuentra
+        # ningún bloque horario vigente (lo setea MainWindow — la GUI
+        # muestra la advertencia, el core no crea widgets).
+        self.al_no_encontrar_bloque = None
+
         self.ventana.automatico_cambiado.connect(self._on_automatico_cambiado)
 
         self._timer = QTimer()
@@ -654,9 +659,17 @@ class SchedulerAutomatico:
                 self._horas_disparadas_hoy.add(hora_str)
             self._disparar_bloque(bloque)
             return
+        # No hay bloque vigente para reproducir: avisar al operador
+        # (pedido explícito: "No se encontró Bloque Horario en este
+        # momento en la programación") y, con Automático activo (el
+        # estado por defecto al abrir), arrancar Emisión sin pedir
+        # permiso, desde el ítem en rojo (el primero por defecto).
+        if self.al_no_encontrar_bloque:
+            try:
+                self.al_no_encontrar_bloque()
+            except Exception as error:
+                registrar_error(f"Inicio: error mostrando el aviso de bloque faltante: {error}")
         if self.ventana.esta_en_automatico():
-            # No hay bloque vigente para reproducir: la estación
-            # arranca directo por Emisión (con fundido de entrada).
             registrar_evento("Inicio: sin bloque vigente — arranca Emisión (Automático activo)")
             self._reanudar_o_arrancar_emision(estaba_sonando=False)
 

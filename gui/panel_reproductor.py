@@ -246,6 +246,13 @@ class PanelReproductor(QWidget):
     def set_indicador_en_vivo(self, activo: bool):
         self.indicador_en_vivo.set_activo(activo)
 
+    def set_stop_habilitado(self, habilitado: bool):
+        """Pedido explícito (robustez de emisión): con el modo
+        AUTOMÁTICO de Ventana 1 activo, el STOP de Emisión queda
+        deshabilitado — la estación no se puede silenciar a mano
+        mientras el automático conduce el aire."""
+        self.btn_stop.setEnabled(habilitado)
+
     # ------------------------------------------------------------------
     # Barra de progreso (solo si mostrar_barra_progreso=True al construir)
     # ------------------------------------------------------------------

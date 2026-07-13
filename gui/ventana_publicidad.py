@@ -271,6 +271,12 @@ class VentanaPublicidad(QWidget):
             self.lbl_estado.setText("Modo Manual")
             self.lbl_estado.setProperty("activo", "false")
 
+        # Pedido explícito (robustez de emisión): con el Automático
+        # activo, el STOP de Publicidad queda deshabilitado — la
+        # emisión no se puede detener a mano mientras la estación está
+        # en modo automático. Se rehabilita al apagar el botón.
+        self.btn_stop.setEnabled(not self._modo_automatico)
+
         for widget in (self.btn_automatico, self.lbl_estado):
             widget.style().unpolish(widget)
             widget.style().polish(widget)

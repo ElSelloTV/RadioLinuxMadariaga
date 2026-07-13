@@ -260,6 +260,31 @@ de 1s):
   bloque disparado está en curso, se da por terminado igual (no deja
   Emisión pausada para siempre).
 
+**Ronda de robustez de emisión (pedido explícito, posterior al ciclo
+Automático)**:
+- **El botón AUTOMÁTICO arranca SIEMPRE encendido al abrir** —
+  `MainWindow._inicializar_motores_audio` lo prende incondicional; el
+  checkbox "modo automático al iniciar" se RETIRÓ de Configuración →
+  Reproducción (contradecía la regla; la clave vieja en
+  `config_general.json` se ignora sin romper). El operador puede
+  apagarlo a mano después de abrir.
+- **Con el Automático activo, los botones STOP de Ventana 1 y
+  Ventana 2 quedan DESHABILITADOS** (la estación no se puede
+  silenciar a mano mientras el automático conduce el aire): Ventana 1
+  en `VentanaPublicidad._toggle_automatico()` (`btn_stop`), Ventana 2
+  vía `automatico_cambiado` → `MainWindow._on_automatico_cambiado` →
+  `VentanaEmision.set_stop_habilitado()` (delegado a
+  `PanelReproductor`). La Auxiliar no se toca. Se rehabilitan al
+  apagar el botón.
+- **Aviso "No se encontró Bloque Horario en este momento en la
+  programación"** (texto textual pedido): si `_arrancar_al_iniciar`
+  no encuentra bloque vigente, dispara el callback
+  `SchedulerAutomatico.al_no_encontrar_bloque` (lo setea MainWindow —
+  el core no crea widgets) → `MainWindow._avisar_sin_bloque_horario`,
+  un QMessageBox NO modal (`show()`, no `exec()`) + mensaje en la
+  barra de estado — Emisión arranca sola inmediatamente sin esperar
+  el OK, desde el ítem en rojo (el primero por defecto).
+
 **Bug real corregido — "la ventana 1 sigue sin reproducir el ítem
 siguiente" (pedido b)**: `GestorPublicidad.__init__` NUNCA conectaba
 `motor.finalizo_item` (Ventana 2 siempre la tuvo en
@@ -847,7 +872,8 @@ que se carga, sin necesitar reparar los datos a mano.
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
 logs), Reproducción y Automatización (avanzar en error, reintentos,
-repetir lista, modo automático al iniciar, tolerancia de silencio),
+repetir lista, tolerancia de silencio — el checkbox "modo automático
+al iniciar" se retiró: el Automático arranca siempre ON, ver Ventana 1),
 General (confirmaciones, reloj, tema), **Apariencia** (colores por
 género, ver abajo), **Actualizaciones** (ver abajo), **Diagnóstico**
 (log de errores, ver abajo). Todo persiste en
@@ -890,11 +916,15 @@ el programa — cualquier acción futura sobre "aplicar configuración"
 tiene que seguir este mismo patrón (mutar objetos vivos, jamás
 recrear el `MotorAudio` que está sonando).
 
-**Aviso al cerrar con audio al aire (implementado)**:
-`MainWindow.closeEvent` chequea `motor.esta_reproduciendo()` en
-Emisión/Publicidad/Auxiliar antes de cerrar; si hay algo sonando,
-pregunta con Sí/No y cancela el cierre (`evento.ignore()`) si el
-operador dice que no.
+**Confirmación al cerrar — SIEMPRE (implementado, pedido explícito
+de la ronda de robustez)**: `MainWindow.closeEvent` pide confirmación
+Sí/No en TODO cierre (antes solo cuando había audio sonando): si
+`_hay_emision_en_curso()` (Emisión/Publicidad/Auxiliar) el texto
+advierte que se CORTA la emisión al aire; si no, pregunta genérica
+"¿Confirmás que querés cerrar el programa?". Cancela con
+`evento.ignore()` si el operador dice que no. Única excepción: el
+cierre por actualización (flag `_cerrando_por_actualizacion`), que ya
+pidió su propia confirmación.
 
 ### Actualizador (`core/actualizador.py`)
 `git fetch` + comparar HEAD local contra `origin/main` (o `master`),
@@ -1244,6 +1274,25 @@ todo el resto.
     fundidos ENTRE tandas de un mismo bloque de Ventana 1 (crossfade
     interno de Publicidad) quedan como mejora futura si hace falta —
     hoy el encadenado ahí es corte directo con recorte de silencio.
+17. ~~Robustez de emisión (Automático ON por defecto, STOPs
+    bloqueados, aviso sin bloque, confirmación de cierre siempre)~~ —
+    (a) la programación del día se carga sola al abrir sin preguntar
+    y se emite automáticamente (ya venía del punto 16, confirmado);
+    (b) el botón AUTOMÁTICO arranca SIEMPRE encendido al abrir (se
+    retiró el checkbox "modo automático al iniciar" de Configuración,
+    que contradecía la regla); (c+d) con el Automático activo los
+    botones STOP de Ventana 1 y Ventana 2 quedan deshabilitados y se
+    rehabilitan al apagarlo (la Auxiliar no se toca); (e) si al abrir
+    no hay bloque horario vigente, aviso no-modal "No se encontró
+    Bloque Horario en este momento en la programación" y Emisión
+    arranca sola desde el primer ítem sin esperar el OK; (f) cerrar
+    el programa pide confirmación SIEMPRE (con advertencia de corte
+    si hay audio al aire), salvo el reinicio por actualización —
+    implementado y probado (6 tests nuevos + suite de regresión +
+    2 smoke tests reales del arranque con y sin playlist de Emisión
+    guardada). Falta que Santiago lo pruebe en su notebook con audio
+    real, en particular que el STOP bloqueado no le moleste en la
+    operación diaria (se desbloquea apagando el Automático).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

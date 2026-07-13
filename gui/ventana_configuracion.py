@@ -193,9 +193,9 @@ class VentanaConfiguracion(QDialog):
         self.spin_reintentos.setRange(1, 20)
 
         self.chk_repetir_lista = QCheckBox("Repetir la lista de Emisión al llegar al final")
-        self.chk_modo_automatico_inicio = QCheckBox(
-            "Iniciar la aplicación con el modo AUTOMÁTICO de Publicidad activado"
-        )
+        # El checkbox "modo automático al iniciar" se retiró a pedido
+        # explícito: el botón AUTOMÁTICO ahora arranca SIEMPRE
+        # encendido al abrir el programa (robustez de emisión).
         self.spin_tolerancia_silencio = QDoubleSpinBox()
         self.spin_tolerancia_silencio.setRange(0.0, 10.0)
         self.spin_tolerancia_silencio.setSingleStep(0.5)
@@ -214,7 +214,6 @@ class VentanaConfiguracion(QDialog):
         form.addRow(self.chk_avanzar_en_error)
         form.addRow("Fallos consecutivos antes de detenerse:", self.spin_reintentos)
         form.addRow(self.chk_repetir_lista)
-        form.addRow(self.chk_modo_automatico_inicio)
         form.addRow("Tolerancia de silencio al recortar (Ventana 3):", self.spin_tolerancia_silencio)
         form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
         form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
@@ -505,7 +504,6 @@ class VentanaConfiguracion(QDialog):
         self.chk_avanzar_en_error.setChecked(reproduccion["avanzar_automaticamente_en_error"])
         self.spin_reintentos.setValue(reproduccion["reintentos_antes_de_detener"])
         self.chk_repetir_lista.setChecked(reproduccion["repetir_lista_al_finalizar"])
-        self.chk_modo_automatico_inicio.setChecked(reproduccion["modo_automatico_al_iniciar"])
         self.spin_tolerancia_silencio.setValue(reproduccion["tolerancia_silencio_segundos"])
         self.spin_umbral_silencio.setValue(reproduccion["umbral_silencio_dbfs"])
         self.spin_bajada_pisador.setValue(reproduccion["pisador_bajada_db"])
@@ -552,7 +550,6 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["avanzar_automaticamente_en_error"] = self.chk_avanzar_en_error.isChecked()
         self._config["reproduccion"]["reintentos_antes_de_detener"] = self.spin_reintentos.value()
         self._config["reproduccion"]["repetir_lista_al_finalizar"] = self.chk_repetir_lista.isChecked()
-        self._config["reproduccion"]["modo_automatico_al_iniciar"] = self.chk_modo_automatico_inicio.isChecked()
         self._config["reproduccion"]["tolerancia_silencio_segundos"] = self.spin_tolerancia_silencio.value()
         self._config["reproduccion"]["umbral_silencio_dbfs"] = self.spin_umbral_silencio.value()
         self._config["reproduccion"]["pisador_bajada_db"] = self.spin_bajada_pisador.value()
