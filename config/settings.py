@@ -184,6 +184,14 @@ def registrar_evento(mensaje: str):
 
 NOMBRES_DIAS_SEMANA = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
 
+# Compartido entre gui/ventana_programador.py y sus diálogos (Duplicar,
+# Programaciones guardadas) — vive acá para que ningún diálogo tenga
+# que importar de otro (evita import circular entre ellos).
+DIAS_SEMANA_ETIQUETAS = [
+    ("lunes", "L"), ("martes", "M"), ("miercoles", "X"),
+    ("jueves", "J"), ("viernes", "V"), ("sabado", "S"), ("domingo", "D"),
+]
+
 
 def cargar_programaciones() -> dict:
     _asegurar_directorio()
@@ -255,6 +263,19 @@ def obtener_programacion(tipo: str, clave: str) -> dict | None:
     if tipo == "fecha":
         return datos["fechas_especificas"].get(clave)
     return None
+
+
+def eliminar_programacion(tipo: str, clave: str) -> bool:
+    """Borra del disco una programación guardada puntual (por día
+    genérico o por fecha específica). Devuelve True si había algo que
+    borrar. Usado por el Programador (Eliminar / Eliminar varias)."""
+    datos = cargar_programaciones()
+    diccionario = datos["dias_semana"] if tipo == "dia" else datos["fechas_especificas"] if tipo == "fecha" else None
+    if diccionario is None or clave not in diccionario:
+        return False
+    del diccionario[clave]
+    guardar_programaciones(datos)
+    return True
 
 
 def resolver_programacion_del_dia(fecha) -> dict | None:

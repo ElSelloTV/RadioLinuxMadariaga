@@ -58,6 +58,20 @@ def restaurar_columnas(nombre: str, tree):
         pass
 
 
+def guardar_valor(clave: str, valor):
+    """Persistencia genérica de un valor chico (string, lista de
+    strings, etc.) bajo la sección "estado/" — usado por ejemplo para
+    recordar la última categoría navegada en el buscador de biblioteca
+    del Programador (pedido explícito: "que guarde la última carpeta/
+    categoría... así no tengo que volver a hacer toda la búsqueda")."""
+    _settings().setValue(f"estado/{clave}", valor)
+
+
+def restaurar_valor(clave: str, valor_por_defecto=None):
+    valor = _settings().value(f"estado/{clave}", valor_por_defecto)
+    return valor
+
+
 def guardar_geometria_ventana(widget, nombre: str = "ventana_principal"):
     _settings().setValue(f"geometria/{nombre}", widget.saveGeometry())
 
