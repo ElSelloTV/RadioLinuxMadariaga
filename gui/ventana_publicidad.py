@@ -42,6 +42,7 @@ from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
     ROL_YA_REPRODUCIDO, icono_reproducido, ROL_VIGENCIA,
+    ROL_ES_COMANDO, ROL_TIPO_COMANDO, ROL_PARAMETRO_COMANDO, COLOR_COMANDO,
 )
 from config.settings import cargar_configuracion, titulo_bloque_sin_prefijo_hora, registrar_reproduccion
 
@@ -289,6 +290,11 @@ class VentanaPublicidad(QWidget):
             nodo_bloque.setData(0, ROL_HORA_BLOQUE, hora)
             self.tree.addTopLevelItem(nodo_bloque)
             for item in bloque.get("items", []):
+                if item.get("es_comando"):
+                    self.agregar_comando(
+                        nodo_bloque, item.get("tipo_comando", "FMT"), item.get("parametro_comando", ""),
+                    )
+                    continue
                 self.agregar_tanda(
                     nodo_bloque, item.get("titulo", ""), item.get("duracion", ""),
                     item.get("codigo", "—"), item.get("ruta", ""),
@@ -314,6 +320,34 @@ class VentanaPublicidad(QWidget):
         hijo.setData(0, ROL_VIGENCIA, {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin})
         nodo_bloque.addChild(hijo)
         return hijo
+
+    def agregar_comando(self, nodo_bloque, tipo_comando: str, parametro: str):
+        """Comando FMT (pedido explícito, encadenado con el
+        Musicalizador Avanzado): NO es audio real — sin ruta, sin
+        "duración" (no ocupa tiempo de aire). Al llegarle el turno en
+        la reproducción, ejecuta su acción y sigue directo al próximo
+        ítem real (ver core/playlist_manager.py:GestorPublicidad)."""
+        hijo = QTreeWidgetItem([f"▶ {tipo_comando}: {parametro}", "—", "—"])
+        hijo.setData(0, Qt.ItemDataRole.UserRole, "")
+        hijo.setData(0, ROL_ESTADO_ITEM, ESTADO_NORMAL)
+        hijo.setData(0, ROL_ES_COMANDO, True)
+        hijo.setData(0, ROL_TIPO_COMANDO, tipo_comando)
+        hijo.setData(0, ROL_PARAMETRO_COMANDO, parametro)
+        fondo = QBrush(QColor(COLOR_COMANDO))
+        for columna in range(3):
+            hijo.setBackground(columna, fondo)
+            hijo.setForeground(columna, QBrush(QColor("white")))
+        nodo_bloque.addChild(hijo)
+        return hijo
+
+    def es_comando(self, item) -> bool:
+        return bool(item.data(0, ROL_ES_COMANDO)) if item is not None else False
+
+    def tipo_comando_de_item(self, item):
+        return item.data(0, ROL_TIPO_COMANDO)
+
+    def parametro_comando_de_item(self, item):
+        return item.data(0, ROL_PARAMETRO_COMANDO)
 
     def analisis_de_item(self, item) -> dict:
         if item is None:
@@ -479,6 +513,7 @@ class VentanaPublicidad(QWidget):
 
         menu.addSeparator()
         accion_crear_bloque = menu.addAction("Crear Bloque Nuevo")
+        accion_insertar_fmt = menu.addAction("▶ Insertar Comando FMT...")
 
         elegida = menu.exec(self.tree.viewport().mapToGlobal(posicion))
         if elegida in (accion_crear_prog, accion_modificar_prog, accion_eliminar_prog):
@@ -495,6 +530,31 @@ class VentanaPublicidad(QWidget):
             self._sacar_items(seleccionados)
         elif elegida == accion_crear_bloque:
             self._confirmar_y_crear_bloque()
+        elif elegida == accion_insertar_fmt:
+            self._insertar_comando_fmt(seleccionados[0] if seleccionados else None)
+
+    def _bloque_destino_para_insertar(self, item_referencia):
+        """Mismo criterio que el Programador (_bloque_destino_actual):
+        el bloque del ítem seleccionado (o su padre, si es una tanda),
+        o el ÚLTIMO bloque del árbol si no hay nada útil seleccionado."""
+        if item_referencia is not None:
+            return item_referencia if item_referencia.parent() is None else item_referencia.parent()
+        if self.tree.topLevelItemCount() == 0:
+            return None
+        return self.tree.topLevelItem(self.tree.topLevelItemCount() - 1)
+
+    def _insertar_comando_fmt(self, item_referencia):
+        bloque = self._bloque_destino_para_insertar(item_referencia)
+        if bloque is None:
+            QMessageBox.information(self, "Insertar Comando FMT", "Primero creá un bloque horario.")
+            return
+        from gui.dialogo_insertar_comando_fmt import DialogoInsertarComandoFMT
+        dialogo = DialogoInsertarComandoFMT(parent=self)
+        if dialogo.exec() != DialogoInsertarComandoFMT.DialogCode.Accepted:
+            return
+        formato = dialogo.formato_elegido()
+        if formato:
+            self.agregar_comando(bloque, "FMT", formato)
 
     def _sacar_items(self, items: list):
         bloqueados = [item.text(0) for item in items if self._bloqueado_por_reproduccion(item)]

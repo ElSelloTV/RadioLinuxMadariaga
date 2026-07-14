@@ -1619,6 +1619,204 @@ toca este motor, no se puede probar con VLC real en el sandbox), y
 que confirme el criterio de "excluir_rutas nunca deja hueco" antes de
 que el Musicalizador Avanzado lo use de verdad.
 
+### Musicalizador Avanzado + Comandos FMT (implementado, pedido
+explícito — "uno de los últimos 2 [temas] que más uso, encadenado")
+
+Santiago mandó 11 puntos describiendo cómo funciona en Dinesat 9 y
+pidió que se le pregunte todo antes de encarar el diseño. Se hicieron
+4 preguntas críticas por `AskUserQuestion`, y las 4 respuestas son
+decisiones de arquitectura que quedaron FIJAS:
+
+1. **La música generada por un comando FMT carga en Ventana 2
+   (Emisión), NO en Ventana 1** — aunque el pedido original de
+   Santiago decía literalmente "ventana 1" en los puntos 6-8, eso
+   contradice tanto el propio Dinesat (el FMT alimenta la emisión
+   continua, no la tanda publicitaria) como el punto 4 (Pisador en el
+   aleatorio — el motor de Pisador solo existe en Ventana 2/Auxiliar).
+   Se lo señalé explícitamente a Santiago y confirmó Ventana 2. El
+   *comando* en sí (el ítem "▶ FMT: Folclore") sigue viviendo dentro
+   de un bloque de Ventana 1 — es RECIÉN AHÍ, al pasarle el turno de
+   reproducción, que dispara la generación en Ventana 2.
+2. **El comando se crea eligiendo de una LISTA de formatos ya creados**
+   en el Musicalizador — no escribiendo texto libre ("FMT Folclore")
+   como en Dinesat. Más seguro: nunca queda un comando "huérfano"
+   apuntando a un nombre mal tipeado.
+3. **El no-repetir del aleatorio sobrevive reinicios**, consultando el
+   historial de reproducción PERSISTENTE (`historial_reproduccion.txt`,
+   de la ronda anterior) en vez de un contador solo en memoria.
+4. **Validación**: referencias rotas y categorías vacías son solo
+   AVISOS (no bloquean guardar); un bucle de subformatos (A→B→A) SÍ
+   bloquea. Pedido explícito adicional de Santiago sobre este punto:
+   *"que luego se borre un item [de la biblioteca]. No debe impedir
+   que cargue los demás item del musicalizador"* — el motor en tiempo
+   de ejecución nunca debe frenarse por un ítem roto, solo saltearlo.
+
+**Decisión propia, explicada a Santiago antes de empezar (reducción de
+alcance deliberada)**: en vez de construir un tipo de "material" FMT
+nuevo en el Explorador/biblioteca (como hace Dinesat, con géneros y
+drag&drop propios — alcance grande, similar al que llevó la vigencia
+de fecha), el comando FMT se inserta DIRECTO como un ítem especial de
+un bloque de Ventana 1 (o del Programador), vía un diálogo dedicado
+que lista los formatos existentes. Nunca pasa por la biblioteca.
+
+**Datos** (`config/data/musicalizador.json`, vía
+`config/settings.py`: `cargar_musicalizador`/`guardar_musicalizador`/
+`listar_formatos`/`obtener_formato`/`guardar_formato`/
+`eliminar_formato`/`renombrar_formato`, escritura atómica igual que el
+resto de la app):
+```json
+{"formatos": {
+    "Folclore": {"items": [
+        {"tipo": "especifico", "ruta": "...", "pisador_categoria": [...]|null, "pisador_posicion": "inicio"|"final"},
+        {"tipo": "aleatorio", "categoria": ["Música","Folclore"], "recursivo": true, "pisador_categoria": [...]|null, "pisador_posicion": "..."},
+        {"tipo": "subformato", "nombre": "OtroFormato", "duracion_segundos": 600}
+    ]}
+}}
+```
+Tres tipos de ítem, calcados del manual de Dinesat (punto 1): **Específico**
+(un archivo fijo, nunca aleatorio — punto 11), **Aleatorio** (siempre
+elige EXACTAMENTE un tema al azar de una categoría+subcategorías, con
+Pisador opcional Intro/Outro — punto 4), **Subformato** (otro formato
+ya creado, expandido hasta cubrir X minutos — permite anidar
+musicalizadores, ej. "1 hora de separadores variados" del punto 9).
+
+**Motor puro** (`core/musicalizador.py`, deliberadamente SIN Qt —
+recibe un objeto "explorador" duck-typed con 4 métodos:
+`buscar_registro_por_ruta`, `buscar_categoria_por_ruta`,
+`listar_registros_de_categoria`, `elegir_aleatorio_de_categoria`; en
+producción es la `VentanaExplorador` real, en tests es un
+`ExploradorFalso` sin QApplication):
+- `generar_items(explorador, nombre_formato, cantidad)`: función
+  pública principal. Repite la secuencia de ítems del formato tantas
+  veces como haga falta hasta juntar `cantidad` ítems concretos
+  (punto 8: "siempre repitiendo el esquema"); si una vuelta completa
+  no agrega ningún ítem (formato totalmente roto), corta en vez de
+  colgarse.
+- No-repetir (punto 10): `config/settings.rutas_recientes_en_historial()`
+  lee `historial_reproduccion.txt` de ATRÁS para adelante y junta
+  hasta `len(candidatos)-1` rutas distintas de esa categoría como
+  exclusión — garantiza que el tema N-ésimo de una categoría de N
+  siempre pueda sonar (nunca se vacía la lista de candidatos), y se
+  autorregenera solo a medida que pasa el tiempo. Parsea cada línea
+  con `rsplit(" - ", 1)` (no `split`) para no romperse con un título
+  que contenga " - " en el medio.
+- Cada resolución (`_resolver_especifico`/`_resolver_aleatorio`/
+  subformato) devuelve vacío en vez de tirar excepción ante una
+  referencia rota — así un ítem roto se saltea solo sin frenar a los
+  demás (el pedido explícito de Santiago del punto 4). Probado con un
+  formato donde 2 de 3 ítems están rotos: los otros 2 siguen
+  generando con normalidad.
+- Protección de ciclos en runtime (además de la validación de guardado
+  más abajo): un parámetro `visitados: frozenset` viaja por toda la
+  cadena de expansión de subformatos — nunca confiar en una sola capa
+  de protección (mismo espíritu que ya rige el resto del proyecto
+  tras los bugs de libVLC). Probado con `signal.alarm(5)` para
+  confirmar que un ciclo A→B→A no cuelga el motor.
+- `validar_formato(explorador, nombre_actual, items, todos_los_formatos)`:
+  se llama SOLO al guardar (`VentanaMusicalizador._guardar_formato_actual`).
+  Devuelve una lista de problemas con `bloquea: bool` — referencia
+  rota / categoría vacía → aviso (no bloquea, con confirmación
+  "¿Guardar igual?"); ciclo de subformatos → bloquea el guardado por
+  completo (`QMessageBox.warning`, sin persistir).
+
+**Comando FMT en Ventana 1** (`gui/styles.py`: `ROL_ES_COMANDO`,
+`ROL_TIPO_COMANDO`, `ROL_PARAMETRO_COMANDO`, `COLOR_COMANDO` = azul
+`#2980b9`, para distinguirlo a simple vista del rojo/verde de estado y
+del violeta del Pisador): `VentanaPublicidad.agregar_comando()`/
+`es_comando()`/`tipo_comando_de_item()`/`parametro_comando_de_item()`
+— un ítem SIN ruta, muestra "▶ FMT: Folclore" en vez de título/
+duración/código reales. Se inserta con el diálogo nuevo
+`gui/dialogo_insertar_comando_fmt.py` (lista los formatos vía
+`listar_formatos()`; si no hay ninguno, avisa y no deja seguir), desde
+el menú contextual de Ventana 1 ("▶ Insertar Comando FMT...") y desde
+un botón nuevo del Programador ("▶ Comando FMT..." en la fila de
+ítems). El comando viaja con el bloque en TODOS los caminos ya
+existentes de persistencia/carga — `cargar_bloques()` (Ventana 1),
+`_guardar_estado_ahora()`/`_restaurar_desde_disco()`
+(`core/playlist_manager.py`), y `_serializar_bloques()`/
+`_cargar_programacion_existente()` (Programador) — todos ramifican por
+`item.get("es_comando")`/`hijo.data(0, ROL_ES_COMANDO)` antes de tratar
+el ítem como audio. "Reemplazar" del Programador avisa en vez de
+corromper un comando si se lo selecciona por error (los comandos no se
+"reemplazan": se quita y se agrega uno nuevo).
+
+**Disparo y generación continua** (`core/playlist_manager.py`
+`GestorPublicidad`): `_item_valido()` ahora acepta un comando como
+válido aunque no tenga ruta; `_reproducir_item()` detecta
+`ventana.es_comando(item)` y, en vez de reproducir audio, llama a
+`_ejecutar_comando()` (registra el evento en el log, y si el tipo es
+"FMT" invoca el callback `self.al_comando_fmt(parametro)`) y sigue
+DIRECTO al próximo ítem con `_avanzar()` — cero tiempo de aire, tal
+cual describe Dinesat. `MainWindow._inicializar_motores_audio()`
+conecta `gestor_publicidad.al_comando_fmt = gestor_emision.iniciar_musicalizador`.
+
+`core/gestor_emision.py` (`GestorPlaylist`) ganó `ventana_explorador`
+en el constructor (para poder resolver categorías) y:
+- `iniciar_musicalizador(nombre_formato)`: activa el modo, genera un
+  primer lote de `TAMAÑO_LOTE_MUSICALIZADOR = 8` ítems.
+- `_generar_lote_musicalizador()`: llama a `generar_items()`, agrega
+  cada ítem concreto al panel (`panel.agregar_item()`), y si el ítem
+  tenía Pisador asignado lo agrega también (`panel.agregar_pisador()`,
+  mismo mecanismo intro/outro de siempre). Si la lista estaba vacía y
+  no había nada armado, deja el primer ítem nuevo en rojo/el segundo
+  en verde (arranca sola, igual que la restauración de sesión).
+- **Recarga continua (puntos 7-8)**: en `_avanzar()`, cada vez que la
+  candidata "siguiente" (verde) resulta ser el ÚLTIMO ítem del panel
+  Y hay un formato musicalizador activo, se dispara
+  `_generar_lote_musicalizador()` de inmediato — la lista nunca llega
+  a vaciarse del todo, siempre hay más generado antes de necesitarlo.
+- `detener_musicalizador()`: apaga el modo (no borra lo ya generado).
+
+**Interfaz** (`gui/ventana_musicalizador.py`, abierta con
+Ctrl+M o el botón "🎵 Musicalizador" del toolbar/menú Programación —
+mismo patrón de ventana que el Programador, geometría persistida en
+`ui_state.ini`): columna izquierda con los FORMATOS (Nuevo/Renombrar/
+Eliminar); columna derecha con los ÍTEMS del formato seleccionado
+(Añadir/Editar/Quitar/Subir/Bajar — puntos 2 y 3 del pedido) y el
+botón "💾 Guardar formato" que corre `validar_formato()` antes de
+persistir. `gui/dialogo_item_musicalizador.py` arma/edita UN ítem:
+combo de tipo + `QStackedWidget` con la página correspondiente
+(Específico usa el buscador de biblioteca ya existente; Aleatorio y el
+Pisador usan el selector de categoría nuevo,
+`gui/dialogo_seleccionar_categoria.py` — mismo patrón de copiar la
+estructura del árbol vivo del Explorador que ya usaba el buscador de
+biblioteca, pero sin elegir archivo, solo categoría; Subformato es un
+combo de los demás formatos, excluyendo el actual, + duración en
+minutos). El grupo Pisador (checkbox + categoría + radio Intro/Outro)
+se oculta para Subformato (no aplica a un contenedor).
+`VentanaExplorador` ganó dos helpers chicos para esto:
+`ruta_de_categoria(item)` (camino de nombres desde la raíz) y
+`buscar_categoria_por_ruta(ruta)` (el inverso — resuelve un `list[str]`
+guardado en disco contra el árbol vivo actual, `None` si algún tramo
+ya no existe).
+
+Probado con 14 tests del motor puro (`test_musicalizador_motor.py`,
+sin Qt: CRUD de formatos, tipo específico sin aleatoriedad, tipo
+aleatorio recursivo, no-repetir vía historial incluyendo un título con
+" - " en el medio, Pisador en el aleatorio, expansión de subformato
+por duración, ítems rotos no frenan la generación de los demás, un
+formato totalmente roto no cuelga, ciclo de subformatos no cuelga en
+runtime con guard de `signal.alarm`, y los 3 casos de
+`validar_formato`) + 18 checks de integración con la `MainWindow` real
+(`test_musicalizador_gui.py`: crear un formato, insertar un Comando
+FMT real en un bloque de Ventana 1, disparar el comando y verificar
+que Ventana 2 se llena con `TAMAÑO_LOTE_MUSICALIZADOR` ítems, que el
+wiring `al_comando_fmt` → `iniciar_musicalizador` está conectado, que
+`_item_valido` acepta el comando, persistencia ida y vuelta del
+comando en `playlist_publicidad.json`, y el mismo roundtrip completo
+en el Programador incluyendo que "Reemplazar" no corrompe un comando
+seleccionado por error) + suite de regresión completa sin fallos
+nuevos (mismos 4 fallos preexistentes de siempre: `test_confirmaciones.py`,
+`test_log_git.py`, `test_ventana3.py`, y a veces los 2 dependientes de
+la hora real del sistema). **Nunca probado con audio real** (como todo
+lo que toca el motor de reproducción — el sandbox no tiene VLC): falta
+que Santiago arme un formato real, lo encadene con un Comando FMT en
+un bloque de Ventana 1, y confirme en su notebook que (a) Ventana 2 se
+llena sola y nunca se queda en silencio, (b) el no-repetir se siente
+bien con su biblioteca real, y (c) el Pisador de los ítems aleatorios
+suena — mismo motor ya validado con audio real en rondas anteriores,
+pero nunca disparado desde este camino nuevo.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -2303,6 +2501,26 @@ todo el resto.
     panel. Aplica a los 3 títulos principales (PROGRAMACIÓN/ROTATIVA,
     EMISIÓN, EXPLORADOR) y a cualquier otro `QGroupBox` de la app
     (es una regla QSS global, no por ventana puntual).
+28. ~~Musicalizador Avanzado + Comandos FMT~~ — el tema pendiente más
+    grande del roadmap, con 11 puntos de pedido y 4 decisiones de
+    arquitectura confirmadas por `AskUserQuestion` (ver sección
+    dedicada más arriba, entre Ventana Programador y Configuración):
+    la música generada carga en Ventana 2 (no en Ventana 1, pese a la
+    redacción original del pedido — confirmado explícitamente con
+    Santiago), el comando FMT se crea eligiendo de una lista (no texto
+    libre), el no-repetir usa el historial persistente, y la
+    validación bloquea solo en ciclos de subformatos. Tres tipos de
+    ítem (Específico/Aleatorio/Subformato), Pisador Intro/Outro en los
+    ítems Específico/Aleatorio, motor puro sin Qt
+    (`core/musicalizador.py`) con degradación total ante ítems rotos
+    (nunca frena la generación de los demás — pedido explícito de
+    Santiago), ventana dedicada (Ctrl+M), y recarga continua en
+    Ventana 2 cuando el último ítem generado queda marcado en cola —
+    implementado y probado (14 tests del motor puro + 18 checks de
+    integración con la app real + suite de regresión completa sin
+    fallos nuevos). Falta que Santiago lo pruebe con audio real y su
+    biblioteca real: armar un formato, encadenarlo con un Comando FMT,
+    y confirmar que Emisión se llena sola de forma continua.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

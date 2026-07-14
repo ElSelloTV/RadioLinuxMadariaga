@@ -45,13 +45,17 @@ from PySide6.QtWidgets import (
     QMessageBox, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QDate, QTime, Signal
+from PySide6.QtGui import QBrush, QColor
 
 from gui.common_widgets import ArbolConDrop
-from gui.styles import ROL_ANALISIS_AUDIO, ROL_VIGENCIA
+from gui.styles import (
+    ROL_ANALISIS_AUDIO, ROL_VIGENCIA, ROL_ES_COMANDO, ROL_TIPO_COMANDO, ROL_PARAMETRO_COMANDO, COLOR_COMANDO,
+)
 from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
 from gui.dialogo_editar_bloque import DialogoEditarBloque
 from gui.dialogo_programaciones_guardadas import DialogoProgramacionesGuardadas
 from gui.dialogo_duplicar_programacion import DialogoDuplicarProgramacion
+from gui.dialogo_insertar_comando_fmt import DialogoInsertarComandoFMT
 from gui import estado_ui
 from core.audio_engine import obtener_duracion_formateada
 from config.settings import (
@@ -174,7 +178,13 @@ class VentanaProgramador(QDialog):
         self.btn_reemplazar.clicked.connect(self._reemplazar_seleccionado)
         self.btn_quitar = QPushButton("✕ Quitar seleccionado(s)")
         self.btn_quitar.clicked.connect(self._quitar_seleccionados)
-        for boton in (self.btn_agregar_item, self.btn_reemplazar, self.btn_quitar):
+        self.btn_insertar_fmt = QPushButton("▶ Comando FMT...")
+        self.btn_insertar_fmt.setToolTip(
+            "Al pasar la reproducción por este ítem, dispara la generación\n"
+            "continua de música en Emisión según un formato del Musicalizador Avanzado."
+        )
+        self.btn_insertar_fmt.clicked.connect(self._insertar_comando_fmt)
+        for boton in (self.btn_agregar_item, self.btn_reemplazar, self.btn_quitar, self.btn_insertar_fmt):
             fila_items.addWidget(boton, 1)
         layout_grupo.addLayout(fila_items)
 
@@ -289,6 +299,36 @@ class VentanaProgramador(QDialog):
         bloque.setExpanded(True)
         return hijo
 
+    def _agregar_comando_a_bloque(self, bloque, tipo_comando: str, parametro: str):
+        """Comando FMT (pedido explícito, encadenado con el
+        Musicalizador Avanzado) — mismo concepto que
+        VentanaPublicidad.agregar_comando(), acá en el editor del
+        Programador."""
+        hijo = QTreeWidgetItem([f"▶ {tipo_comando}: {parametro}", "—", "—"])
+        hijo.setData(0, Qt.ItemDataRole.UserRole, "")
+        hijo.setData(0, ROL_ES_COMANDO, True)
+        hijo.setData(0, ROL_TIPO_COMANDO, tipo_comando)
+        hijo.setData(0, ROL_PARAMETRO_COMANDO, parametro)
+        fondo = QBrush(QColor(COLOR_COMANDO))
+        for columna in range(3):
+            hijo.setBackground(columna, fondo)
+            hijo.setForeground(columna, QBrush(QColor("white")))
+        bloque.addChild(hijo)
+        bloque.setExpanded(True)
+        return hijo
+
+    def _insertar_comando_fmt(self):
+        bloque = self._bloque_destino_actual()
+        if bloque is None:
+            QMessageBox.information(self, "Insertar Comando FMT", "Primero creá un bloque horario.")
+            return
+        dialogo = DialogoInsertarComandoFMT(parent=self)
+        if dialogo.exec() != DialogoInsertarComandoFMT.DialogCode.Accepted:
+            return
+        formato = dialogo.formato_elegido()
+        if formato:
+            self._agregar_comando_a_bloque(bloque, "FMT", formato)
+
     def _on_archivo_soltado(self, ruta, item_destino):
         bloque = item_destino
         while bloque is not None and bloque.parent() is not None:
@@ -350,6 +390,14 @@ class VentanaProgramador(QDialog):
         item = seleccionados[0]
         if item.parent() is None:
             self._editar_bloque(item)
+            return
+
+        if item.data(0, ROL_ES_COMANDO):
+            QMessageBox.information(
+                self, "Reemplazar",
+                "Un Comando FMT no se \"reemplaza\" — quitalo (botón ✕ Quitar) y\n"
+                "agregá uno nuevo con \"▶ Comando FMT...\" si querés cambiar el formato.",
+            )
             return
 
         if self._ventana_explorador is None:
@@ -469,6 +517,9 @@ class VentanaProgramador(QDialog):
             nodo.setData(0, ROL_TITULO_BLOQUE, titulo)
             self.tree.addTopLevelItem(nodo)
             for item in bloque.get("items", []):
+                if item.get("es_comando"):
+                    self._agregar_comando_a_bloque(nodo, item.get("tipo_comando", "FMT"), item.get("parametro_comando", ""))
+                    continue
                 hijo = QTreeWidgetItem([item.get("titulo", ""), item.get("duracion", ""), item.get("codigo", "—")])
                 hijo.setData(0, Qt.ItemDataRole.UserRole, item.get("ruta", ""))
                 hijo.setData(0, ROL_ANALISIS_AUDIO, {
@@ -670,6 +721,13 @@ class VentanaProgramador(QDialog):
             items = []
             for j in range(nodo.childCount()):
                 hijo = nodo.child(j)
+                if hijo.data(0, ROL_ES_COMANDO):
+                    items.append({
+                        "es_comando": True,
+                        "tipo_comando": hijo.data(0, ROL_TIPO_COMANDO),
+                        "parametro_comando": hijo.data(0, ROL_PARAMETRO_COMANDO),
+                    })
+                    continue
                 analisis = hijo.data(0, ROL_ANALISIS_AUDIO) or {}
                 vigencia = hijo.data(0, ROL_VIGENCIA) or {}
                 items.append({

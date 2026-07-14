@@ -18,6 +18,7 @@ ARCHIVO_PROGRAMACION = os.path.join(DIRECTORIO_CONFIG, "programacion.json")
 ARCHIVO_BIBLIOTECA = os.path.join(DIRECTORIO_CONFIG, "biblioteca.json")
 ARCHIVO_PLAYLIST_EMISION = os.path.join(DIRECTORIO_CONFIG, "playlist_emision.json")
 ARCHIVO_PLAYLIST_PUBLICIDAD = os.path.join(DIRECTORIO_CONFIG, "playlist_publicidad.json")
+ARCHIVO_MUSICALIZADOR = os.path.join(DIRECTORIO_CONFIG, "musicalizador.json")
 ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
 ARCHIVO_HISTORIAL_REPRODUCCION = os.path.join(DIRECTORIO_CONFIG, "historial_reproduccion.txt")
 TAMAÑO_MAXIMO_LOG_BYTES = 2 * 1024 * 1024  # 2 MB — más allá de esto, rota a .anterior.txt
@@ -452,3 +453,111 @@ def cargar_playlist_publicidad() -> dict:
 
 def guardar_playlist_publicidad(datos: dict):
     _guardar_json_atomico(ARCHIVO_PLAYLIST_PUBLICIDAD, datos)
+
+
+# ----------------------------------------------------------------------
+# Musicalizador Avanzado + Comandos FMT (pedido explícito, inspirado en
+# Hardata Dinesat 9 — "los últimos 2 [temas] que más usa"). Ver
+# core/musicalizador.py para el motor de generación.
+# ----------------------------------------------------------------------
+# Estructura de config/data/musicalizador.json:
+#   {"formatos": {
+#       "Folclore": {"items": [
+#           {"tipo": "especifico", "ruta": "...", "pisador_categoria": [...]|None, "pisador_posicion": "inicio"|"final"},
+#           {"tipo": "aleatorio", "categoria": ["Música","Folclore"], "recursivo": True, "pisador_categoria": [...]|None, "pisador_posicion": "inicio"|"final"},
+#           {"tipo": "subformato", "nombre": "OtroFormato", "duracion_segundos": 600},
+#       ]},
+#       ...
+#   }}
+# "categoria"/"pisador_categoria" guardan el CAMINO de nombres desde la
+# raíz (ver VentanaExplorador.ruta_de_categoria/buscar_categoria_por_ruta),
+# nunca una referencia viva al QTreeWidgetItem.
+
+def cargar_musicalizador() -> dict:
+    _asegurar_directorio()
+    if not os.path.exists(ARCHIVO_MUSICALIZADOR):
+        return {"formatos": {}}
+    try:
+        with open(ARCHIVO_MUSICALIZADOR, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+        datos.setdefault("formatos", {})
+        return datos
+    except (json.JSONDecodeError, OSError) as error:
+        registrar_error(f"Error leyendo musicalizador: {error}")
+        return {"formatos": {}}
+
+
+def guardar_musicalizador(datos: dict):
+    _guardar_json_atomico(ARCHIVO_MUSICALIZADOR, datos)
+
+
+def listar_formatos() -> list:
+    return sorted(cargar_musicalizador()["formatos"].keys())
+
+
+def obtener_formato(nombre: str) -> dict | None:
+    return cargar_musicalizador()["formatos"].get(nombre)
+
+
+def guardar_formato(nombre: str, items: list):
+    datos = cargar_musicalizador()
+    datos["formatos"][nombre] = {"items": items}
+    guardar_musicalizador(datos)
+
+
+def eliminar_formato(nombre: str):
+    datos = cargar_musicalizador()
+    if nombre in datos["formatos"]:
+        del datos["formatos"][nombre]
+        guardar_musicalizador(datos)
+
+
+def renombrar_formato(nombre_viejo: str, nombre_nuevo: str) -> bool:
+    """True si se pudo renombrar (el nombre viejo existía y el nuevo
+    no estaba ya usado por OTRO formato)."""
+    datos = cargar_musicalizador()
+    if nombre_viejo not in datos["formatos"] or nombre_viejo == nombre_nuevo:
+        return nombre_viejo == nombre_nuevo
+    if nombre_nuevo in datos["formatos"]:
+        return False
+    datos["formatos"][nombre_nuevo] = datos["formatos"].pop(nombre_viejo)
+    guardar_musicalizador(datos)
+    return True
+
+
+def rutas_recientes_en_historial(rutas_candidatas: set, cantidad_a_excluir: int) -> set:
+    """Pedido explícito ("no repetir una canción hasta tanto no se
+    haya reproducido toda la lista... búsqueda lógica... en el log de
+    reproducción"): lee `historial_reproduccion.txt` de atrás para
+    adelante y devuelve hasta `cantidad_a_excluir` rutas DISTINTAS (de
+    las que están en `rutas_candidatas`) que sonaron más
+    recientemente. Al elegir un aleatorio, el llamador excluye este
+    conjunto — así una categoría de N temas no repite ninguno hasta
+    que los otros N-1 ya sonaron, y esto sobrevive un reinicio porque
+    lee el archivo en disco, no un contador en memoria. No lee
+    `.anterior.txt` (una rotación del log es un corte de ciclo
+    aceptable, no un bug)."""
+    if cantidad_a_excluir <= 0 or not rutas_candidatas:
+        return set()
+    if not os.path.exists(ARCHIVO_HISTORIAL_REPRODUCCION):
+        return set()
+    try:
+        with open(ARCHIVO_HISTORIAL_REPRODUCCION, "r", encoding="utf-8") as f:
+            lineas = f.readlines()
+    except OSError:
+        return set()
+
+    excluidas = set()
+    for linea in reversed(lineas):
+        if len(excluidas) >= cantidad_a_excluir:
+            break
+        # Formato de cada línea: "[timestamp] [Ventana] Título (Código) - ruta"
+        # rsplit (no split): el título puede contener " - " también, la
+        # ruta es siempre el último tramo.
+        partes = linea.rstrip("\n").rsplit(" - ", 1)
+        if len(partes) != 2:
+            continue
+        ruta = partes[1]
+        if ruta in rutas_candidatas:
+            excluidas.add(ruta)
+    return excluidas
