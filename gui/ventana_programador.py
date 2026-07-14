@@ -42,7 +42,7 @@ import os
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidgetItem,
     QPushButton, QLabel, QCheckBox, QDateEdit, QTimeEdit, QLineEdit,
-    QMessageBox, QAbstractItemView
+    QMessageBox, QAbstractItemView, QMenu
 )
 from PySide6.QtCore import Qt, QDate, QTime, Signal
 from PySide6.QtGui import QBrush, QColor
@@ -96,6 +96,12 @@ class VentanaProgramador(QDialog):
             | Qt.WindowType.WindowMaximizeButtonHint
         )
         self._ventana_explorador = ventana_explorador
+        # Copiar/Pegar (pedido explícito, menú contextual): lista de
+        # dicts serializados con el mismo formato que _serializar_item()
+        # / los ítems de una programación guardada — así "Pegar" puede
+        # reusar _agregar_registro_a_bloque()/_agregar_comando_a_bloque()
+        # tal cual, sin un tipo de dato paralelo.
+        self._portapapeles = []
         self._construir_ui()
 
     # ------------------------------------------------------------------
@@ -164,6 +170,8 @@ class VentanaProgramador(QDialog):
         self.tree.setHeaderLabels(["Título", "Duración", "Código"])
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.archivo_soltado.connect(self._on_archivo_soltado)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._mostrar_menu_contextual)
         layout_grupo.addWidget(self.tree)
 
         fila_items = QHBoxLayout()
@@ -328,6 +336,73 @@ class VentanaProgramador(QDialog):
         formato = dialogo.formato_elegido()
         if formato:
             self._agregar_comando_a_bloque(bloque, "FMT", formato)
+
+    # ==================================================================
+    # Copiar / Pegar (pedido explícito, menú contextual): en la
+    # selección múltiple ya existente, copiar uno o más ítems y
+    # pegarlos en OTRO bloque horario — más rápido que rearmar la
+    # misma tanda a mano en cada bloque.
+    # ==================================================================
+    def _mostrar_menu_contextual(self, posicion):
+        menu = QMenu(self)
+        accion_copiar = menu.addAction("📋 Copiar")
+        accion_pegar = menu.addAction("📌 Pegar en este bloque")
+        accion_pegar.setEnabled(bool(self._portapapeles))
+        elegida = menu.exec(self.tree.viewport().mapToGlobal(posicion))
+        if elegida == accion_copiar:
+            self._copiar_seleccionados()
+        elif elegida == accion_pegar:
+            self._pegar_en_bloque_actual()
+
+    def _serializar_item(self, hijo) -> dict:
+        """Serializa UN ítem (tanda o comando) al mismo formato que ya
+        usa `_serializar_bloques()` para guardar en disco — reusado
+        también por "Copiar", así el portapapeles nunca tiene un
+        formato de datos paralelo."""
+        if hijo.data(0, ROL_ES_COMANDO):
+            return {
+                "es_comando": True,
+                "tipo_comando": hijo.data(0, ROL_TIPO_COMANDO),
+                "parametro_comando": hijo.data(0, ROL_PARAMETRO_COMANDO),
+            }
+        analisis = hijo.data(0, ROL_ANALISIS_AUDIO) or {}
+        vigencia = hijo.data(0, ROL_VIGENCIA) or {}
+        return {
+            "titulo": hijo.text(0), "duracion": hijo.text(1), "codigo": hijo.text(2),
+            "ruta": hijo.data(0, Qt.ItemDataRole.UserRole) or "",
+            "punto_inicio_ms": analisis.get("punto_inicio_ms") or 0,
+            "punto_fin_ms": analisis.get("punto_fin_ms"),
+            "ganancia_db": analisis.get("ganancia_db") or 0.0,
+            "fecha_inicio": vigencia.get("fecha_inicio"),
+            "fecha_fin": vigencia.get("fecha_fin"),
+        }
+
+    def _copiar_seleccionados(self):
+        seleccionados = self.tree.selectedItems()
+        items_a_copiar = [it for it in seleccionados if it.parent() is not None]
+        if not items_a_copiar:
+            QMessageBox.information(
+                self, "Copiar", "Seleccioná uno o más ítems (no bloques enteros) para copiar.",
+            )
+            return
+        self._portapapeles = [self._serializar_item(it) for it in items_a_copiar]
+
+    def _pegar_en_bloque_actual(self):
+        if not self._portapapeles:
+            QMessageBox.information(self, "Pegar", "Todavía no copiaste ningún ítem.")
+            return
+        bloque = self._bloque_destino_actual()
+        if bloque is None:
+            QMessageBox.information(self, "Pegar", "Primero creá un bloque horario.")
+            return
+        for item_data in self._portapapeles:
+            if item_data.get("es_comando"):
+                self._agregar_comando_a_bloque(
+                    bloque, item_data.get("tipo_comando", "FMT"), item_data.get("parametro_comando", ""),
+                )
+            else:
+                self._agregar_registro_a_bloque(bloque, item_data)
+        bloque.setExpanded(True)
 
     def _on_archivo_soltado(self, ruta, item_destino):
         bloque = item_destino
@@ -718,28 +793,6 @@ class VentanaProgramador(QDialog):
             titulo = nodo.data(0, ROL_TITULO_BLOQUE)
             if not titulo:
                 titulo = titulo_bloque_sin_prefijo_hora(hora, nodo.text(0))
-            items = []
-            for j in range(nodo.childCount()):
-                hijo = nodo.child(j)
-                if hijo.data(0, ROL_ES_COMANDO):
-                    items.append({
-                        "es_comando": True,
-                        "tipo_comando": hijo.data(0, ROL_TIPO_COMANDO),
-                        "parametro_comando": hijo.data(0, ROL_PARAMETRO_COMANDO),
-                    })
-                    continue
-                analisis = hijo.data(0, ROL_ANALISIS_AUDIO) or {}
-                vigencia = hijo.data(0, ROL_VIGENCIA) or {}
-                items.append({
-                    "titulo": hijo.text(0),
-                    "duracion": hijo.text(1),
-                    "codigo": hijo.text(2),
-                    "ruta": hijo.data(0, Qt.ItemDataRole.UserRole) or "",
-                    "punto_inicio_ms": analisis.get("punto_inicio_ms") or 0,
-                    "punto_fin_ms": analisis.get("punto_fin_ms"),
-                    "ganancia_db": analisis.get("ganancia_db") or 0.0,
-                    "fecha_inicio": vigencia.get("fecha_inicio"),
-                    "fecha_fin": vigencia.get("fecha_fin"),
-                })
+            items = [self._serializar_item(nodo.child(j)) for j in range(nodo.childCount())]
             bloques.append({"hora": hora, "titulo": titulo, "items": items})
         return bloques

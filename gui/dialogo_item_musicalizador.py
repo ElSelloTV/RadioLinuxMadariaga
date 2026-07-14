@@ -8,10 +8,13 @@ creado, por X cantidad de tiempo) — mismos 3 tipos que describe el
 manual de Dinesat.
 
 El ítem "Aleatorio" (y también "Específico", pedido explícito punto
-4) puede llevar un Pisador — se elige una CATEGORÍA de Pisadores
-(no un archivo puntual: a cada generación real se elige uno al azar
-de esa categoría, ver core/musicalizador.py) y si se dispara al
-empezar o al terminar el tema (mismo concepto ya usado en Ventana 2).
+4) puede llevar un Pisador. Pedido explícito de una ronda posterior:
+"debo tener las dos opciones, elegir un aleatorio de la categoría
+PISADORES, o bien elegir un archivo específico de pisador" — el
+Pisador tiene su PROPIO selector de tipo (Categoría/Específico), igual
+concepto que el ítem principal pero acotado a esas dos variantes (no
+hace falta un "Pisador aleatorio de todo tipo" ni un "Subformato de
+Pisador").
 --------------------------------------------------------
 """
 
@@ -23,8 +26,10 @@ from PySide6.QtWidgets import (
 
 from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
 from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
+from gui.dialogo_elegir_pisador import DialogoElegirPisador
 
 TIPO_ESPECIFICO, TIPO_ALEATORIO, TIPO_SUBFORMATO = "especifico", "aleatorio", "subformato"
+PISADOR_TIPO_CATEGORIA, PISADOR_TIPO_ESPECIFICO = "categoria", "especifico"
 
 
 class DialogoItemMusicalizador(QDialog):
@@ -40,6 +45,7 @@ class DialogoItemMusicalizador(QDialog):
         self._registro_especifico = None
         self._ruta_categoria_aleatorio = None
         self._ruta_categoria_pisador = None
+        self._registro_pisador_especifico = None
         self._resultado = None
 
         self._construir_ui()
@@ -109,24 +115,61 @@ class DialogoItemMusicalizador(QDialog):
         self.chk_pisador = QCheckBox("Agregar Pisador")
         self.chk_pisador.toggled.connect(self._on_toggle_pisador)
         form_pisador.addRow(self.chk_pisador)
+
+        # Tipo de Pisador (pedido explícito, ronda posterior): "las dos
+        # opciones, elegir un aleatorio de la categoría PISADORES, o
+        # bien elegir un archivo específico de pisador" — mismo
+        # concepto que el tipo del ítem principal, acotado a estas dos
+        # variantes.
+        fila_tipo_pisador = QHBoxLayout()
+        self.radio_pisador_tipo_categoria = QRadioButton("Categoría (aleatorio)")
+        self.radio_pisador_tipo_especifico = QRadioButton("Archivo específico")
+        self.radio_pisador_tipo_categoria.setChecked(True)
+        grupo_tipo_pisador = QButtonGroup(self)
+        grupo_tipo_pisador.addButton(self.radio_pisador_tipo_categoria)
+        grupo_tipo_pisador.addButton(self.radio_pisador_tipo_especifico)
+        self.radio_pisador_tipo_categoria.toggled.connect(self._actualizar_pila_pisador)
+        fila_tipo_pisador.addWidget(self.radio_pisador_tipo_categoria)
+        fila_tipo_pisador.addWidget(self.radio_pisador_tipo_especifico)
+        form_pisador.addRow(fila_tipo_pisador)
+
+        self.pila_pisador = QStackedWidget()
+
+        pagina_pisador_categoria = QWidget()
+        form_pisador_categoria = QFormLayout(pagina_pisador_categoria)
+        form_pisador_categoria.setContentsMargins(0, 0, 0, 0)
         self.lbl_categoria_pisador = QLabel("(sin elegir)")
         self.lbl_categoria_pisador.setWordWrap(True)
         self.btn_elegir_pisador = QPushButton("Elegir categoría de Pisadores...")
         self.btn_elegir_pisador.clicked.connect(self._elegir_categoria_pisador)
-        self.btn_elegir_pisador.setEnabled(False)
-        form_pisador.addRow(self.lbl_categoria_pisador)
-        form_pisador.addRow(self.btn_elegir_pisador)
+        form_pisador_categoria.addRow(self.lbl_categoria_pisador)
+        form_pisador_categoria.addRow(self.btn_elegir_pisador)
+        self.pila_pisador.addWidget(pagina_pisador_categoria)
+
+        pagina_pisador_especifico = QWidget()
+        form_pisador_especifico = QFormLayout(pagina_pisador_especifico)
+        form_pisador_especifico.setContentsMargins(0, 0, 0, 0)
+        self.lbl_archivo_pisador = QLabel("(sin elegir)")
+        self.lbl_archivo_pisador.setWordWrap(True)
+        self.btn_elegir_pisador_especifico = QPushButton("Elegir archivo de Pisador...")
+        self.btn_elegir_pisador_especifico.clicked.connect(self._elegir_archivo_pisador_especifico)
+        form_pisador_especifico.addRow(self.lbl_archivo_pisador)
+        form_pisador_especifico.addRow(self.btn_elegir_pisador_especifico)
+        self.pila_pisador.addWidget(pagina_pisador_especifico)
+
+        form_pisador.addRow(self.pila_pisador)
+
         self.radio_pisador_inicio = QRadioButton("Al empezar el tema (Intro)")
         self.radio_pisador_final = QRadioButton("Al terminar el tema (Outro)")
         self.radio_pisador_inicio.setChecked(True)
-        self.radio_pisador_inicio.setEnabled(False)
-        self.radio_pisador_final.setEnabled(False)
         grupo_radio = QButtonGroup(self)
         grupo_radio.addButton(self.radio_pisador_inicio)
         grupo_radio.addButton(self.radio_pisador_final)
         form_pisador.addRow(self.radio_pisador_inicio)
         form_pisador.addRow(self.radio_pisador_final)
         layout.addWidget(self.grupo_pisador)
+
+        self._on_toggle_pisador(False)
 
         botones = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -146,9 +189,15 @@ class DialogoItemMusicalizador(QDialog):
         self.grupo_pisador.setVisible(tipo != TIPO_SUBFORMATO)
 
     def _on_toggle_pisador(self, activo: bool):
-        self.btn_elegir_pisador.setEnabled(activo)
+        self.radio_pisador_tipo_categoria.setEnabled(activo)
+        self.radio_pisador_tipo_especifico.setEnabled(activo)
+        self.pila_pisador.setEnabled(activo)
         self.radio_pisador_inicio.setEnabled(activo)
         self.radio_pisador_final.setEnabled(activo)
+
+    def _actualizar_pila_pisador(self):
+        indice = 0 if self.radio_pisador_tipo_categoria.isChecked() else 1
+        self.pila_pisador.setCurrentIndex(indice)
 
     def _elegir_archivo_especifico(self):
         dialogo = DialogoSeleccionarBiblioteca(
@@ -184,6 +233,26 @@ class DialogoItemMusicalizador(QDialog):
             self._ruta_categoria_pisador = ruta
             self.lbl_categoria_pisador.setText(" > ".join(ruta))
 
+    def _elegir_archivo_pisador_especifico(self):
+        # Mismo diálogo/filtro que ya usa "Agregar Pisador" en Ventana
+        # 2/Auxiliar (solo registros de género "Pisador") — la posición
+        # (Intro/Outro) de ESE diálogo se ignora a propósito, ya que
+        # este formulario tiene su propio par de radios compartido con
+        # el Pisador de categoría, para no duplicar la pregunta.
+        registros = self._ventana_explorador.listar_registros_por_genero("Pisador")
+        if not registros:
+            QMessageBox.information(
+                self, "Pisador", "No hay archivos de género \"Pisador\" cargados en la biblioteca.",
+            )
+            return
+        dialogo = DialogoElegirPisador(registros, parent=self)
+        if dialogo.exec() != DialogoElegirPisador.DialogCode.Accepted:
+            return
+        registro = dialogo.registro_elegido()
+        if registro:
+            self._registro_pisador_especifico = registro
+            self.lbl_archivo_pisador.setText(f"{registro.get('titulo', '')} ({registro.get('codigo', '')})")
+
     # ------------------------------------------------------------------
     def _cargar(self, item_config: dict):
         tipo = item_config.get("tipo", TIPO_ESPECIFICO)
@@ -210,15 +279,29 @@ class DialogoItemMusicalizador(QDialog):
                 self.combo_subformato.setCurrentIndex(indice_sub)
             self.spin_duracion_minutos.setValue(max(1, int((item_config.get("duracion_segundos") or 600) / 60)))
 
+        tipo_pisador = item_config.get("pisador_tipo", PISADOR_TIPO_CATEGORIA)
         ruta_pisador = item_config.get("pisador_categoria")
-        if ruta_pisador:
+        ruta_pisador_especifico = item_config.get("pisador_ruta")
+        if tipo_pisador == PISADOR_TIPO_ESPECIFICO and ruta_pisador_especifico:
             self.chk_pisador.setChecked(True)
+            self.radio_pisador_tipo_especifico.setChecked(True)
+            registro = self._ventana_explorador.buscar_registro_por_ruta(ruta_pisador_especifico)
+            if registro:
+                self._registro_pisador_especifico = registro
+                self.lbl_archivo_pisador.setText(f"{registro.get('titulo', '')} ({registro.get('codigo', '')})")
+            else:
+                self.lbl_archivo_pisador.setText("(el archivo original ya no existe)")
+        elif ruta_pisador:
+            self.chk_pisador.setChecked(True)
+            self.radio_pisador_tipo_categoria.setChecked(True)
             self._ruta_categoria_pisador = ruta_pisador
             self.lbl_categoria_pisador.setText(" > ".join(ruta_pisador))
+        if self.chk_pisador.isChecked():
             if item_config.get("pisador_posicion") == "final":
                 self.radio_pisador_final.setChecked(True)
             else:
                 self.radio_pisador_inicio.setChecked(True)
+        self._actualizar_pila_pisador()
 
     # ------------------------------------------------------------------
     def _confirmar(self):
@@ -247,10 +330,22 @@ class DialogoItemMusicalizador(QDialog):
             }
 
         if tipo != TIPO_SUBFORMATO and self.chk_pisador.isChecked():
-            if not self._ruta_categoria_pisador:
-                QMessageBox.information(self, "Ítem", "Elegí una categoría de Pisadores, o desmarcá \"Agregar Pisador\".")
-                return
-            item["pisador_categoria"] = self._ruta_categoria_pisador
+            if self.radio_pisador_tipo_especifico.isChecked():
+                if not self._registro_pisador_especifico:
+                    QMessageBox.information(
+                        self, "Ítem", "Elegí un archivo específico de Pisador, o desmarcá \"Agregar Pisador\".",
+                    )
+                    return
+                item["pisador_tipo"] = PISADOR_TIPO_ESPECIFICO
+                item["pisador_ruta"] = self._registro_pisador_especifico.get("ruta", "")
+            else:
+                if not self._ruta_categoria_pisador:
+                    QMessageBox.information(
+                        self, "Ítem", "Elegí una categoría de Pisadores, o desmarcá \"Agregar Pisador\".",
+                    )
+                    return
+                item["pisador_tipo"] = PISADOR_TIPO_CATEGORIA
+                item["pisador_categoria"] = self._ruta_categoria_pisador
             item["pisador_posicion"] = "final" if self.radio_pisador_final.isChecked() else "inicio"
 
         self._resultado = item
