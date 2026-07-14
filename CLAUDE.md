@@ -467,6 +467,26 @@ soltarlo por drag&drop directo sobre un tema, chequeado por género
 en `MainWindow._on_archivo_soltado_emision`/`_auxiliar`).
 Aplica igual en Ventana 2 y en la Auxiliar (misma clase compartida).
 
+**Colores: solo rojo/verde/normal + celeste de selección, nunca color
+de género (pedido explícito, ronda posterior)**: el Pisador anidado
+tenía un color VIOLETA FIJO puesto una sola vez al agregarlo
+(`agregar_pisador()`, leído de `colores_genero["Pisador"]` en
+Configuración → Apariencia) — el mismo color que Ventana 3 usa para
+identificar género en el Explorador, pero acá no tenía sentido: "los
+colores que yo elijo en la ventana 3 es solo para identificarlos en
+el explorador". Un ítem PRINCIPAL de Ventana 2 nunca tuvo color de
+género (siempre fue solo rojo/verde/normal), así que el único cambio
+real fue el Pisador. Corregido: `agregar_pisador()` ya no lee
+`colores_genero` — el hijo nace con el MISMO estado (color) que su
+padre en ese momento (`PanelReproductor._color_para_estado()`, helper
+nuevo compartido), y **"el pisador toma el color de arriba, del ítem
+principal, rojo o verde"** (pedido explícito) se mantiene sincronizado
+de ahí en más: `_pintar_item()` ahora, después de pintar el ítem
+principal, recorre `item.childCount()` y pinta cada hijo con el MISMO
+`(fondo, texto)` — así marcar/desmarcar rojo o verde en el padre
+(`marcar_reproduciendo`/`marcar_siguiente`) automáticamente actualiza
+el Pisador sin tocar nada en esos dos métodos.
+
 **Crossfade (implementado)**: con `crossfade_activado` en
 Configuración → Fade/Transiciones, la transición NATURAL entre dos
 temas (llegando al final, no Siguiente manual ni error/cascada) se
@@ -503,6 +523,44 @@ sin su propio nivelado — corregido capturando el volumen REAL de
 salida (`obtener_volumen()`) como punto de partida del fade-out, y el
 volumen YA nivelado del entrante (leído después de su propio
 `reproducir()`) como techo del fade-in.
+
+**Sin fade-in al arrancar un tema — solo fade-out (pedido explícito,
+ronda posterior, Ventana 1 y 2: "quitá el fade al inicio, dejá solo
+el del final... que los temas suenen más enganchados y con mejor
+entrada")**: hasta acá, toda transición con fundido (crossfade
+natural de Ventana 2, y el botón verde "Play/Siguiente con fundido"
+de Ventana 1 y 2) hacía un fundido SIMÉTRICO — el tema saliente baja
+a 0 Y el entrante sube desde 0 — lo que en la práctica se sentía como
+que cada tema arrancaba "flojo" en vez de entrar con fuerza.
+Corregido en los DOS lugares donde existía una rampa de entrada:
+- `MotorAudio.crossfade_a()` (`core/audio_engine.py`): el motor
+  ENTRANTE ya no arranca en volumen 0 para subir en cada paso de la
+  rampa — arranca DIRECTO a `entrante.volumen_deseado()` (su volumen
+  final ya nivelado) apenas se llama `entrante.reproducir()`, y se
+  queda ahí fijo durante todo el crossfade. El motor SALIENTE sigue
+  bajando en rampa hasta 0 exactamente igual que antes — la
+  transición sigue sin ser un corte seco, solo que ahora es
+  asimétrica: el que se va se apaga de a poco, el que entra pega
+  fuerte de una. Afecta por igual al crossfade NATURAL (fin de tema)
+  y al botón verde "Play/Siguiente con fundido" de Ventana 2 (ambos
+  pasan por `_iniciar_crossfade()`/`crossfade_a()`).
+- `GestorPublicidad._completar_avance_con_fundido()` (Ventana 1,
+  `core/playlist_manager.py`): antes, después de que `_avanzar()`
+  arrancaba el ítem nuevo (ya a su volumen normal, de una), el código
+  lo pisaba a `set_volumen(0)` y lo hacía subir con
+  `fade_volumen_a(volumen_base, ...)` — ahora esa parte se eliminó
+  directamente: el ítem nuevo se deja sonar tal cual lo dejó
+  `_avanzar()`/`motor.reproducir()`, sin ningún fundido de entrada. El
+  fundido de SALIDA del ítem anterior (`_avanzar_con_fundido()`,
+  `motor.fade_volumen_a(0, DURACION_FUNDIDO_MANUAL_SEGUNDOS)`, antes
+  de cortar) no se tocó — sigue exactamente igual.
+No se tocó el fundido de las transiciones Ventana 2 <-> bloque de
+Publicidad del Ciclo Automático (Emisión pausándose/reanudándose
+alrededor de un bloque disparado por horario) — es una función
+distinta, ya pedida explícitamente en una ronda anterior ("sin
+silencio musical, todo encadenado, con fundido de entrada y salida"),
+y acá el pedido fue específicamente sobre "los temas", no sobre esa
+transición de bloque.
 
 **Bug real corregido — el Pisador no sonaba**: `GestorPlaylist.panel`
 es la ventana WRAPPER (`VentanaEmision`/`VentanaAuxiliar`), no
@@ -2058,6 +2116,70 @@ Pisador específico se escucha, que las columnas nuevas se leen bien de
 un vistazo, y que el refill nunca corta la música al llegar al final
 de una serie — sea de 1 ítem o de 20.
 
+**Ronda de afinado del refill + no-repeat entre series (pedido
+explícito)**: dos ajustes más de fondo sobre el mismo mecanismo de
+series/refill de la ronda anterior:
+
+**c) El refill se dispara al "entrar en previo" (verde), nunca al
+terminar de sonar (pedido explícito: "que la nueva serie se cargue no
+cuando termina de reproducirse el último item, sino cuando entra en
+previo (verde), directamente ahí que cargue la nueva serie")**: la
+ronda anterior tenía DOS mecanismos de refill separados — uno
+"preventivo" (al marcar en verde el último ítem, mientras sonaba el
+ante-último) y uno de "emergencia" (recién al toparse con el final,
+agregado específicamente para series de 1 solo ítem, que no tienen
+ante-último). Unificados en UNO SOLO, más simple y consistente:
+`GestorPlaylist._avanzar()` ahora chequea, ANTES de marcar/reproducir
+el próximo ítem, si `fila_siguiente >= total - 1` (es decir, si el
+ítem que está por arrancar ES el último disponible) — si el
+Musicalizador está activo, genera la serie siguiente AHÍ MISMO,
+extendiendo `total` ANTES de que el código de más abajo marque el
+próximo "en cola" (verde). Resultado: el ítem recién generado por la
+serie nueva queda marcado en verde en el MISMO instante en que el
+último de la serie vieja arranca a sonar — nunca hay que esperar a
+que termine nada, y series largas y cortas (incluida la de 1 solo
+ítem) comparten exactamente la misma lógica sin casos especiales.
+
+**d) El aleatorio ya no repite el mismo archivo entre series
+consecutivas (pedido explícito: "cuando volvió a cargar la serie,
+cargó el mismo archivo aleatorio que en la primera")**: causa real —
+el no-repetir de `_resolver_aleatorio()` solo consultaba el historial
+de reproducción PERSISTENTE (lo que YA sonó), pero con el refill
+disparándose apenas algo "entra en previo" (punto c, arriba), la
+serie nueva se genera ANTES de que la serie vieja termine de sonar —
+el historial todavía no tiene registrado nada de esa serie vieja
+(recién se escribe cuando un ítem arranca a sonar de verdad), así que
+no había NINGUNA señal de "esto ya se acaba de elegir". Corregido con
+un parámetro nuevo `rutas_a_evitar` que viaja por
+`generar_serie()`/`_resolver_item()`/`_resolver_aleatorio()`/
+`_generar_por_duracion()` (`core/musicalizador.py`) — además de la
+exclusión por historial de siempre, se excluyen las rutas que el
+LLAMADOR ya sabe que están en cola sin sonar todavía.
+`GestorPlaylist._generar_serie_musicalizador()`
+(`core/gestor_emision.py`) arma ese conjunto leyendo
+`panel.ruta_en_fila(i)` de TODO lo que ya hay cargado en Emisión en
+ese momento, y se lo pasa a `generar_serie()`. De paso, DENTRO de una
+misma llamada a `generar_serie()`/`_generar_por_duracion()`, las
+rutas ya elegidas por un ítem "aleatorio" anterior en la MISMA pasada
+también se van acumulando y excluyendo — así dos ítems aleatorios del
+mismo formato tampoco eligen el mismo archivo entre sí. Mismo
+criterio de "nunca dejar hueco" de siempre: si excluir todo vacía la
+lista de candidatos (categoría muy chica), la exclusión se ignora
+antes que repetir un tema a dejar silencio.
+
+Probado con `test_ronda_afinado_musicalizador.py` (nuevo, cubre los 5
+pedidos de esta ronda de una — ver también más abajo, colores y
+fundido): refill exactamente al llegar al último ítem disponible (no
+antes, no después) tanto en series largas como en la de 1 solo ítem,
+y una serie regenerada con varios candidatos disponibles elige un
+archivo DISTINTO al de la serie anterior — + suite de regresión
+completa sin fallos nuevos (mismos 3 fallos preexistentes de
+siempre). **Sigue sin poder probarse con audio/VLC real**: falta que
+Santiago confirme que el encadenado se siente sin baches al recargar,
+y que con su biblioteca real (categorías bastante más grandes que las
+de los tests) el aleatorio varía notoriamente entre una serie y la
+siguiente.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -2818,6 +2940,36 @@ todo el resto.
     columnas nuevas se lean claro, y que una serie real (sus 7 ítems
     del ejemplo, o los que programe) cargue la cantidad exacta y
     nunca corte la música al recargar.
+31. ~~Ronda de afinado: colores solo rojo/verde en Ventana 2, Pisador
+    hereda color del padre, refill al entrar en verde (no al
+    terminar), no-repetir entre series, sin fade-in (solo fade-out)~~
+    — 5 pedidos puntuales tras seguir probando el Musicalizador: (a+b)
+    el Pisador anidado de Ventana 2 tenía un color violeta FIJO de
+    género (pensado para identificar categorías en el Explorador, sin
+    sentido acá) — ahora nace y se mantiene sincronizado con el color
+    rojo/verde/normal de su tema principal (`PanelReproductor.
+    _pintar_item()` ahora cascada el color a los hijos); (c) el
+    refill de una serie del Musicalizador se unificó en un solo
+    mecanismo que dispara apenas el próximo ítem a reproducir ES el
+    último disponible — ya no dos mecanismos separados (uno
+    "preventivo" al marcar verde, uno de "emergencia" al terminar),
+    que en la práctica para series cortas solo disparaba el de
+    emergencia (justo lo que Santiago no quería: esperar al final);
+    (d) bug real corregido — el no-repetir del aleatorio solo miraba
+    el historial de lo YA reproducido, pero con el refill disparando
+    antes de que la serie vieja termine de sonar, el historial todavía
+    no reflejaba nada de ella — agregado `rutas_a_evitar` (lo que ya
+    está en cola en Emisión) como exclusión extra en
+    `core/musicalizador.py`; (e) sin fade-in al arrancar un tema en
+    Ventana 1 y 2 — solo el fade-out se mantiene (crossfade de Ventana
+    2 y el fundido secuencial de Ventana 1), "para que los temas
+    suenen más enganchados". Implementado y probado (test dedicado +
+    actualización de 2 tests preexistentes que asumían el fade-in
+    viejo + suite de regresión completa sin fallos nuevos). Falta que
+    Santiago confirme con audio real que el encadenado se siente sin
+    baches, que el aleatorio varía notoriamente entre series con su
+    biblioteca real, y que los temas "pegan" mejor a la entrada sin el
+    fade-in.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

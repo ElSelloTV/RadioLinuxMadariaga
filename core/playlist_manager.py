@@ -339,13 +339,14 @@ class GestorPublicidad:
     def _completar_avance_con_fundido(self):
         self._fundido_en_curso = False
         self._fallos_consecutivos = 0
+        # Pedido explícito ("quitá el fade al inicio, dejá solo el del
+        # final... que los temas suenen más enganchados y con mejor
+        # entrada"): _avanzar() ya arranca el ítem nuevo a su volumen
+        # normal de una — antes acá se lo pisaba a 0 y se lo hacía
+        # entrar en fundido; ahora entra directo, solo el ítem SALIENTE
+        # (fundido ya disparado en _avanzar_con_fundido) sigue con su
+        # fundido de salida.
         self._avanzar()
-        # Si _avanzar() arrancó un ítem nuevo, motor.reproducir() ya
-        # fijó su volumen normal de golpe — acá se lo hace entrar en
-        # fundido en vez de un salto brusco.
-        if self.motor.esta_reproduciendo():
-            self.motor.set_volumen(0)
-            self.motor.fade_volumen_a(self._volumen_base, DURACION_FUNDIDO_MANUAL_SEGUNDOS)
 
     def _reproducir_seleccion_o_actual(self):
         # Prioridad: si ya hay algo marcado como "en reproducción"

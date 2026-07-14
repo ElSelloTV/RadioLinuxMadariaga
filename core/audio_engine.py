@@ -321,18 +321,15 @@ class MotorAudio(QObject):
             ruta_siguiente, punto_inicio_ms=punto_inicio_ms, punto_fin_ms=punto_fin_ms,
             ganancia_db=ganancia_db, volumen_base=volumen_base,
         )
-        # Bug real corregido — "el tema entrante del crossfade quedaba
-        # MUDO (el reloj avanzaba pero sin sonido)": el techo del
-        # fade-in se leía con entrante.obtener_volumen() justo después
-        # de reproducir() — con el reproductor recién arrancado libVLC
-        # puede devolver 0/-1 (la salida de audio todavía no existe), y
-        # entonces la rampa subía "hacia 0": el tema entero en
-        # silencio, sin ningún error, hasta que un Stop+Play manual lo
-        # "arreglaba". Ahora el techo es el volumen DESEADO calculado
-        # por reproducir() (volumen_base + ganancia_db), que nunca
-        # depende del estado interno de libVLC.
-        volumen_objetivo_entrante = entrante.volumen_deseado()
-        entrante.set_volumen(0)
+        # Pedido explícito ("quitá el fade al inicio, dejá solo el del
+        # final... que los temas suenen más enganchados y con mejor
+        # entrada"): el tema ENTRANTE ya NO hace fade-in — arranca
+        # directo a su volumen final (nivelado por `reproducir()`,
+        # `volumen_deseado()` — nunca una lectura espuria de libVLC
+        # recién arrancado, mismo motivo que ya documentaba el fix
+        # anterior). Solo el SALIENTE sigue con su fundido de salida,
+        # para que la transición no sea un corte seco.
+        entrante.set_volumen(entrante.volumen_deseado())
 
         pasos = 30
         intervalo_ms = max(20, int((duracion_segundos * 1000) / pasos))
@@ -345,7 +342,6 @@ class MotorAudio(QObject):
             contador["paso"] += 1
             fraccion = contador["paso"] / pasos
             self.set_volumen(int(volumen_inicial_saliente * (1 - fraccion)))
-            entrante.set_volumen(int(volumen_objetivo_entrante * fraccion))
             if contador["paso"] >= pasos:
                 timer.stop()
                 self.detener()
