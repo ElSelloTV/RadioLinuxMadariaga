@@ -28,6 +28,7 @@ from gui.ventana_emision import VentanaEmision
 from gui.ventana_explorador import VentanaExplorador
 from gui.ventana_auxiliar import VentanaAuxiliar
 from gui.ventana_programador import VentanaProgramador
+from gui.ventana_musicalizador import VentanaMusicalizador
 from gui.ventana_configuracion import VentanaConfiguracion
 from gui.dialogo_elegir_pisador import DialogoElegirPisador
 from gui.common_widgets import configurar_columnas_ajustables
@@ -52,6 +53,7 @@ class MainWindow(QMainWindow):
         self._ventana_auxiliar = None
         self._gestor_auxiliar = None
         self._ventana_programador = None
+        self._ventana_musicalizador = None
         self._ventana_configuracion = None
         self._explorador_expandido = False
         self._tamaños_splitter_previos = None
@@ -108,7 +110,9 @@ class MainWindow(QMainWindow):
         accion_programador = self._crear_accion("Programador...", "Ctrl+P")
         accion_programador.triggered.connect(self.abrir_programador)
         menu_acciones.addAction(accion_programador)
-        menu_acciones.addAction(self._crear_accion("Importar FMT..."))
+        accion_musicalizador = self._crear_accion("🎵 Musicalizador Avanzado...", "Ctrl+M")
+        accion_musicalizador.triggered.connect(self.abrir_musicalizador)
+        menu_acciones.addAction(accion_musicalizador)
 
         menu_herramientas = barra_menu.addMenu("&Herramientas")
 
@@ -157,6 +161,10 @@ class MainWindow(QMainWindow):
         accion_programador = self._crear_accion("📅 Programador")
         accion_programador.triggered.connect(self.abrir_programador)
         toolbar.addAction(accion_programador)
+
+        accion_musicalizador_toolbar = self._crear_accion("🎵 Musicalizador")
+        accion_musicalizador_toolbar.triggered.connect(self.abrir_musicalizador)
+        toolbar.addAction(accion_musicalizador_toolbar)
 
         toolbar.addSeparator()
         accion_config_toolbar = self._crear_accion("⚙ Configuración")
@@ -310,6 +318,8 @@ class MainWindow(QMainWindow):
         if self._ventana_programador is not None:
             estado_ui.guardar_columnas("programador", self._ventana_programador.tree)
             estado_ui.guardar_geometria_ventana(self._ventana_programador, "programador")
+        if self._ventana_musicalizador is not None:
+            estado_ui.guardar_geometria_ventana(self._ventana_musicalizador, "musicalizador")
         super().closeEvent(evento)
 
     # ------------------------------------------------------------------
@@ -543,6 +553,7 @@ class MainWindow(QMainWindow):
             crossfade_activado=fade["crossfade_activado"],
             duracion_fade_segundos=fade["duracion_fade_segundos"],
             persistir=True,
+            ventana_explorador=self.ventana_explorador,
         )
         self.gestor_publicidad = GestorPublicidad(
             self.ventana_publicidad,
@@ -551,6 +562,11 @@ class MainWindow(QMainWindow):
             reintentos_maximos=reproduccion["reintentos_antes_de_detener"],
             persistir=True,
         )
+        # Comando FMT (pedido explícito, encadenado con el
+        # Musicalizador Avanzado): al pasar por un ítem-comando FMT en
+        # un bloque de Publicidad, dispara la generación continua de
+        # música en Emisión.
+        self.gestor_publicidad.al_comando_fmt = self.gestor_emision.iniciar_musicalizador
 
         self.gestor_emision.set_volumen_base(audio["volumen_master"])
         self.gestor_publicidad.set_volumen_base(audio["volumen_master"])
@@ -681,6 +697,19 @@ class MainWindow(QMainWindow):
         self._ventana_programador.show()
         self._ventana_programador.raise_()
         self._ventana_programador.activateWindow()
+
+    # ------------------------------------------------------------------
+    # Musicalizador Avanzado (pedido explícito, encadenado con
+    # Comandos FMT)
+    # ------------------------------------------------------------------
+    def abrir_musicalizador(self):
+        if self._ventana_musicalizador is None:
+            self._ventana_musicalizador = VentanaMusicalizador(ventana_explorador=self.ventana_explorador, parent=self)
+            estado_ui.restaurar_geometria_ventana(self._ventana_musicalizador, "musicalizador")
+
+        self._ventana_musicalizador.show()
+        self._ventana_musicalizador.raise_()
+        self._ventana_musicalizador.activateWindow()
 
     def _aplicar_programacion_ahora(self, bloques: list):
         """Pedido explícito del Programador (punto d): "cargar esa

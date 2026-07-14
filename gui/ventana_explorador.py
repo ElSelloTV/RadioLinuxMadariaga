@@ -946,6 +946,42 @@ class VentanaExplorador(QWidget):
         self._para_cada_categoria(visitar)
         return hallazgo.get("registro")
 
+    def ruta_de_categoria(self, item_categoria) -> list:
+        """Camino de nombres desde la raíz hasta `item_categoria` (ej.
+        ["Música", "Folclore"]) — pedido explícito, base del
+        Musicalizador Avanzado: un ítem "aleatorio" guarda ESTE camino
+        (no la referencia viva al QTreeWidgetItem, que no sobrevive
+        cerrar y reabrir la app) y lo vuelve a resolver con
+        `buscar_categoria_por_ruta()` cada vez que hace falta."""
+        ruta = []
+        nodo = item_categoria
+        while nodo is not None:
+            ruta.insert(0, nodo.text(0))
+            nodo = nodo.parent()
+        return ruta
+
+    def buscar_categoria_por_ruta(self, ruta_nombres: list):
+        """Inverso de `ruta_de_categoria()`. Devuelve None si algún
+        tramo del camino ya no existe (categoría renombrada o
+        eliminada) — el Musicalizador trata eso como "ítem roto", lo
+        saltea sin frenar la generación de los demás (pedido
+        explícito)."""
+        if not ruta_nombres:
+            return None
+        actual_padre = None
+        for nombre in ruta_nombres:
+            cantidad = actual_padre.childCount() if actual_padre else self.tree_categorias.topLevelItemCount()
+            candidato = None
+            for i in range(cantidad):
+                item = actual_padre.child(i) if actual_padre else self.tree_categorias.topLevelItem(i)
+                if item.text(0) == nombre:
+                    candidato = item
+                    break
+            if candidato is None:
+                return None
+            actual_padre = candidato
+        return actual_padre
+
     def _buscar_categoria_de_ruta(self, ruta: str):
         """Categoría (QTreeWidgetItem) que tiene HOY el registro con
         esa ruta, sin importar cuál esté seleccionada/mostrada — así

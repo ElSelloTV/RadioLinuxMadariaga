@@ -105,6 +105,7 @@ from PySide6.QtCore import Qt, QTimer
 
 from core.audio_engine import MotorAudio
 from core.analizador_audio import volumen_ajustado_por_ganancia
+from core.musicalizador import generar_items
 from config.settings import cargar_playlist_emision, guardar_playlist_emision, registrar_error, registrar_evento
 
 DURACION_FADE_PISADOR_SEGUNDOS = 0.8
@@ -112,6 +113,9 @@ DURACION_FADE_PISADOR_SEGUNDOS = 0.8
 # antes del final del tema se dispara un Pisador de posición "final".
 UMBRAL_DISPARO_PISADOR_OUTRO_MS = 3000
 DEBOUNCE_GUARDADO_MS = 500
+# Musicalizador Avanzado (pedido explícito, punto 7/9): cuántos ítems
+# concretos se generan de una vez cada vez que hace falta rellenar.
+TAMAÑO_LOTE_MUSICALIZADOR = 8
 # Pedido explícito (paridad con Dinesat): el botón verde Play/Siguiente
 # hace de "Siguiente con fundido" cuando ya hay algo sonando, y el
 # botón Fade-Stop apaga con fundido en vez de corte seco. Duración
@@ -135,6 +139,7 @@ class GestorPlaylist:
         crossfade_activado: bool = False,
         duracion_fade_segundos: float = 3.0,
         persistir: bool = False,
+        ventana_explorador=None,
     ):
         self.panel = panel
         self.motor = MotorAudio(id_dispositivo)
@@ -146,6 +151,13 @@ class GestorPlaylist:
         self.crossfade_activado = crossfade_activado
         self.duracion_fade_segundos = duracion_fade_segundos
         self.persistir = persistir
+        # Musicalizador Avanzado (pedido explícito): necesita el
+        # Explorador para resolver categorías/archivos al generar.
+        # Sin él (ej. Auxiliar, que no recibe este parámetro), un
+        # comando FMT simplemente no puede generar música — se avisa
+        # en el log en vez de romper nada.
+        self._ventana_explorador = ventana_explorador
+        self._formato_musicalizador_activo = None
         self._fallos_consecutivos = 0
         self._volumen_base = 100
         self._pisador_activo = False
@@ -631,8 +643,84 @@ class GestorPlaylist:
             candidata_siguiente = 0 if self.repetir_al_finalizar else -1
         if candidata_siguiente >= 0:
             self.panel.marcar_siguiente(candidata_siguiente)
+            # Musicalizador Avanzado (pedido explícito, punto 7): "cuando
+            # llegue al ante-último ítem, poniendo en verde el último,
+            # volverá a cargar otra serie" — apenas el ÚLTIMO ítem de la
+            # lista queda marcado en cola, se genera otro lote ANTES de
+            # que la reproducción realmente llegue a quedarse sin nada.
+            if self._formato_musicalizador_activo is not None and candidata_siguiente == total - 1:
+                self._generar_lote_musicalizador()
 
         self._reproducir_fila(fila_siguiente)
+
+    # ------------------------------------------------------------------
+    # Musicalizador Avanzado + Comandos FMT (pedido explícito,
+    # encadenados: al pasar por un ítem-comando FMT de Ventana 1,
+    # GestorPublicidad llama acá con el nombre del formato — ver
+    # core/playlist_manager.py:_ejecutar_comando y
+    # gui/main_window.py, donde se conecta el callback).
+    # ------------------------------------------------------------------
+    def iniciar_musicalizador(self, nombre_formato: str):
+        """Activa la generación continua de música según
+        `nombre_formato` (pedido explícito, puntos 6/7/8: "la música
+        en la ventana irá reproduciendo de acuerdo al musicalizador
+        avanzado de manera continua, siempre repitiendo el esquema").
+        Sigue activo hasta que otro comando FMT lo reemplace por otro
+        formato, o se llame a detener_musicalizador()."""
+        if self._ventana_explorador is None:
+            registrar_error("Musicalizador: no hay acceso al Explorador, no se puede generar música.")
+            return
+        self._formato_musicalizador_activo = nombre_formato
+        registrar_evento(f"Musicalizador: activado formato '{nombre_formato}' (persistir={self.persistir})")
+        self._generar_lote_musicalizador()
+
+    def detener_musicalizador(self):
+        if self._formato_musicalizador_activo is not None:
+            registrar_evento(
+                f"Musicalizador: desactivado (formato '{self._formato_musicalizador_activo}', "
+                f"persistir={self.persistir})"
+            )
+        self._formato_musicalizador_activo = None
+
+    def _generar_lote_musicalizador(self):
+        if self._formato_musicalizador_activo is None or self._ventana_explorador is None:
+            return
+        items_generados = generar_items(
+            self._ventana_explorador, self._formato_musicalizador_activo, TAMAÑO_LOTE_MUSICALIZADOR,
+        )
+        if not items_generados:
+            registrar_error(
+                f"Musicalizador: el formato '{self._formato_musicalizador_activo}' no generó "
+                "ningún ítem — revisar sus categorías/archivos en el Musicalizador Avanzado."
+            )
+            return
+        for concreto in items_generados:
+            registro = concreto["registro"]
+            fila_item = self.panel.agregar_item(
+                registro.get("titulo", ""), registro.get("duracion", ""), registro.get("codigo", "—"),
+                registro.get("ruta", ""), registro.get("punto_inicio_ms") or 0,
+                registro.get("punto_fin_ms"), registro.get("ganancia_db") or 0.0,
+            )
+            if concreto.get("pisador") and hasattr(self.panel, "agregar_pisador"):
+                fila_idx = self.panel.tree.indexOfTopLevelItem(fila_item)
+                pisador_reg = concreto["pisador"]
+                self.panel.agregar_pisador(
+                    fila_idx, pisador_reg.get("titulo", ""), pisador_reg.get("duracion", ""),
+                    pisador_reg.get("codigo", "—"), pisador_reg.get("ruta", ""),
+                    concreto.get("pisador_posicion") or "inicio",
+                )
+        registrar_evento(
+            f"Musicalizador: generados {len(items_generados)} ítem(s) del formato "
+            f"'{self._formato_musicalizador_activo}'"
+        )
+        # Si la lista estaba vacía o sin nada armado, el nuevo lote
+        # recién generado queda mudo sin un Play manual — igual que el
+        # resto de la app, nunca arranca a sonar solo salvo que ya
+        # hubiera algo en curso (ver GestorPlaylist con persistir=True).
+        if self.panel.fila_reproduciendo() < 0 and self.panel.cantidad_items() > 0:
+            self.panel.marcar_reproduciendo(0)
+            if self.panel.cantidad_items() > 1:
+                self.panel.marcar_siguiente(1)
 
     # ------------------------------------------------------------------
     # Persistencia (solo si persistir=True — Ventana 2, no Auxiliar).

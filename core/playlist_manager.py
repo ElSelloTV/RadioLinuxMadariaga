@@ -110,6 +110,13 @@ class GestorPublicidad:
         # intencional.
         self.al_finalizar_reproduccion = None
 
+        # Comando FMT (pedido explícito, encadenado con el
+        # Musicalizador Avanzado): callback que MainWindow conecta a
+        # GestorPlaylist.iniciar_musicalizador — se llama con el
+        # nombre del formato cuando la reproducción "pasa por" un
+        # ítem-comando FMT en un bloque (ver _ejecutar_comando).
+        self.al_comando_fmt = None
+
         self.motor.posicion_cambiada.connect(self.ventana.actualizar_contadores)
         self.motor.posicion_cambiada.connect(self._actualizar_indicador)
         # Bug real corregido — "la ventana 1 no reproduce el ítem
@@ -216,8 +223,14 @@ class GestorPublicidad:
         vencida/no iniciada se saltea acá mismo, como si no fuera
         válido — mismo camino que ya usan todos los que llaman a
         _item_valido() para avanzar, sin cortar la emisión ni tocar
-        el ítem (sigue en la lista, se saltea cada vez que le toca)."""
-        if item is None or not item.data(0, Qt.ItemDataRole.UserRole):
+        el ítem (sigue en la lista, se saltea cada vez que le toca).
+        Un ítem-comando (FMT) SÍ es un candidato válido — no "suena"
+        pero se ejecuta al llegarle el turno (ver _reproducir_item)."""
+        if item is None:
+            return False
+        if self.ventana.es_comando(item):
+            return True
+        if not item.data(0, Qt.ItemDataRole.UserRole):
             return False
         return vigencia_activa(self.ventana.vigencia_de_item(item))
 
@@ -232,8 +245,25 @@ class GestorPublicidad:
             return True
         return QTime.currentTime() >= hora_bloque
 
+    def _ejecutar_comando(self, item):
+        """Comando FMT (pedido explícito, punto 6): NO ocupa tiempo de
+        aire — se ejecuta y la reproducción sigue directo al próximo
+        ítem real del bloque (ver _reproducir_item)."""
+        tipo_comando = self.ventana.tipo_comando_de_item(item)
+        parametro = self.ventana.parametro_comando_de_item(item)
+        registrar_evento(f"Publicidad: comando ejecutado -> {tipo_comando} {parametro}")
+        if tipo_comando == "FMT" and self.al_comando_fmt is not None:
+            try:
+                self.al_comando_fmt(parametro)
+            except Exception as error:
+                registrar_error(f"Publicidad: error ejecutando comando FMT '{parametro}': {error}")
+
     def _reproducir_item(self, item):
         if not self._item_valido(item):
+            return
+        if self.ventana.es_comando(item):
+            self._ejecutar_comando(item)
+            self._avanzar()
             return
         self.ventana.tree.setCurrentItem(item)
         self.ventana.marcar_reproduciendo_item(item)
@@ -574,6 +604,13 @@ class GestorPublicidad:
             items = []
             for j in range(nodo_bloque.childCount()):
                 hijo = nodo_bloque.child(j)
+                if self.ventana.es_comando(hijo):
+                    items.append({
+                        "es_comando": True,
+                        "tipo_comando": self.ventana.tipo_comando_de_item(hijo),
+                        "parametro_comando": self.ventana.parametro_comando_de_item(hijo),
+                    })
+                    continue
                 analisis = self.ventana.analisis_de_item(hijo)
                 vigencia = self.ventana.vigencia_de_item(hijo)
                 items.append({

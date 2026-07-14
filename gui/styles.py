@@ -379,6 +379,17 @@ ROL_VIGENCIA = 1004
 # py:agregar_pisador), no en el tema principal.
 ROL_POSICION_PISADOR = 1005
 
+# Comando FMT (pedido explícito, "encadenado con Musicalizador
+# Avanzado" — inspirado en Dinesat): un ítem de Ventana 1 puede ser un
+# COMANDO en vez de audio real — no tiene ruta, no "suena", al
+# llegarle el turno ejecuta una acción (hoy solo "FMT", dispara la
+# generación continua de música en Ventana 2) y la reproducción sigue
+# directo al próximo ítem real, sin ocupar tiempo de aire.
+ROL_ES_COMANDO = 1006
+ROL_TIPO_COMANDO = 1007       # ej. "FMT"
+ROL_PARAMETRO_COMANDO = 1008  # ej. nombre del formato del Musicalizador
+COLOR_COMANDO = "#2980b9"     # azul, distinto del rojo/verde de estado y del violeta del Pisador
+
 # Colores por género, usados en la Ventana 3 (Explorador) para pintar
 # el fondo de cada fila según el tipo de material (pedido explícito).
 GENERO_COLORES = {
