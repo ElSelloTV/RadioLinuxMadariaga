@@ -37,7 +37,7 @@ class VentanaEmision(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.panel = PanelReproductor(
-            "EMISIÓN MUSICAL ACTUAL", mostrar_boton_auxiliar=True, mostrar_barra_progreso=True
+            "EMISIÓN", mostrar_boton_auxiliar=True, mostrar_barra_progreso=True
         )
         layout.addWidget(self.panel)
 

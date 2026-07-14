@@ -88,28 +88,36 @@ class PanelReproductor(QWidget):
         grupo = QGroupBox(titulo_panel)
         layout_grupo = QVBoxLayout(grupo)
 
-        # 1) Nameplate + contadores de tiempo + medidor (arriba de
-        # todo) — pedido explícito, imitando la distribución de
-        # Dinesat: nombre de la estación, reloj grande, contador
-        # secundario y un medidor de nivel al costado.
-        self.lbl_nombre_estacion = QLabel("RADIO TUYÚ FM 92.5")
-        self.lbl_nombre_estacion.setObjectName("lblNombreEstacion")
-        layout_grupo.addWidget(self.lbl_nombre_estacion)
+        # 1) Fila combinada relojes + Ahora/Luego (pedido explícito,
+        # "aprovechar más el espacio"): el nameplate fijo se sacó de
+        # acá (ver Configuración → General → nombre de emisora, ahora
+        # se muestra junto al reloj del toolbar en MainWindow) y los
+        # contadores pasan a apilarse a la IZQUIERDA (angostos, uno
+        # arriba y otro abajo) en vez de ir en su propia fila — a la
+        # derecha, en las mismas 2 líneas, van "Ahora"/"Luego" como ya
+        # estaban. El medidor de nivel decorativo queda entre las dos
+        # columnas. Esto ahorra una fila entera de alto de panel.
+        fila_info = QHBoxLayout()
+        fila_info.setSpacing(6)
 
-        layout_contadores = QHBoxLayout()
+        columna_relojes = QVBoxLayout()
+        columna_relojes.setSpacing(2)
         self.lbl_tiempo_transcurrido = QLabel("00:00:00")
         self.lbl_tiempo_transcurrido.setObjectName("lblTiempoTranscurrido")
         self.lbl_tiempo_transcurrido.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_tiempo_transcurrido.setMaximumWidth(90)
         self.lbl_tiempo_restante = QLabel("00:00:00")
         self.lbl_tiempo_restante.setObjectName("lblTiempoRestante")
         self.lbl_tiempo_restante.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_tiempo_restante.setMaximumWidth(90)
+        columna_relojes.addWidget(self.lbl_tiempo_transcurrido)
+        columna_relojes.addWidget(self.lbl_tiempo_restante)
+        fila_info.addLayout(columna_relojes)
+
         # Medidor de nivel decorativo (pedido explícito: mismo lugar
         # que en Dinesat, sin pretender medir audio real).
         self.medidor_nivel = MedidorNivelDecorativo()
-        layout_contadores.addWidget(self.lbl_tiempo_transcurrido)
-        layout_contadores.addWidget(self.lbl_tiempo_restante)
-        layout_contadores.addWidget(self.medidor_nivel)
-        layout_grupo.addLayout(layout_contadores)
+        fila_info.addWidget(self.medidor_nivel)
 
         # Indicador "en vivo" (titila mientras hay audio sonando de
         # verdad) + título del tema: "sticker" de ancho fijo estilo
@@ -119,6 +127,9 @@ class PanelReproductor(QWidget):
         # robusto que depender solo del color de la fila en la lista.
         # Cada fila va en un QFrame con contorno rojo/verde (mismo
         # concepto de color que la fila de la lista) — pedido explícito.
+        columna_ahora_luego = QVBoxLayout()
+        columna_ahora_luego.setSpacing(2)
+
         frame_ahora = QFrame()
         frame_ahora.setObjectName("frameAhora")
         fila_titulo = QHBoxLayout(frame_ahora)
@@ -130,10 +141,7 @@ class PanelReproductor(QWidget):
         fila_titulo.addWidget(lbl_ahora)
         self.lbl_titulo_actual = EtiquetaMarquesina()
         fila_titulo.addWidget(self.lbl_titulo_actual)
-        # AlignLeft (pedido explícito, "mucho más angosta"): sin esto,
-        # QVBoxLayout estira el frame a todo el ancho del panel sin
-        # importar el tamaño de sus hijos.
-        layout_grupo.addWidget(frame_ahora, 0, Qt.AlignmentFlag.AlignLeft)
+        columna_ahora_luego.addWidget(frame_ahora)
 
         frame_luego = QFrame()
         frame_luego.setObjectName("frameLuego")
@@ -144,7 +152,14 @@ class PanelReproductor(QWidget):
         fila_siguiente.addWidget(lbl_luego)
         self.lbl_titulo_siguiente = EtiquetaMarquesina()
         fila_siguiente.addWidget(self.lbl_titulo_siguiente)
-        layout_grupo.addWidget(frame_luego, 0, Qt.AlignmentFlag.AlignLeft)
+        columna_ahora_luego.addWidget(frame_luego)
+
+        fila_info.addLayout(columna_ahora_luego)
+        # Stretch al final (en vez de AlignLeft en cada widget): así la
+        # columna de relojes queda angosta y Ahora/Luego no se estira a
+        # ocupar todo el ancho sobrante del panel.
+        fila_info.addStretch()
+        layout_grupo.addLayout(fila_info)
 
         # 2) Controles de reproducción — grilla estilo Dinesat (pedido
         # explícito): un botón VERDE grande a la izquierda que hace de

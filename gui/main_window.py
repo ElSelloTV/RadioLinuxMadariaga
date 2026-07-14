@@ -168,9 +168,22 @@ class MainWindow(QMainWindow):
         espaciador.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(espaciador)
 
+        # Nombre de emisora (pedido explícito, editable en Configuración
+        # → General) a la izquierda del reloj — reemplaza el cartel fijo
+        # "RADIO TUYÚ FM 92.5" que antes se repetía en cada panel,
+        # liberando esa fila para ver más ítems de la lista.
+        self.lbl_nombre_emisora = QLabel("")
+        self.lbl_nombre_emisora.setObjectName("lblNombreEstacion")
+        self.lbl_nombre_emisora.setStyleSheet("padding-right: 10px;")
+        toolbar.addWidget(self.lbl_nombre_emisora)
+        self._actualizar_nombre_emisora()
+
         self.lbl_reloj = QLabel("--/--/---- --:--:--")
         self.lbl_reloj.setStyleSheet("font-weight: bold; padding-right: 10px;")
         toolbar.addWidget(self.lbl_reloj)
+
+    def _actualizar_nombre_emisora(self):
+        self.lbl_nombre_emisora.setText(self._config.get("general", {}).get("nombre_emisora", "") or "")
 
     def _actualizar_reloj(self):
         ahora = QDateTime.currentDateTime()
@@ -577,6 +590,7 @@ class MainWindow(QMainWindow):
         está reproduciendo (sin recrearlo) — libVLC tolera cambiar de
         dispositivo sin cortar la reproducción."""
         self._config = cargar_configuracion()
+        self._actualizar_nombre_emisora()
         audio = self._config["audio"]
         reproduccion = self._config["reproduccion"]
         fade = self._config["fade"]

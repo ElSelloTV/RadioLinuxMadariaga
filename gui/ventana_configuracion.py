@@ -243,6 +243,13 @@ class VentanaConfiguracion(QDialog):
         widget = QWidget()
         form = QFormLayout(widget)
 
+        # Pedido explícito: nombre de emisora editable, se muestra a
+        # la izquierda del reloj de día/hora en el toolbar (antes era
+        # un texto fijo repetido en cada panel — ver MainWindow).
+        self.txt_nombre_emisora = QLineEdit()
+        self.txt_nombre_emisora.setPlaceholderText("RADIO TUYÚ FM 92.5")
+        form.addRow("Nombre de emisora:", self.txt_nombre_emisora)
+
         self.chk_confirmar_eliminar = QCheckBox(
             "Pedir confirmación antes de eliminar, reemplazar o cambiar de\n"
             "categoría un archivo (o eliminar un bloque)"
@@ -509,6 +516,7 @@ class VentanaConfiguracion(QDialog):
         self.spin_bajada_pisador.setValue(reproduccion["pisador_bajada_db"])
 
         general = self._config["general"]
+        self.txt_nombre_emisora.setText(general.get("nombre_emisora", ""))
         self.chk_confirmar_eliminar.setChecked(general["confirmar_antes_de_eliminar"])
         self.chk_mostrar_segundos.setChecked(general["mostrar_segundos_en_reloj"])
         indice_tema = self.combo_tema.findData(general["tema"])
@@ -554,6 +562,7 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["umbral_silencio_dbfs"] = self.spin_umbral_silencio.value()
         self._config["reproduccion"]["pisador_bajada_db"] = self.spin_bajada_pisador.value()
 
+        self._config["general"]["nombre_emisora"] = self.txt_nombre_emisora.text().strip()
         self._config["general"]["confirmar_antes_de_eliminar"] = self.chk_confirmar_eliminar.isChecked()
         self._config["general"]["mostrar_segundos_en_reloj"] = self.chk_mostrar_segundos.isChecked()
         self._config["general"]["tema"] = self.combo_tema.currentData()
