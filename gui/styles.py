@@ -84,7 +84,7 @@ QGroupBox {{
     background-color: {COLOR_FONDO_PANEL};
     border: 1px solid {COLOR_BORDE};
     border-radius: 4px;
-    margin-top: 18px;
+    margin-top: 24px;
     font-weight: bold;
 }}
 QGroupBox::title {{
@@ -96,6 +96,7 @@ QGroupBox::title {{
     border: 1px solid {COLOR_BORDE};
     border-radius: 3px;
     color: {COLOR_TEXTO};
+    font-size: 14pt;
 }}
 
 /* ---------- TreeView / TreeWidget (Publicidad y Explorador) ---------- */
