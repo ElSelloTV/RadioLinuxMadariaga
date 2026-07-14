@@ -626,22 +626,26 @@ class GestorPlaylist:
         if fila_siguiente < 0 or fila_siguiente == fila_actual:
             fila_siguiente = fila_actual + 1
 
+        # Musicalizador Avanzado (pedido explícito, ronda posterior:
+        # "que la nueva serie se cargue no cuando termina de
+        # reproducirse el último item, sino cuando entra en previo
+        # (verde), directamente ahí que cargue la nueva serie") — en
+        # cuanto el próximo ítem a reproducir ES (o ya pasó) el ÚLTIMO
+        # disponible, se genera la serie siguiente ACÁ, ANTES de
+        # intentar marcarlo/reproducirlo — así el ítem que un paso más
+        # abajo se marca "en cola" (verde) ya pertenece a la serie
+        # nueva, sin esperar nunca a que termine de sonar nada. Único
+        # mecanismo (reemplaza los dos que había antes: precarga al
+        # marcar verde + red de emergencia al terminar) — cubre por
+        # igual series largas y series cortas/de 1 solo ítem (que no
+        # tienen "ante-último" desde donde precargar de otra forma).
+        if self._formato_musicalizador_activo is not None and fila_siguiente >= total - 1:
+            self._generar_serie_musicalizador()
+            total = self.panel.cantidad_items()
+
         if fila_siguiente >= total:
             if self.repetir_al_finalizar:
                 fila_siguiente = 0
-            elif self._formato_musicalizador_activo is not None:
-                # Pedido explícito (punto b): "al llegar al último...
-                # debe dejar abajo otra carga de otra serie diferente"
-                # — red de seguridad para cuando NO hubo chance de
-                # precargar a tiempo más abajo (series muy cortas, ej.
-                # de un solo ítem, donde nunca existe un "ante-último"
-                # desde donde marcar verde y disparar la carga). Se
-                # genera la serie siguiente ACÁ MISMO antes de rendirse.
-                self._generar_serie_musicalizador()
-                total = self.panel.cantidad_items()
-                if fila_siguiente >= total:
-                    self.motor.detener()
-                    return
             else:
                 self.motor.detener()
                 return
@@ -653,15 +657,6 @@ class GestorPlaylist:
             candidata_siguiente = 0 if self.repetir_al_finalizar else -1
         if candidata_siguiente >= 0:
             self.panel.marcar_siguiente(candidata_siguiente)
-            # Musicalizador Avanzado (pedido explícito, punto 7/b): "al
-            # llegar al último en color verde, debe dejar abajo otra
-            # carga de otra serie diferente, como si volviera a cargar
-            # el FMT" — apenas el ÚLTIMO ítem de la lista queda marcado
-            # en cola, se genera OTRA SERIE completa (misma lógica,
-            # nuevas elecciones aleatorias) ANTES de que la
-            # reproducción realmente llegue a quedarse sin nada.
-            if self._formato_musicalizador_activo is not None and candidata_siguiente == total - 1:
-                self._generar_serie_musicalizador()
 
         self._reproducir_fila(fila_siguiente)
 
@@ -713,10 +708,23 @@ class GestorPlaylist:
         haya programado. Solo se extiende si en la serie hay
         sub-formato") — ya NO un tamaño de lote fijo, sino exactamente
         lo que produce una pasada por el formato (ver
-        core/musicalizador.py:generar_serie)."""
+        core/musicalizador.py:generar_serie).
+
+        Pedido explícito (ronda posterior): las rutas YA presentes en
+        Emisión (la serie anterior, que con el refill disparado al
+        "entrar en previo" todavía puede no haber sonado nada) se
+        pasan como exclusión extra — el historial persistente por sí
+        solo no alcanza para evitar repetir el mismo aleatorio recién
+        elegido, porque todavía no se registró como reproducido."""
         if self._formato_musicalizador_activo is None or self._ventana_explorador is None:
             return
-        items_generados = generar_serie(self._ventana_explorador, self._formato_musicalizador_activo)
+        rutas_en_cola = frozenset(
+            ruta for i in range(self.panel.cantidad_items())
+            if (ruta := self.panel.ruta_en_fila(i))
+        )
+        items_generados = generar_serie(
+            self._ventana_explorador, self._formato_musicalizador_activo, rutas_en_cola,
+        )
         if not items_generados:
             registrar_error(
                 f"Musicalizador: el formato '{self._formato_musicalizador_activo}' no generó "

@@ -88,7 +88,7 @@ def _resolver_pisador(explorador, item_config: dict):
     return registro, posicion
 
 
-def _resolver_aleatorio(explorador, item_config: dict) -> dict | None:
+def _resolver_aleatorio(explorador, item_config: dict, rutas_a_evitar: frozenset = frozenset()) -> dict | None:
     categoria = explorador.buscar_categoria_por_ruta(item_config.get("categoria") or [])
     if categoria is None:
         return None
@@ -98,12 +98,26 @@ def _resolver_aleatorio(explorador, item_config: dict) -> dict | None:
         return None
     rutas_candidatas = {r.get("ruta") for r in candidatos if r.get("ruta")}
     # No repetir hasta agotar la categoría (pedido explícito): excluye
-    # las (N-1) rutas de ESTA categoría más recientes en el historial.
-    excluidas = rutas_recientes_en_historial(rutas_candidatas, len(rutas_candidatas) - 1)
+    # las (N-1) rutas de ESTA categoría más recientes en el historial
+    # PERSISTENTE (lo que YA sonó), MÁS `rutas_a_evitar` (lo que ya se
+    # generó en esta misma serie o en una serie anterior todavía en
+    # cola sin sonar — pedido explícito, ronda posterior: "cuando
+    # volvió a cargar la serie, cargó el mismo archivo aleatorio que
+    # en la primera". El historial por sí solo no alcanza: solo
+    # registra lo que YA se REPRODUJO, y con el refill ahora disparado
+    # apenas algo "entra en previo" (verde), la serie nueva se genera
+    # ANTES de que la anterior termine de sonar — el historial todavía
+    # no reflejaría esas rutas). Mismo criterio de "nunca dejar hueco"
+    # (ver `elegir_aleatorio_de_categoria`): si excluir todo vacía la
+    # lista de candidatos, la exclusión se ignora antes que repetir un
+    # tema a dejar silencio.
+    excluidas_historial = rutas_recientes_en_historial(rutas_candidatas, len(rutas_candidatas) - 1)
+    excluidas = excluidas_historial | (rutas_a_evitar & rutas_candidatas)
     return explorador.elegir_aleatorio_de_categoria(categoria, recursivo, excluir_rutas=excluidas)
 
 
-def _resolver_item(explorador, item_config: dict, visitados: frozenset) -> list:
+def _resolver_item(explorador, item_config: dict, visitados: frozenset,
+                    rutas_a_evitar: frozenset = frozenset()) -> list:
     """Devuelve una lista de "items concretos" — normalmente 0 o 1
     ({"registro", "pisador", "pisador_posicion"}), salvo un
     subformato, que puede devolver varios de una vez."""
@@ -116,7 +130,7 @@ def _resolver_item(explorador, item_config: dict, visitados: frozenset) -> list:
         return [{"registro": registro, "pisador": pisador, "pisador_posicion": posicion}]
 
     if tipo == "aleatorio":
-        registro = _resolver_aleatorio(explorador, item_config)
+        registro = _resolver_aleatorio(explorador, item_config, rutas_a_evitar)
         if not registro:
             return []
         pisador, posicion = _resolver_pisador(explorador, item_config)
@@ -125,18 +139,21 @@ def _resolver_item(explorador, item_config: dict, visitados: frozenset) -> list:
     if tipo == "subformato":
         nombre_sub = item_config.get("nombre")
         duracion_objetivo = item_config.get("duracion_segundos") or 0
-        return _generar_por_duracion(explorador, nombre_sub, duracion_objetivo, visitados)
+        return _generar_por_duracion(explorador, nombre_sub, duracion_objetivo, visitados, rutas_a_evitar)
 
     return []  # tipo desconocido / ítem corrupto: se saltea solo
 
 
 def _generar_por_duracion(explorador, nombre_formato: str, duracion_objetivo_segundos: int,
-                           visitados: frozenset) -> list:
+                           visitados: frozenset, rutas_a_evitar: frozenset = frozenset()) -> list:
     """Expande un formato (usado como subformato) hasta cubrir
     `duracion_objetivo_segundos`, repitiendo su esquema tantas veces
     como haga falta. `visitados` corta cualquier ciclo de subformatos
     en tiempo de ejecución — red de seguridad además de la validación
-    al guardar (ver validar_formato)."""
+    al guardar (ver validar_formato). `rutas_a_evitar` se acumula a
+    medida que se van resolviendo ítems (dentro de esta expansión y
+    heredado de fuera) para que el propio subformato tampoco se repita
+    a sí mismo en una misma vuelta."""
     if nombre_formato in visitados or duracion_objetivo_segundos <= 0:
         return []
     formato = obtener_formato(nombre_formato)
@@ -145,6 +162,7 @@ def _generar_por_duracion(explorador, nombre_formato: str, duracion_objetivo_seg
     visitados_ahora = visitados | {nombre_formato}
 
     resultado = []
+    rutas_usadas = set(rutas_a_evitar)
     acumulado_segundos = 0
     vueltas = 0
     while acumulado_segundos < duracion_objetivo_segundos and vueltas < TOPE_VUELTAS_POR_DURACION:
@@ -152,8 +170,11 @@ def _generar_por_duracion(explorador, nombre_formato: str, duracion_objetivo_seg
         for item_config in formato["items"]:
             if acumulado_segundos >= duracion_objetivo_segundos:
                 break
-            for concreto in _resolver_item(explorador, item_config, visitados_ahora):
+            for concreto in _resolver_item(explorador, item_config, visitados_ahora, frozenset(rutas_usadas)):
                 resultado.append(concreto)
+                ruta = concreto["registro"].get("ruta")
+                if ruta:
+                    rutas_usadas.add(ruta)
                 acumulado_segundos += _duracion_a_segundos(concreto["registro"].get("duracion", ""))
                 agregados_esta_vuelta += 1
         vueltas += 1
@@ -162,7 +183,7 @@ def _generar_por_duracion(explorador, nombre_formato: str, duracion_objetivo_seg
     return resultado
 
 
-def generar_serie(explorador, nombre_formato: str) -> list:
+def generar_serie(explorador, nombre_formato: str, rutas_a_evitar: frozenset = frozenset()) -> list:
     """Punto de entrada del motor: genera UNA serie completa — la
     cantidad EXACTA de "ítems concretos" que produce UNA sola pasada
     por `nombre_formato`, en el orden programado (pedido explícito:
@@ -178,14 +199,29 @@ def generar_serie(explorador, nombre_formato: str) -> list:
     aleatorios, el mismo específico" (pedido explícito). Lo usa
     GestorPlaylist (core/gestor_emision.py) para la carga inicial al
     disparar un Comando FMT y para cargar la próxima serie cuando la
-    anterior está por terminarse (relleno continuo)."""
+    anterior está por terminarse (relleno continuo).
+
+    `rutas_a_evitar` (pedido explícito, ronda posterior — "optimizá
+    mejor la lógica de aleatorio... cargó el mismo archivo aleatorio
+    que en la primera"): rutas que el LLAMADOR ya sabe que están en
+    cola sin sonar todavía (ej. lo que ya hay cargado en Emisión) —
+    se suman a la exclusión de cada ítem "aleatorio" ADEMÁS del
+    historial persistente, y también se van acumulando ítem a ítem
+    DENTRO de esta misma pasada (así dos ítems aleatorios del mismo
+    formato tampoco eligen el mismo archivo entre sí)."""
     formato = obtener_formato(nombre_formato)
     if not formato or not formato.get("items"):
         return []
     visitados = frozenset({nombre_formato})
     resultado = []
+    rutas_usadas = set(rutas_a_evitar)
     for item_config in formato["items"]:
-        resultado.extend(_resolver_item(explorador, item_config, visitados))
+        concretos = _resolver_item(explorador, item_config, visitados, frozenset(rutas_usadas))
+        resultado.extend(concretos)
+        for concreto in concretos:
+            ruta = concreto["registro"].get("ruta")
+            if ruta:
+                rutas_usadas.add(ruta)
     return resultado
 
 

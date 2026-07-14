@@ -47,9 +47,9 @@ from gui.medidor_nivel import MedidorNivelDecorativo
 from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
-    GENERO_COLORES, color_texto_legible, ROL_YA_REPRODUCIDO, icono_reproducido, ROL_POSICION_PISADOR,
+    ROL_YA_REPRODUCIDO, icono_reproducido, ROL_POSICION_PISADOR,
 )
-from config.settings import cargar_configuracion, registrar_reproduccion
+from config.settings import registrar_reproduccion
 
 
 class PanelReproductor(QWidget):
@@ -434,14 +434,16 @@ class PanelReproductor(QWidget):
         item.setData(0, ROL_POSICION_PISADOR, posicion)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
 
-        colores_genero = cargar_configuracion().get("apariencia", {}).get("colores_genero", GENERO_COLORES)
-        color_pisador = colores_genero.get("Pisador")
-        if color_pisador:
-            fondo = QBrush(QColor(color_pisador))
-            texto = QBrush(QColor(color_texto_legible(color_pisador)))
-            for columna in range(item.columnCount()):
-                item.setBackground(columna, fondo)
-                item.setForeground(columna, texto)
+        # Pedido explícito: "el pisador toma el color de arriba, del
+        # item principal, rojo o verde" — nunca un color de género
+        # propio (eso es solo para identificar categorías en Ventana 3
+        # - Explorador). Si el tema principal YA está marcado al
+        # agregarle el Pisador, el hijo nace con ese mismo color;
+        # `_pintar_item()` lo mantiene sincronizado de ahí en más.
+        fondo, texto = self._color_para_estado(item_padre.data(0, ROL_ESTADO_ITEM))
+        for columna in range(item.columnCount()):
+            item.setBackground(columna, fondo)
+            item.setForeground(columna, texto)
 
         item_padre.addChild(item)
         item_padre.setExpanded(True)
@@ -496,12 +498,24 @@ class PanelReproductor(QWidget):
         return True
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _color_para_estado(estado: int):
+        """(fondo, texto) para un estado rojo/verde/normal — ÚNICO
+        lugar que decide el color de fila, reusado por `_pintar_item()`
+        y por `agregar_pisador()` (pedido explícito: el color de
+        categoría/género es solo para Ventana 3 - Explorador; acá SOLO
+        existen rojo/verde/normal + celeste de selección vía QSS)."""
+        if estado == ESTADO_REPRODUCIENDO:
+            return QBrush(QColor(COLOR_REPRODUCIENDO)), QBrush(QColor("white"))
+        if estado == ESTADO_SIGUIENTE:
+            return QBrush(QColor(COLOR_SIGUIENTE)), QBrush(QColor("white"))
+        return QBrush(), QBrush()
+
     def _pintar_item(self, item, estado: int):
         if item is None:
             return
         item.setData(0, ROL_ESTADO_ITEM, estado)
         if estado == ESTADO_REPRODUCIENDO:
-            color = QBrush(QColor(COLOR_REPRODUCIENDO))
             # Marca "ya reproducido" (pedido explícito, ícono a la
             # izquierda, sin texto) — se pone al arrancar a sonar y ya
             # NUNCA se saca, ni cuando el ítem deja el rojo.
@@ -513,16 +527,18 @@ class PanelReproductor(QWidget):
                 self._titulo_panel, item.text(0), item.text(2),
                 item.data(0, Qt.ItemDataRole.UserRole) or "",
             )
-        elif estado == ESTADO_SIGUIENTE:
-            color = QBrush(QColor(COLOR_SIGUIENTE))
-        else:
-            color = QBrush()
+        color, texto = self._color_para_estado(estado)
         for columna in range(self.tree.columnCount()):
             item.setBackground(columna, color)
-            item.setForeground(
-                columna,
-                QBrush(QColor("white")) if estado in (ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE) else QBrush(),
-            )
+            item.setForeground(columna, texto)
+        # Pedido explícito: "el pisador toma el color de arriba, del
+        # item principal, rojo o verde" — el Pisador anidado (si tiene)
+        # SIEMPRE refleja el mismo estado que su tema principal.
+        for i in range(item.childCount()):
+            hijo = item.child(i)
+            for columna in range(self.tree.columnCount()):
+                hijo.setBackground(columna, color)
+                hijo.setForeground(columna, texto)
 
     def _on_doble_click_item(self, item, columna):
         if item.parent() is not None:
