@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDate, QTime, Signal
 
 from gui.common_widgets import ArbolConDrop
-from gui.styles import ROL_ANALISIS_AUDIO
+from gui.styles import ROL_ANALISIS_AUDIO, ROL_VIGENCIA
 from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
 from gui.dialogo_editar_bloque import DialogoEditarBloque
 from gui.dialogo_programaciones_guardadas import DialogoProgramacionesGuardadas
@@ -282,6 +282,9 @@ class VentanaProgramador(QDialog):
             "punto_fin_ms": registro.get("punto_fin_ms"),
             "ganancia_db": registro.get("ganancia_db") or 0.0,
         })
+        hijo.setData(0, ROL_VIGENCIA, {
+            "fecha_inicio": registro.get("fecha_inicio"), "fecha_fin": registro.get("fecha_fin"),
+        })
         bloque.addChild(hijo)
         bloque.setExpanded(True)
         return hijo
@@ -372,6 +375,9 @@ class VentanaProgramador(QDialog):
             "punto_inicio_ms": registro.get("punto_inicio_ms") or 0,
             "punto_fin_ms": registro.get("punto_fin_ms"),
             "ganancia_db": registro.get("ganancia_db") or 0.0,
+        })
+        item.setData(0, ROL_VIGENCIA, {
+            "fecha_inicio": registro.get("fecha_inicio"), "fecha_fin": registro.get("fecha_fin"),
         })
         self._guardar_ultima_categoria(dialogo.ruta_categoria_seleccionada())
 
@@ -469,6 +475,9 @@ class VentanaProgramador(QDialog):
                     "punto_inicio_ms": item.get("punto_inicio_ms") or 0,
                     "punto_fin_ms": item.get("punto_fin_ms"),
                     "ganancia_db": item.get("ganancia_db") or 0.0,
+                })
+                hijo.setData(0, ROL_VIGENCIA, {
+                    "fecha_inicio": item.get("fecha_inicio"), "fecha_fin": item.get("fecha_fin"),
                 })
                 nodo.addChild(hijo)
             nodo.setExpanded(True)
@@ -662,6 +671,7 @@ class VentanaProgramador(QDialog):
             for j in range(nodo.childCount()):
                 hijo = nodo.child(j)
                 analisis = hijo.data(0, ROL_ANALISIS_AUDIO) or {}
+                vigencia = hijo.data(0, ROL_VIGENCIA) or {}
                 items.append({
                     "titulo": hijo.text(0),
                     "duracion": hijo.text(1),
@@ -670,6 +680,8 @@ class VentanaProgramador(QDialog):
                     "punto_inicio_ms": analisis.get("punto_inicio_ms") or 0,
                     "punto_fin_ms": analisis.get("punto_fin_ms"),
                     "ganancia_db": analisis.get("ganancia_db") or 0.0,
+                    "fecha_inicio": vigencia.get("fecha_inicio"),
+                    "fecha_fin": vigencia.get("fecha_fin"),
                 })
             bloques.append({"hora": hora, "titulo": titulo, "items": items})
         return bloques

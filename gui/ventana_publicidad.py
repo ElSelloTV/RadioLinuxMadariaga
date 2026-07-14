@@ -41,9 +41,9 @@ from gui.medidor_nivel import MedidorNivelDecorativo
 from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
-    ROL_YA_REPRODUCIDO, icono_reproducido,
+    ROL_YA_REPRODUCIDO, icono_reproducido, ROL_VIGENCIA,
 )
-from config.settings import cargar_configuracion, titulo_bloque_sin_prefijo_hora
+from config.settings import cargar_configuracion, titulo_bloque_sin_prefijo_hora, registrar_reproduccion
 
 # Rol de dato propio: hora "HH:mm:ss" guardada en el nodo de bloque
 # (por encima de Qt.UserRole), separado del texto visible del título
@@ -294,18 +294,24 @@ class VentanaPublicidad(QWidget):
                     item.get("codigo", "—"), item.get("ruta", ""),
                     item.get("punto_inicio_ms") or 0, item.get("punto_fin_ms"),
                     item.get("ganancia_db") or 0.0,
+                    item.get("fecha_inicio"), item.get("fecha_fin"),
                 )
             nodo_bloque.setExpanded(True)
         self.programacion_cargada.emit()
 
     def agregar_tanda(self, nodo_bloque, titulo: str, duracion: str, codigo: str, ruta: str = "",
-                       punto_inicio_ms: int = 0, punto_fin_ms: int = None, ganancia_db: float = 0.0):
+                       punto_inicio_ms: int = 0, punto_fin_ms: int = None, ganancia_db: float = 0.0,
+                       fecha_inicio: str = None, fecha_fin: str = None):
         hijo = QTreeWidgetItem([titulo, duracion, codigo])
         hijo.setData(0, Qt.ItemDataRole.UserRole, ruta)
         hijo.setData(0, ROL_ESTADO_ITEM, ESTADO_NORMAL)
         hijo.setData(0, ROL_ANALISIS_AUDIO, {
             "punto_inicio_ms": punto_inicio_ms, "punto_fin_ms": punto_fin_ms, "ganancia_db": ganancia_db,
         })
+        # Vigencia de fecha (pedido explícito, opcional): None/None =
+        # sin restricción, se emite siempre igual que antes de este
+        # cambio. Ver core/playlist_manager.py:_item_valido().
+        hijo.setData(0, ROL_VIGENCIA, {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin})
         nodo_bloque.addChild(hijo)
         return hijo
 
@@ -313,6 +319,11 @@ class VentanaPublicidad(QWidget):
         if item is None:
             return {"punto_inicio_ms": 0, "punto_fin_ms": None, "ganancia_db": 0.0}
         return item.data(0, ROL_ANALISIS_AUDIO) or {"punto_inicio_ms": 0, "punto_fin_ms": None, "ganancia_db": 0.0}
+
+    def vigencia_de_item(self, item) -> dict:
+        if item is None:
+            return {"fecha_inicio": None, "fecha_fin": None}
+        return item.data(0, ROL_VIGENCIA) or {"fecha_inicio": None, "fecha_fin": None}
 
     def crear_bloque_nuevo(self):
         """Bloque vacío, título por defecto "Bloque: HH:MM:SS" con la
@@ -603,6 +614,11 @@ class VentanaPublicidad(QWidget):
             # NUNCA se saca, ni cuando el ítem deja el rojo.
             item.setData(0, ROL_YA_REPRODUCIDO, True)
             item.setIcon(0, icono_reproducido())
+            # Historial de reproducción PERSISTENTE (pedido explícito,
+            # distinto del ícono de arriba: éste sobrevive un reinicio).
+            registrar_reproduccion(
+                "Publicidad", item.text(0), item.text(2), item.data(0, Qt.ItemDataRole.UserRole) or "",
+            )
         elif estado == ESTADO_SIGUIENTE:
             color_fondo = QBrush(QColor(COLOR_SIGUIENTE))
         else:

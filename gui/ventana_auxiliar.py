@@ -69,11 +69,14 @@ class VentanaAuxiliar(QDialog):
         return self.panel.agregar_item(titulo, duracion, codigo, ruta,
                                         punto_inicio_ms, punto_fin_ms, ganancia_db)
 
-    def agregar_pisador(self, fila_padre, titulo, duracion, codigo, ruta):
-        return self.panel.agregar_pisador(fila_padre, titulo, duracion, codigo, ruta)
+    def agregar_pisador(self, fila_padre, titulo, duracion, codigo, ruta, posicion="inicio"):
+        return self.panel.agregar_pisador(fila_padre, titulo, duracion, codigo, ruta, posicion)
 
     def ruta_pisador_en_fila(self, fila):
         return self.panel.ruta_pisador_en_fila(fila)
+
+    def posicion_pisador_en_fila(self, fila):
+        return self.panel.posicion_pisador_en_fila(fila)
 
     def cantidad_items(self):
         return self.panel.cantidad_items()

@@ -108,6 +108,9 @@ from core.analizador_audio import volumen_ajustado_por_ganancia
 from config.settings import cargar_playlist_emision, guardar_playlist_emision, registrar_error, registrar_evento
 
 DURACION_FADE_PISADOR_SEGUNDOS = 0.8
+# Pisador en el Outro (pedido explícito, paridad con Dinesat): cuánto
+# antes del final del tema se dispara un Pisador de posición "final".
+UMBRAL_DISPARO_PISADOR_OUTRO_MS = 3000
 DEBOUNCE_GUARDADO_MS = 500
 # Pedido explícito (paridad con Dinesat): el botón verde Play/Siguiente
 # hace de "Siguiente con fundido" cuando ya hay algo sonando, y el
@@ -147,6 +150,10 @@ class GestorPlaylist:
         self._volumen_base = 100
         self._pisador_activo = False
         self._generacion_pisador = 0
+        # Pisador en el Outro: qué fila ya disparó su Pisador de
+        # posición "final" en esta reproducción, para no re-chequear
+        # en cada tick de restante_ms_cambio una vez disparado.
+        self._fila_pisador_outro_disparado = -1
         self._crossfade_en_curso = False
         self._motor_saliente_crossfade = None
         self._restaurando = False
@@ -194,6 +201,7 @@ class GestorPlaylist:
         motor.error_reproduccion.connect(self._on_error)
         motor.restante_ms_cambio.connect(self._chequear_crossfade)
         motor.restante_ms_cambio.connect(self._actualizar_progreso)
+        motor.restante_ms_cambio.connect(self._chequear_pisador_outro)
 
     def _desconectar_motor(self, motor):
         try:
@@ -203,6 +211,7 @@ class GestorPlaylist:
             motor.error_reproduccion.disconnect(self._on_error)
             motor.restante_ms_cambio.disconnect(self._chequear_crossfade)
             motor.restante_ms_cambio.disconnect(self._actualizar_progreso)
+            motor.restante_ms_cambio.disconnect(self._chequear_pisador_outro)
         except (TypeError, RuntimeError):
             pass
 
@@ -350,7 +359,12 @@ class GestorPlaylist:
             volumen_base=self._volumen_base,
         )
         self.panel.set_indicador_en_vivo(True)
-        self._disparar_pisador_si_corresponde(fila)
+        self._fila_pisador_outro_disparado = -1
+        # Un Pisador de posición "final" (Outro) NO se dispara acá —
+        # se dispara más adelante, cerca del final, en
+        # _chequear_pisador_outro().
+        if self.panel.posicion_pisador_en_fila(fila) != "final":
+            self._disparar_pisador_si_corresponde(fila)
 
     # ------------------------------------------------------------------
     # Crossfade: se dispara CON ANTICIPACIÓN (faltando duracion_fade_
@@ -438,7 +452,9 @@ class GestorPlaylist:
         # el mismo motor) — la prioridad es que el audio del Pisador
         # arranque en el momento correcto, aunque el ducking llegue
         # un instante después.
-        self._disparar_pisador_si_corresponde(fila_siguiente, aplicar_ducking=False)
+        self._fila_pisador_outro_disparado = -1
+        if self.panel.posicion_pisador_en_fila(fila_siguiente) != "final":
+            self._disparar_pisador_si_corresponde(fila_siguiente, aplicar_ducking=False)
 
         QTimer.singleShot(
             int(duracion_segundos * 1000) + 200,
@@ -481,6 +497,30 @@ class GestorPlaylist:
     # mientras tanto (si cambió, significa que ya hay un Pisador más
     # nuevo en curso y no hay que tocarlo).
     # ------------------------------------------------------------------
+    def _chequear_pisador_outro(self, restante_ms: int):
+        """Pisador en el OUTRO (pedido explícito, paridad con Dinesat):
+        mismo motor que el Pisador de inicio (_disparar_pisador_si_
+        corresponde), disparado cerca del FINAL del tema en vez de al
+        arrancar. Limitación conocida de esta primera versión: si hay
+        un crossfade en curso sobre este mismo ítem, el Pisador de
+        Outro no se dispara — evita competir con la propia rampa de
+        volumen del crossfade sobre el mismo motor (mismo criterio ya
+        aplicado, en su momento, al Pisador de inicio + crossfade). Si
+        el crossfade termina cortando la reproducción antes de que el
+        Pisador llegue a sonar, la próxima ronda lo revisa con audio
+        real."""
+        if self._pisador_activo or self._crossfade_en_curso:
+            return
+        fila = self.panel.fila_reproduciendo()
+        if fila < 0 or fila == self._fila_pisador_outro_disparado:
+            return
+        if self.panel.posicion_pisador_en_fila(fila) != "final":
+            return
+        if restante_ms <= 0 or restante_ms > UMBRAL_DISPARO_PISADOR_OUTRO_MS:
+            return
+        self._fila_pisador_outro_disparado = fila
+        self._disparar_pisador_si_corresponde(fila)
+
     def _disparar_pisador_si_corresponde(self, fila: int, aplicar_ducking: bool = True):
         ruta_pisador = self.panel.ruta_pisador_en_fila(fila)
         if not ruta_pisador:

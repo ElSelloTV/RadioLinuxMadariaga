@@ -43,7 +43,7 @@ from PySide6.QtCore import Qt, QTimer, QTime, QDate
 from core.audio_engine import MotorAudio
 from config.settings import (
     cargar_playlist_publicidad, guardar_playlist_publicidad, registrar_error, registrar_evento,
-    titulo_bloque_sin_prefijo_hora,
+    titulo_bloque_sin_prefijo_hora, vigencia_activa,
 )
 
 DEBOUNCE_GUARDADO_PUBLICIDAD_MS = 500
@@ -212,7 +212,14 @@ class GestorPublicidad:
         registrar_evento("Publicidad: Stop diferido desarmado")
 
     def _item_valido(self, item) -> bool:
-        return item is not None and bool(item.data(0, Qt.ItemDataRole.UserRole))
+        """Pedido explícito (Dinesat): un ítem con vigencia de fecha
+        vencida/no iniciada se saltea acá mismo, como si no fuera
+        válido — mismo camino que ya usan todos los que llaman a
+        _item_valido() para avanzar, sin cortar la emisión ni tocar
+        el ítem (sigue en la lista, se saltea cada vez que le toca)."""
+        if item is None or not item.data(0, Qt.ItemDataRole.UserRole):
+            return False
+        return vigencia_activa(self.ventana.vigencia_de_item(item))
 
     def _bloque_ya_disponible(self, item_bloque) -> bool:
         """True si ya llegó (o pasó) la hora asignada al bloque, o si
@@ -568,12 +575,15 @@ class GestorPublicidad:
             for j in range(nodo_bloque.childCount()):
                 hijo = nodo_bloque.child(j)
                 analisis = self.ventana.analisis_de_item(hijo)
+                vigencia = self.ventana.vigencia_de_item(hijo)
                 items.append({
                     "titulo": hijo.text(0), "duracion": hijo.text(1), "codigo": hijo.text(2),
                     "ruta": hijo.data(0, Qt.ItemDataRole.UserRole) or "",
                     "punto_inicio_ms": analisis.get("punto_inicio_ms") or 0,
                     "punto_fin_ms": analisis.get("punto_fin_ms"),
                     "ganancia_db": analisis.get("ganancia_db") or 0.0,
+                    "fecha_inicio": vigencia.get("fecha_inicio"),
+                    "fecha_fin": vigencia.get("fecha_fin"),
                 })
             bloques.append({"hora": hora, "titulo": titulo, "items": items})
 

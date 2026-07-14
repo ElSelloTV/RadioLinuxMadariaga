@@ -47,9 +47,9 @@ from gui.medidor_nivel import MedidorNivelDecorativo
 from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
-    GENERO_COLORES, color_texto_legible, ROL_YA_REPRODUCIDO, icono_reproducido,
+    GENERO_COLORES, color_texto_legible, ROL_YA_REPRODUCIDO, icono_reproducido, ROL_POSICION_PISADOR,
 )
-from config.settings import cargar_configuracion
+from config.settings import cargar_configuracion, registrar_reproduccion
 
 
 class PanelReproductor(QWidget):
@@ -77,6 +77,7 @@ class PanelReproductor(QWidget):
         self._arrastrando_slider = False
         self.slider_progreso = None
         self._stop_bloqueado_por_automatico = False
+        self._titulo_panel = titulo_panel
         self._construir_ui(titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso)
 
     # ------------------------------------------------------------------
@@ -404,15 +405,21 @@ class PanelReproductor(QWidget):
     # por tema, tabulado debajo. La reproducción simultánea real vive
     # en GestorPlaylist — acá solo se arma/consulta el árbol.
     # ------------------------------------------------------------------
-    def agregar_pisador(self, fila_padre: int, titulo: str, duracion: str, codigo: str, ruta: str):
+    def agregar_pisador(self, fila_padre: int, titulo: str, duracion: str, codigo: str, ruta: str,
+                         posicion: str = "inicio"):
         item_padre = self.tree.topLevelItem(fila_padre)
         if item_padre is None:
             return None
 
         self.quitar_pisador(fila_padre)  # como mucho un Pisador por tema
 
-        item = QTreeWidgetItem([f"↳ {titulo}", duracion, codigo])
+        # Posición (pedido explícito, paridad con Dinesat): "inicio"
+        # (default, se dispara al arrancar el tema) o "final" (se
+        # dispara cerca del outro) — ver core/gestor_emision.py.
+        etiqueta = f"↳ {titulo}" + (" (Outro)" if posicion == "final" else "")
+        item = QTreeWidgetItem([etiqueta, duracion, codigo])
         item.setData(0, Qt.ItemDataRole.UserRole, ruta)
+        item.setData(0, ROL_POSICION_PISADOR, posicion)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
 
         colores_genero = cargar_configuracion().get("apariencia", {}).get("colores_genero", GENERO_COLORES)
@@ -439,6 +446,12 @@ class PanelReproductor(QWidget):
         if item_padre is None or item_padre.childCount() == 0:
             return ""
         return item_padre.child(0).data(0, Qt.ItemDataRole.UserRole) or ""
+
+    def posicion_pisador_en_fila(self, fila: int) -> str:
+        item_padre = self.tree.topLevelItem(fila)
+        if item_padre is None or item_padre.childCount() == 0:
+            return "inicio"
+        return item_padre.child(0).data(0, ROL_POSICION_PISADOR) or "inicio"
 
     # ------------------------------------------------------------------
     # Quitar de la lista (NO borra el archivo, solo lo saca de acá).
@@ -482,6 +495,12 @@ class PanelReproductor(QWidget):
             # NUNCA se saca, ni cuando el ítem deja el rojo.
             item.setData(0, ROL_YA_REPRODUCIDO, True)
             item.setIcon(0, icono_reproducido())
+            # Historial de reproducción PERSISTENTE (pedido explícito,
+            # distinto del ícono de arriba: éste sobrevive un reinicio).
+            registrar_reproduccion(
+                self._titulo_panel, item.text(0), item.text(2),
+                item.data(0, Qt.ItemDataRole.UserRole) or "",
+            )
         elif estado == ESTADO_SIGUIENTE:
             color = QBrush(QColor(COLOR_SIGUIENTE))
         else:

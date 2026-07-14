@@ -10,6 +10,7 @@ fade y dispositivos de audio sin depender del motor todavía.
 
 import json
 import os
+from datetime import date
 
 DIRECTORIO_CONFIG = os.path.join(os.path.dirname(__file__), "data")
 ARCHIVO_CONFIG_GENERAL = os.path.join(DIRECTORIO_CONFIG, "config_general.json")
@@ -18,6 +19,7 @@ ARCHIVO_BIBLIOTECA = os.path.join(DIRECTORIO_CONFIG, "biblioteca.json")
 ARCHIVO_PLAYLIST_EMISION = os.path.join(DIRECTORIO_CONFIG, "playlist_emision.json")
 ARCHIVO_PLAYLIST_PUBLICIDAD = os.path.join(DIRECTORIO_CONFIG, "playlist_publicidad.json")
 ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
+ARCHIVO_HISTORIAL_REPRODUCCION = os.path.join(DIRECTORIO_CONFIG, "historial_reproduccion.txt")
 TAMAÑO_MAXIMO_LOG_BYTES = 2 * 1024 * 1024  # 2 MB — más allá de esto, rota a .anterior.txt
 
 CONFIG_POR_DEFECTO = {
@@ -124,18 +126,21 @@ def guardar_configuracion(config: dict):
     _guardar_json_atomico(ARCHIVO_CONFIG_GENERAL, config)
 
 
-def _rotar_log_si_corresponde():
-    """Si el log ya pasó TAMAÑO_MAXIMO_LOG_BYTES, lo archiva como
-    .anterior.txt (pisando la rotación previa) y arranca uno nuevo —
-    para poder dejar el log de "todo tipo de error y funcionamiento"
-    activado siempre sin que crezca sin límite en una notebook con
-    disco modesto."""
+def _rotar_archivo_si_corresponde(ruta: str):
+    """Si `ruta` ya pasó TAMAÑO_MAXIMO_LOG_BYTES, la archiva como
+    .anterior.txt (pisando la rotación previa) y arranca una nueva —
+    mismo mecanismo para cualquier archivo de log rotativo (aplicación
+    e historial de reproducción), para que ninguno crezca sin límite
+    en una notebook con disco modesto."""
     try:
-        if os.path.exists(ARCHIVO_LOG) and os.path.getsize(ARCHIVO_LOG) > TAMAÑO_MAXIMO_LOG_BYTES:
-            archivo_anterior = ARCHIVO_LOG.replace(".txt", ".anterior.txt")
-            os.replace(ARCHIVO_LOG, archivo_anterior)
+        if os.path.exists(ruta) and os.path.getsize(ruta) > TAMAÑO_MAXIMO_LOG_BYTES:
+            os.replace(ruta, ruta.replace(".txt", ".anterior.txt"))
     except OSError:
         pass
+
+
+def _rotar_log_si_corresponde():
+    _rotar_archivo_si_corresponde(ARCHIVO_LOG)
 
 
 def _escribir_log(nivel: str, mensaje: str):
@@ -164,6 +169,25 @@ def registrar_evento(mensaje: str):
     poder reconstruir la secuencia de acciones previa a un problema
     reportado (ej. "el play no respondía")."""
     _escribir_log("INFO", mensaje)
+
+
+def registrar_reproduccion(ventana: str, titulo: str, codigo: str = "", ruta: str = ""):
+    """Historial de reproducción PERSISTENTE (pedido explícito,
+    inspirado en Dinesat) — a diferencia del ícono "ya reproducido"
+    (gui/styles.py:ROL_YA_REPRODUCIDO, que solo dura la sesión actual
+    y se pierde al reiniciar), esto queda escrito en disco: qué sonó,
+    cuándo y en qué ventana, consultable después (Configuración →
+    Diagnóstico → "Ver historial de reproducción"). Mismo patrón
+    rotativo que log_aplicacion.txt, nunca crece sin límite."""
+    _asegurar_directorio()
+    _rotar_archivo_si_corresponde(ARCHIVO_HISTORIAL_REPRODUCCION)
+    from datetime import datetime
+    marca_tiempo = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(ARCHIVO_HISTORIAL_REPRODUCCION, "a", encoding="utf-8") as f:
+            f.write(f"[{marca_tiempo}] [{ventana}] {titulo} ({codigo}) - {ruta}\n")
+    except OSError:
+        pass
 
 
 # ----------------------------------------------------------------------
@@ -313,6 +337,34 @@ def titulo_bloque_sin_prefijo_hora(hora: str, texto: str) -> str:
     while texto.startswith(prefijo):
         texto = texto[len(prefijo):]
     return texto
+
+
+def vigencia_activa(vigencia: dict, hoy=None) -> bool:
+    """Vigencia de fecha por material (pedido explícito, inspirado en
+    Dinesat): `vigencia` es {"fecha_inicio": "YYYY-MM-DD"|None,
+    "fecha_fin": "YYYY-MM-DD"|None} guardado junto al ítem. Sin
+    `vigencia` (o vacío) el ítem SIEMPRE es válido — no rompe nada de
+    lo ya cargado antes de este cambio. Una fecha faltante o mal
+    formada de un lado no restringe ESE lado (fail-open, nunca se
+    silencia un ítem por un dato corrupto)."""
+    if not vigencia:
+        return True
+    hoy = hoy or date.today()
+    inicio = vigencia.get("fecha_inicio")
+    fin = vigencia.get("fecha_fin")
+    if inicio:
+        try:
+            if hoy < date.fromisoformat(inicio):
+                return False
+        except ValueError:
+            pass
+    if fin:
+        try:
+            if hoy > date.fromisoformat(fin):
+                return False
+        except ValueError:
+            pass
+    return True
 
 
 # ----------------------------------------------------------------------
