@@ -15,10 +15,10 @@ a la biblioteca (Ventana 3 - Explorador). Permite:
 import os
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QLabel
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
+    QDialogButtonBox, QLabel, QCheckBox, QDateEdit
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QDate
 
 from gui.styles import LISTA_GENEROS, GENERO_PREFIJOS_CODIGO
 
@@ -37,6 +37,8 @@ class DialogoAgregarArchivo(QDialog):
         self._genero_resultado = None
         self._item_categoria_resultado = None
         self._codigo_resultado = None
+        self._fecha_inicio_resultado = None
+        self._fecha_fin_resultado = None
 
         self._construir_ui(ruta, categoria_sugerida)
 
@@ -68,6 +70,29 @@ class DialogoAgregarArchivo(QDialog):
         self.lbl_codigo_previsto = QLabel("—")
         self.lbl_codigo_previsto.setObjectName("lblTituloBloqueActivo")
         form.addRow("Código asignado:", self.lbl_codigo_previsto)
+
+        # Vigencia de fecha (pedido explícito, opcional — pensado para
+        # publicidad con fecha de campaña): sin marcar, el material no
+        # tiene restricción de fecha, igual que siempre.
+        fila_inicio = QHBoxLayout()
+        self.chk_fecha_inicio = QCheckBox("Empieza a emitirse el:")
+        self.date_inicio = QDateEdit(QDate.currentDate())
+        self.date_inicio.setCalendarPopup(True)
+        self.date_inicio.setEnabled(False)
+        self.chk_fecha_inicio.toggled.connect(self.date_inicio.setEnabled)
+        fila_inicio.addWidget(self.chk_fecha_inicio)
+        fila_inicio.addWidget(self.date_inicio)
+        form.addRow(fila_inicio)
+
+        fila_fin = QHBoxLayout()
+        self.chk_fecha_fin = QCheckBox("Deja de emitirse el:")
+        self.date_fin = QDateEdit(QDate.currentDate())
+        self.date_fin.setCalendarPopup(True)
+        self.date_fin.setEnabled(False)
+        self.chk_fecha_fin.toggled.connect(self.date_fin.setEnabled)
+        fila_fin.addWidget(self.chk_fecha_fin)
+        fila_fin.addWidget(self.date_fin)
+        form.addRow(fila_fin)
 
         layout.addLayout(form)
 
@@ -121,6 +146,10 @@ class DialogoAgregarArchivo(QDialog):
         self._genero_resultado = self.combo_genero.currentText()
         self._item_categoria_resultado = self.combo_categoria.currentData()
         self._codigo_resultado = self.lbl_codigo_previsto.text()
+        self._fecha_inicio_resultado = self.date_inicio.date().toString("yyyy-MM-dd") \
+            if self.chk_fecha_inicio.isChecked() else None
+        self._fecha_fin_resultado = self.date_fin.date().toString("yyyy-MM-dd") \
+            if self.chk_fecha_fin.isChecked() else None
         self.accept()
 
     def resultado(self) -> dict | None:
@@ -133,4 +162,6 @@ class DialogoAgregarArchivo(QDialog):
             "genero": self._genero_resultado,
             "codigo": self._codigo_resultado,
             "item_categoria": self._item_categoria_resultado,
+            "fecha_inicio": self._fecha_inicio_resultado,
+            "fecha_fin": self._fecha_fin_resultado,
         }

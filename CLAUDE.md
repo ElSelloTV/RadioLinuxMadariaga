@@ -1475,6 +1475,150 @@ que Santiago confirme en su notebook real cuánto espacio vertical
 ganó de verdad, y que el nombre de emisora se vea bien ubicado junto
 al reloj del toolbar.
 
+### Estudio del manual de Hardata Dinesat 9/Visual y mejoras "bajo a
+medio" inspiradas ahí
+Santiago pasó el manual completo de Dinesat Visual (la referencia de
+diseño de toda esta app) y pidió comparar función por función qué
+tenemos y qué se podría sumar, ANTES de encarar los dos ítems que más
+usa: **Musicalizador Avanzado** (encadenado con **Comandos FMT**) —
+ambos quedan pendientes para una ronda dedicada, ver roadmap. Quedó
+EXPLÍCITAMENTE afuera de cualquier propuesta todo lo que depende de
+una cadena de emisoras (Satélite+Tonos/RS232/Reemplazo de Música,
+comandos PLAY LOCAL/STOP LOCAL/SYNC/REC/PGM1/PGM2, Server de Backup)
+— Santiago fue explícito: "Satélite, Remoto, no me gusta", esta app es
+para UNA sola emisora standalone. También quedaron afuera: video/NDI/
+switcher (la app es de audio), RDS (declinado en una ronda anterior),
+acceso web multiusuario (arquitectura cliente-servidor grande, no
+aplica a una app de escritorio de un operador), extractor de CD
+(hardware legacy), Contestador Telefónico SIP (necesita línea/SIP),
+Grabador Continuo (**declinado por Santiago en esta ronda**: "los
+micrófonos no están enchufados a la PC, la grabación del master seria
+siempre de la música... no tiene sentido" — a reconsiderar el día que
+conecte la consola por USB a la PC), Asistente en vivo/soundboard y
+"Anuncio" (concepto de Dinesat distinto del Pisador, atado a un tema
+específico por código — Santiago pidió encararlo junto con el
+Musicalizador Avanzado, ya que en Dinesat se configura desde ahí).
+
+De los candidatos "bajo a medio" que SÍ se pidieron para esta ronda,
+uno quedó fuera del pedido en vivo (implementado):
+
+**a) Vigencia de fecha por material (pedido explícito, alcance
+acotado a Ventana 1/Publicidad — es el caso de uso real, "campaña que
+vence")**: nuevo rol `ROL_VIGENCIA` (`gui/styles.py`) con
+`{"fecha_inicio", "fecha_fin"}` (ambos opcionales, `None` = sin
+restricción) y `config/settings.vigencia_activa(vigencia, hoy=None)`
+— función PURA (sin Qt), fail-open ante una fecha faltante o corrupta
+(nunca silencia un ítem por un dato mal formado). Se puede fijar al
+IMPORTAR un archivo (`DialogoAgregarArchivo`, checkbox + `QDateEdit`
+por cada fecha) o editar DESPUÉS sobre un material ya cargado con el
+nuevo ítem de menú contextual "📅 Vigencia..." de Ventana 3
+(`gui/dialogo_vigencia.py`, dialogo chico reutilizable, mismo patrón
+de checkbox+`QDateEdit` que ya usaba `dialogo_duplicar_programacion.py`).
+La vigencia VIAJA con el ítem igual que `ROL_ANALISIS_AUDIO` (mismo
+patrón ya establecido) — se propaga en `VentanaPublicidad.
+agregar_tanda()`/`cargar_bloques()`, en el drag&drop
+(`MainWindow._on_archivo_soltado_publicidad`) y en las 4 rutas del
+Programador que tocan un ítem (`_agregar_registro_a_bloque`,
+`_reemplazar_seleccionado`, `_cargar_programacion_existente`,
+`_serializar_bloques`) — así sobrevive guardar/cargar una programación
+completa. El gating real vive en
+`GestorPublicidad._item_valido()` (`core/playlist_manager.py`): un
+ítem fuera de vigencia se trata como inválido y se SALTEA al buscar
+el próximo candidato, exactamente igual que Dinesat describe ("En las
+ventanas de Emisión simplemente salteará el material, continuando con
+la reproducción normalmente, sin detener la emisión") — nunca se
+borra solo, sigue en la lista, se saltea cada vez que le toca. A
+propósito NO se extendió a Ventana 2/Auxiliar en esta ronda (vigencia
+de fecha es un concepto de campaña publicitaria, no de música) — si
+Santiago lo pide para música más adelante, es la misma extensión.
+
+**b) Historial de reproducción PERSISTENTE (pedido explícito,
+distinto del ícono "ya reproducido" que solo dura la sesión)**:
+`config/settings.registrar_reproduccion(ventana, titulo, codigo, ruta)`
+escribe una línea con timestamp en `config/data/
+historial_reproduccion.txt`, mismo mecanismo de rotación que
+`log_aplicacion.txt` (rota a `.anterior.txt` pasados 2MB —
+`_rotar_archivo_si_corresponde()` se generalizó a partir de
+`_rotar_log_si_corresponde()` para poder reusarla en los dos
+archivos). Se dispara desde el mismo punto donde ya se pone el ícono
+de "ya reproducido" — `_pintar_item()` en `panel_reproductor.py`
+(Ventana 2/Auxiliar, usa `self._titulo_panel` como identificador de
+ventana) y en `ventana_publicidad.py` (Ventana 1, hardcodeado
+"Publicidad"). "Consultable después" (pedido explícito): botón nuevo
+"📊 Ver historial de reproducción" en Configuración → Diagnóstico,
+mismo patrón que el botón "Ver log" ya existente (abre el archivo de
+texto con el visor por defecto del sistema vía `QDesktopServices`).
+
+**c) Pisador también en el Outro (pedido explícito, extiende el motor
+de Pisador ya maduro de Ventana 2/Auxiliar — Ventana 1 no tiene
+Pisador, no aplica ahí)**: en vez de dos pisadores simultáneos por
+tema, se agregó una POSICIÓN al Pisador único ya existente —
+`ROL_POSICION_PISADOR` (`gui/styles.py`), `"inicio"` (default, mismo
+comportamiento de siempre) o `"final"`. Elegible en
+`DialogoElegirPisador` (dos radio buttons "Al empezar el tema (Intro)"
+/ "Al terminar el tema (Outro)") — el drag&drop directo de un Pisador
+sobre un tema sigue asignando "inicio" sin cambios (solo el flujo del
+diálogo ofrece elegir). Visualmente el ítem anidado muestra "(Outro)"
+al final del título si corresponde. En el motor
+(`core/gestor_emision.py`): los dos puntos que ya disparaban el
+Pisador al ARRANCAR el tema (`_reproducir_fila`, `_iniciar_crossfade`)
+ahora se saltean si la posición es "final"; un nuevo
+`_chequear_pisador_outro()`, colgado de la MISMA señal
+`restante_ms_cambio` que ya usa el crossfade
+(`UMBRAL_DISPARO_PISADOR_OUTRO_MS = 3000`), dispara
+`_disparar_pisador_si_corresponde()` — la MISMA función que ya usaba
+el Pisador de inicio, sin duplicar nada de la lógica de ducking/
+generación/fade — cuando falta poco para el final. Guard
+`_fila_pisador_outro_disparado` evita re-disparar en cada tick una vez
+que ya sonó para esa fila (se resetea a -1 cada vez que arranca un
+tema nuevo). **Limitación conocida y documentada a propósito** (mismo
+criterio que ya se usó en su momento para el Pisador de inicio +
+crossfade, antes de resolverse en una ronda posterior): si hay un
+crossfade EN CURSO sobre ese mismo ítem, el Pisador de Outro NO se
+dispara — evita competir con la propia rampa de volumen del crossfade
+sobre el mismo motor; si el crossfade corta la reproducción antes de
+que le toque sonar, se revisa con audio real en una ronda futura si
+hace falta, igual que se hizo antes con el Pisador de inicio. **Bug
+real corregido de paso**: `VentanaEmision`/`VentanaAuxiliar`
+(`gui/ventana_emision.py`/`gui/ventana_auxiliar.py`) NO delegaban
+`posicion_pisador_en_fila()` al panel — mismo tipo de bug ya
+documentado antes ("cuando un wrapper delega en PanelReproductor, hay
+que delegar TODOS los métodos que el core necesita"), atrapado por los
+tests nuevos de esta ronda antes de llegar a Santiago.
+
+**d) Función de selección aleatoria reutilizable sobre categoría/
+subcategoría (pedido explícito, preparación para el Musicalizador
+Avanzado — "es importante ir teniendo escrito la función aleatoria...
+para que siempre suene temas musicales diferentes todos los días")**:
+`VentanaExplorador.listar_registros_de_categoria(item_categoria,
+recursivo=True)` (reutiliza el helper recursivo `_para_cada_categoria`
+ya existente, pasándole la categoría como punto de partida en vez de
+recorrer toda la biblioteca) y `elegir_aleatorio_de_categoria(
+item_categoria, recursivo=True, excluir_rutas=None)` — esta última
+usa `random.choice()` sobre los candidatos, y si `excluir_rutas` (para
+más adelante: "no repetir los últimos N temas") vacía la lista de
+candidatos, IGNORA la exclusión antes que devolver `None` (mejor
+repetir un tema a dejar un hueco de silencio). Por ahora son funciones
+de librería sin ningún botón que las use todavía — el enganche real
+llega con el Musicalizador Avanzado.
+
+Probado con 22 tests nuevos dedicados (vigencia: item inválido antes/
+después/dentro del rango, `_item_valido`/`_avanzar` la respetan,
+persistencia ida y vuelta en `playlist_publicidad.json`, diálogo de
+alta y de edición; historial: se escribe al marcar reproduciendo en
+V1 y V2; Pisador de Outro: no dispara al arrancar, dispara cerca del
+final, no se re-dispara, se bloquea con un crossfade en curso, el de
+Inicio sigue sin cambios, el diálogo expone la posición elegida;
+aleatorio: recursivo suma subcategorías, no-recursivo no, siempre
+elige dentro del alcance dado, exclusión no vacía la selección,
+categoría vacía da `None`) + suite de regresión completa sin fallos
+nuevos (mismos 4 fallos preexistentes de siempre). Falta que Santiago
+pruebe con datos reales: vigencia con una tanda real vencida, el
+Pisador de Outro con audio real (esta ronda, como toda vez que se
+toca este motor, no se puede probar con VLC real en el sandbox), y
+que confirme el criterio de "excluir_rutas nunca deja hueco" antes de
+que el Musicalizador Avanzado lo use de verdad.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -2117,6 +2261,40 @@ todo el resto.
     preexistentes de siempre). Falta que Santiago confirme cuánto
     espacio ganó de verdad en su pantalla y que el nombre de emisora
     se vea bien ubicado junto al reloj del toolbar.
+26. ~~Estudio del manual de Dinesat + mejoras "bajo a medio"~~ —
+    Santiago pasó el manual completo de Dinesat Visual; se comparó
+    función por función contra lo ya implementado y se propuso (vía
+    `AskUserQuestion`) una lista de candidatos, descartando a propósito
+    todo lo de cadena de emisoras (Satélite/Remoto — "no me gusta"),
+    video/NDI, RDS (ya declinado antes), acceso web multiusuario,
+    SIP/telefonía y extractor de CD. De lo elegido: Asistente en vivo
+    (soundboard) y Grabador Continuo quedaron explícitamente pausados
+    (el segundo porque "los micrófonos no están enchufados a la PC,
+    la grabación del master sería siempre de la música... no tiene
+    sentido" hasta que Santiago conecte la consola por USB — cambio
+    físico pendiente de su lado). Implementado en esta ronda: (a)
+    vigencia de fecha por material (Ventana 1/Publicidad, un ítem
+    fuera de rango se saltea sin cortar el aire); (b) historial de
+    reproducción PERSISTENTE (además del ícono de sesión ya existente,
+    consultable en Configuración → Diagnóstico); (c) Pisador también
+    en el Outro (extiende el motor de Pisador ya maduro con una
+    posición inicio/final, elegible desde el diálogo — bug real de
+    delegación faltante en `VentanaEmision`/`VentanaAuxiliar` atrapado
+    por los tests antes de llegar a Santiago); (d) función de
+    selección aleatoria reutilizable sobre categoría/subcategoría —
+    preparación explícita para el Musicalizador Avanzado, sin ningún
+    botón que la use todavía. Implementado y probado (22 tests nuevos
+    + suite de regresión completa sin fallos nuevos, mismos 4
+    preexistentes de siempre). **Próximo paso acordado con Santiago**:
+    Musicalizador Avanzado encadenado con Comandos FMT — los dos temas
+    que más usa, quedan para una ronda dedicada. Clima también
+    pendiente: Santiago va a pasar la fuente de datos meteorológicos
+    (página web) antes de encararlo; mientras tanto, pensar dónde
+    encaja en la UI (candidato natural: una ventana nueva tipo
+    "Ventana Clima" en el menú Emisión, más una categoría de tipo HTH
+    en el Explorador y un tab en Configuración para ciudad/unidades —
+    mismo espíritu que Dinesat, sin comprometerse a nada hasta tener
+    la fuente de datos real).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

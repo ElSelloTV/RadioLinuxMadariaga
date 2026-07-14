@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 
-from config.settings import cargar_configuracion, guardar_configuracion, ARCHIVO_LOG
+from config.settings import cargar_configuracion, guardar_configuracion, ARCHIVO_LOG, ARCHIVO_HISTORIAL_REPRODUCCION
 from core.audio_engine import MotorAudio
 from core import actualizador
 from gui.styles import LISTA_GENEROS
@@ -357,6 +357,18 @@ class VentanaConfiguracion(QDialog):
         barra_botones.addWidget(self.btn_subir_log)
         layout.addLayout(barra_botones)
 
+        nota_historial = QLabel(
+            "Historial de reproducción: registro persistente (sobrevive un\n"
+            "reinicio) de qué sonó, cuándo y en qué ventana — a diferencia\n"
+            "del ícono de \"ya reproducido\", que solo dura la sesión actual."
+        )
+        nota_historial.setObjectName("lblTituloBloqueActivo")
+        nota_historial.setWordWrap(True)
+        layout.addWidget(nota_historial)
+        btn_ver_historial = QPushButton("📊 Ver historial de reproducción")
+        btn_ver_historial.clicked.connect(self._ver_historial_reproduccion)
+        layout.addWidget(btn_ver_historial)
+
         self.lbl_estado_log = QLabel("")
         self.lbl_estado_log.setWordWrap(True)
         layout.addWidget(self.lbl_estado_log)
@@ -395,6 +407,18 @@ class VentanaConfiguracion(QDialog):
             QMessageBox.information(
                 self, "Ver log",
                 f"No se pudo abrir un visor de texto automáticamente.\nRuta del log:\n{ARCHIVO_LOG}",
+            )
+
+    def _ver_historial_reproduccion(self):
+        if not os.path.exists(ARCHIVO_HISTORIAL_REPRODUCCION):
+            QMessageBox.information(
+                self, "Ver historial", "Todavía no se registró ninguna reproducción en esta instalación.",
+            )
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(ARCHIVO_HISTORIAL_REPRODUCCION)):
+            QMessageBox.information(
+                self, "Ver historial",
+                f"No se pudo abrir un visor de texto automáticamente.\nRuta:\n{ARCHIVO_HISTORIAL_REPRODUCCION}",
             )
 
     def _subir_log(self):

@@ -365,6 +365,19 @@ ROL_ANALISIS_AUDIO = 1002
 # NUNCA se saca, ni cuando el ítem deja de estar en rojo/verde.
 ROL_YA_REPRODUCIDO = 1003
 
+# Vigencia de fecha (pedido explícito, inspirado en Dinesat): un ítem
+# de Publicidad puede tener {"fecha_inicio": "YYYY-MM-DD"|None,
+# "fecha_fin": "YYYY-MM-DD"|None} — fuera de ese rango se saltea en la
+# reproducción sin cortar el aire (ver config.settings.vigencia_activa).
+ROL_VIGENCIA = 1004
+
+# Posición del Pisador anidado (pedido explícito, paridad con
+# Dinesat): "inicio" (default, comportamiento de siempre — se dispara
+# al arrancar el tema) o "final" (se dispara cerca del final, sobre el
+# outro). Guardado en el ítem HIJO del Pisador (gui/panel_reproductor.
+# py:agregar_pisador), no en el tema principal.
+ROL_POSICION_PISADOR = 1005
+
 # Colores por género, usados en la Ventana 3 (Explorador) para pintar
 # el fondo de cada fila según el tipo de material (pedido explícito).
 GENERO_COLORES = {

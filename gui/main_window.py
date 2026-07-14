@@ -455,7 +455,10 @@ class MainWindow(QMainWindow):
             return
 
         duracion = obtener_duracion_formateada(registro["ruta"])
-        ventana.agregar_pisador(fila, registro.get("titulo", ""), duracion, registro.get("codigo", "—"), registro["ruta"])
+        ventana.agregar_pisador(
+            fila, registro.get("titulo", ""), duracion, registro.get("codigo", "—"), registro["ruta"],
+            dialogo.posicion_elegida(),
+        )
         self.statusBar().showMessage(f"Pisador '{registro.get('titulo', '')}' asignado.", 3000)
 
     # ------------------------------------------------------------------
@@ -493,6 +496,8 @@ class MainWindow(QMainWindow):
             (registro or {}).get("punto_inicio_ms") or 0,
             (registro or {}).get("punto_fin_ms"),
             (registro or {}).get("ganancia_db") or 0.0,
+            (registro or {}).get("fecha_inicio"),
+            (registro or {}).get("fecha_fin"),
         )
         bloque.setExpanded(True)
         self.statusBar().showMessage(f"Agregado a Publicidad: {titulo}", 3000)

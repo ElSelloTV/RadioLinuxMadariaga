@@ -51,6 +51,7 @@ de luz a mitad de la escritura tampoco deje el archivo corrupto.
 """
 
 import os
+import random
 import shutil
 
 from PySide6.QtWidgets import (
@@ -66,6 +67,7 @@ from gui.indicador_en_vivo import IndicadorEnVivo
 from gui.styles import GENERO_COLORES, GENERO_PREFIJOS_CODIGO, color_texto_legible
 from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
 from gui.dialogo_agregar_archivos_masivo import DialogoAgregarArchivosMasivo
+from gui.dialogo_vigencia import DialogoVigencia
 from gui.estado_ui import guardar_columnas, restaurar_columnas
 from core.analizador_audio import analizar_audio
 from core.audio_engine import obtener_duracion_formateada
@@ -514,6 +516,11 @@ class VentanaExplorador(QWidget):
             "punto_fin_ms": analisis["punto_fin_ms"] or None,
             "ganancia_db": analisis["ganancia_db"],
             "analizado": analisis["analizado"],
+            # Vigencia de fecha (pedido explícito, opcional): None =
+            # sin restricción. Editable después con el menú contextual
+            # "Vigencia..." (ver _editar_vigencia).
+            "fecha_inicio": datos.get("fecha_inicio"),
+            "fecha_fin": datos.get("fecha_fin"),
         }
 
         item_categoria = datos["item_categoria"]
@@ -561,6 +568,8 @@ class VentanaExplorador(QWidget):
                 "punto_fin_ms": analisis["punto_fin_ms"] or None,
                 "ganancia_db": analisis["ganancia_db"],
                 "analizado": analisis["analizado"],
+                "fecha_inicio": None,
+                "fecha_fin": None,
             }
             registros.append(registro)
             siguiente_numero += 1
@@ -625,6 +634,34 @@ class VentanaExplorador(QWidget):
         item.setData(0, ROL_REGISTRO, registro)
         item.setText(COL_DURACION, registro["duracion"])
         self._sincronizar_registro_en_categoria(categoria, ruta_anterior, registro)
+        self._guardar_biblioteca()
+
+    def _editar_vigencia(self, item):
+        """Vigencia de fecha (pedido explícito, inspirado en Dinesat):
+        edita fecha_inicio/fecha_fin de un material YA importado — a
+        diferencia del análisis de audio, esto es metadata pura del
+        registro, no requiere volver a analizar el archivo."""
+        if item is None:
+            return
+        registro = item.data(0, ROL_REGISTRO)
+        if not registro:
+            return
+        categoria = self._buscar_categoria_de_ruta(registro.get("ruta"))
+        if categoria is None:
+            QMessageBox.warning(self, "Vigencia", "No se encontró la categoría de este archivo.")
+            return
+
+        dialogo = DialogoVigencia(
+            registro.get("titulo", ""), registro.get("fecha_inicio"), registro.get("fecha_fin"), parent=self,
+        )
+        if dialogo.exec() != DialogoVigencia.DialogCode.Accepted:
+            return
+
+        fecha_inicio, fecha_fin = dialogo.resultado()
+        registro["fecha_inicio"] = fecha_inicio
+        registro["fecha_fin"] = fecha_fin
+        item.setData(0, ROL_REGISTRO, registro)
+        self._sincronizar_registro_en_categoria(categoria, registro.get("ruta"), registro)
         self._guardar_biblioteca()
 
     def _eliminar_archivo(self):
@@ -760,6 +797,7 @@ class VentanaExplorador(QWidget):
         accion_exportar = menu.addAction("📤 Exportar...")
         accion_reemplazar = menu.addAction("⟲ Reemplazar...")
         accion_editar = menu.addAction("🎚 Editar")
+        accion_vigencia = menu.addAction("📅 Vigencia...")
         menu.addSeparator()
         texto_eliminar = "✕ Eliminar" if len(seleccionados) <= 1 else f"✕ Eliminar {len(seleccionados)}"
         accion_eliminar = menu.addAction(texto_eliminar)
@@ -768,6 +806,7 @@ class VentanaExplorador(QWidget):
         accion_exportar.setEnabled(hay_seleccion_unica)
         accion_reemplazar.setEnabled(hay_seleccion_unica)
         accion_editar.setEnabled(hay_seleccion_unica)
+        accion_vigencia.setEnabled(hay_seleccion_unica)
         accion_eliminar.setEnabled(len(seleccionados) > 0)
 
         accion_elegida = menu.exec(self.tree_archivos.viewport().mapToGlobal(posicion))
@@ -779,6 +818,8 @@ class VentanaExplorador(QWidget):
             self._reemplazar_archivo()
         elif accion_elegida == accion_editar:
             self._editar_archivo(seleccionados[0] if seleccionados else None)
+        elif accion_elegida == accion_vigencia:
+            self._editar_vigencia(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_eliminar:
             self._eliminar_archivo()
 
@@ -856,6 +897,40 @@ class VentanaExplorador(QWidget):
 
         self._para_cada_categoria(visitar)
         return resultado
+
+    def listar_registros_de_categoria(self, item_categoria, recursivo: bool = True) -> list:
+        """Todos los registros de UNA categoría — pedido explícito,
+        base reutilizable para el Musicalizador Avanzado (programación
+        automática) que se va a construir más adelante. `recursivo=True`
+        (default) suma también los de las subcategorías; en False,
+        solo los de esa categoría puntual."""
+        if item_categoria is None:
+            return []
+        resultado = list(item_categoria.data(0, ROL_ARCHIVOS) or [])
+        if recursivo:
+            self._para_cada_categoria(
+                lambda item: resultado.extend(item.data(0, ROL_ARCHIVOS) or []), item_categoria,
+            )
+        return resultado
+
+    def elegir_aleatorio_de_categoria(self, item_categoria, recursivo: bool = True, excluir_rutas=None) -> dict | None:
+        """Selección aleatoria de UN registro de una categoría (y, por
+        defecto, sus subcategorías) — pedido explícito: "es importante
+        ir teniendo escrito la función aleatoria, ya que la vamos a
+        usar en Musicalizador Avanzado... para que siempre suene temas
+        musicales diferentes todos los días". `excluir_rutas` (ej. los
+        últimos N temas ya reproducidos) descarta esos candidatos SIN
+        cambiar la categoría de origen; si excluirlos vacía la lista,
+        se ignora la exclusión antes que devolver None (mejor repetir
+        alguno a no reproducir nada)."""
+        candidatos = self.listar_registros_de_categoria(item_categoria, recursivo)
+        if excluir_rutas:
+            filtrados = [r for r in candidatos if r.get("ruta") not in excluir_rutas]
+            if filtrados:
+                candidatos = filtrados
+        if not candidatos:
+            return None
+        return random.choice(candidatos)
 
     def buscar_registro_por_ruta(self, ruta: str) -> dict | None:
         hallazgo = {}
