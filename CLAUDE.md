@@ -1817,6 +1817,110 @@ bien con su biblioteca real, y (c) el Pisador de los ítems aleatorios
 suena — mismo motor ya validado con audio real en rondas anteriores,
 pero nunca disparado desde este camino nuevo.
 
+**Ronda de corrección tras la primera prueba real de Santiago (4 bugs
+reales, todos en el motor, no en el diseño)**: Santiago probó el
+Musicalizador/FMT apenas terminado y reportó 4 fallas concretas —
+"me parece bien el diseño y la gráfica, pero falla el motor":
+
+**a) "Quedó trabado en el FMT" — recursión infinita silenciosa (bug
+real, causa raíz de (a) y (b))**: `GestorPublicidad._reproducir_item()`,
+al detectar un Comando, ejecutaba `_ejecutar_comando()` y llamaba a
+`self._avanzar()` de nuevo — pero SIN actualizar antes
+`item_reproduciendo()`/`item_siguiente()`. La siguiente vuelta de
+`_avanzar()` volvía a resolver el candidato como el MISMO comando
+(`item_reproduciendo()` seguía apuntando al ítem ANTERIOR al comando,
+e `item_siguiente()` todavía apuntaba al propio comando, marcado verde
+antes de llegarle el turno) — recursión infinita en Python hasta el
+límite de pila, silenciada por el `sys.excepthook` global (mismo
+mecanismo ya documentado: una excepción dentro de un slot no avisa,
+la app "sigue viva" con el estado congelado justo ahí). Visualmente
+esto era EXACTAMENTE "queda en el FMT". Corregido: al ejecutar un
+Comando, `_reproducir_item()` ahora marca el comando como reproduciendo
+(para que `item_base` avance de verdad) y RECALCULA el próximo ítem
+real ANTES de volver a llamar a `_avanzar()` — `item_siguiente()` ya
+nunca vuelve a apuntar al comando que se acaba de ejecutar, así que no
+hay forma de que la recursión se repita sobre el mismo ítem. De paso,
+el código que marca automáticamente el "siguiente" (verde) al final de
+`_avanzar()` ahora se saltea cuando el candidato recién reproducido
+era un Comando (ese caso ya deja todo resuelto por dentro de
+`_reproducir_item()` — dejarlo correr de nuevo ahí afuera pisaba el
+ítem que acababa de quedar en rojo, marcándolo también en verde).
+
+**b) "Cargó infinitas veces el mismo archivo" — consecuencia directa
+de (a)**: cada vuelta de la recursión infinita volvía a llamar
+`iniciar_musicalizador()` completo, que generaba OTRO lote de 8 ítems
+y los apilaba arriba de los anteriores — con una sola vuelta ya eran
+8 ítems duplicados, y con la recursión sin freno, docenas/cientos
+antes de que Python cortara por límite de pila. Con (a) corregido, el
+comando se ejecuta UNA sola vez por disparo — confirmado con un test
+que cuenta las llamadas reales a `generar_items()` y falla si se
+disparan más de 3 veces. Si a Santiago le sigue pareciendo "el mismo
+archivo repetido" con una categoría real, es esperable si esa
+categoría tiene MUY pocos archivos (un lote de 8 ítems repite el
+esquema del formato tantas veces como haga falta para completarlo —
+con 1 solo archivo en la categoría, los 8 van a ser el mismo; con más
+archivos, el no-repetir por historial entra a jugar).
+
+**c) "Antes de cargar la musicalización del FMT, debe limpiar la
+ventana 2" — no implementado, corregido**: `GestorPlaylist.
+iniciar_musicalizador()` ahora limpia TODO lo que hubiera en Emisión
+(ítems sueltos del operador, o el lote de un formato anterior) ANTES
+de generar el lote nuevo — un Comando FMT REEMPLAZA el contenido, no
+lo acumula. Nuevo método `PanelReproductor.limpiar_items()` (detiene
+el motor si algo estaba sonando, limpia las referencias
+`_item_reproduciendo`/`_item_siguiente` ANTES de vaciar el árbol para
+nunca tocar un `QTreeWidgetItem` ya eliminado, y recién ahí
+`tree.clear()`). **Bug real de delegación atrapado por los tests antes
+de llegar a Santiago** (mismo patrón ya documentado varias veces en
+este archivo): `GestorPlaylist.panel` es el wrapper
+(`VentanaEmision`/`VentanaAuxiliar`), no `PanelReproductor` directo —
+`limpiar_items()` no estaba delegado en ninguno de los dos wrappers, así
+que la primera versión de este fix tiraba `AttributeError` en
+silencio (atrapado por el mismo `try/except` amplio de
+`_ejecutar_comando`, que hacía que el Comando pareciera "no hacer
+nada" sin ningún error visible). Corregido agregando la delegación en
+ambos wrappers. **Regla reafirmada**: cuando un wrapper delega
+métodos en `PanelReproductor`, hay que delegar TODOS los que el core
+necesita — cada vez que se agrega un método nuevo al core que usa
+`self.panel.algo()`, hay que sumarlo a los dos wrappers de una.
+Importante: la recarga CONTINUA de este MISMO formato mientras ya está
+sonando (`_generar_lote_musicalizador()`, disparada por `_avanzar()`
+cuando el último ítem generado queda en cola) NUNCA limpia — eso
+cortaría la música que está sonando; la limpieza es EXCLUSIVA del
+momento en que un Comando FMT se dispara de nuevo.
+
+**d) "Si es el último ítem de la ventana 1, debe ir en automático a la
+ventana 2" — resuelto como consecuencia directa de (a)**: con la
+recursión infinita corregida, el mecanismo de fin de bloque/fin de
+reproducción YA EXISTENTE (Ciclo Automático, ver más arriba) vuelve a
+dispararse con normalidad cuando un Comando FMT resulta ser el último
+ítem reproducible: al recalcular correctamente `item_siguiente()`
+DESPUÉS del comando, si no hay nada más, `_avanzar()` cae en el mismo
+camino de siempre (`_finalizar_bloque_automatico()` con un bloque
+disparado por horario, o `_notificar_fin_reproduccion()` en
+reproducción continua normal) — no hizo falta ninguna lógica nueva,
+solo que (a) dejara de "atascar" la máquina de estados antes de
+llegar ahí.
+
+Probado con 5 tests nuevos dedicados (`test_musicalizador_fixes.py`,
+sobre el flujo REAL de avance natural — fin de ítem disparando
+`_avanzar()`, no un llamado directo a `_ejecutar_comando()` como
+hacían los tests de la ronda anterior, que por eso no habían atrapado
+estos 4 bugs): el Comando dispara la generación exactamente una vez
+(contador sobre `generar_items()` con freno a las 3 llamadas), la
+reproducción de Ventana 1 sigue con el ítem DESPUÉS del comando (no
+queda trabada), Emisión limpia su lote anterior al re-disparar un
+Comando FMT, y un Comando FMT como último ítem de un bloque disparado
+por el modo Automático finaliza el bloque (vuelta a Emisión) igual
+que cualquier otro fin de bloque — más la suite de regresión completa
+sin fallos nuevos (mismos 3 fallos preexistentes de siempre:
+`test_confirmaciones.py`, `test_log_git.py`, `test_ventana3.py`).
+**Sigue sin poder probarse con audio/VLC real** (limitación de
+siempre del sandbox): falta que Santiago repita su prueba original
+(bloque con un Comando FMT en Ventana 1, categoría con más de un
+archivo esta vez) y confirme que ahora sí avanza solo, genera un lote
+razonable, limpia lo anterior, y vuelve sola a Emisión al terminar.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -2521,6 +2625,33 @@ todo el resto.
     fallos nuevos). Falta que Santiago lo pruebe con audio real y su
     biblioteca real: armar un formato, encadenarlo con un Comando FMT,
     y confirmar que Emisión se llena sola de forma continua.
+29. ~~Corrección del motor del Musicalizador/FMT tras la primera
+    prueba real de Santiago~~ — 4 bugs reales reportados de una
+    ("me parece bien el diseño y la gráfica, pero falla el motor"),
+    los 4 con la MISMA causa raíz: `GestorPublicidad._reproducir_item()`
+    ejecutaba un Comando FMT y recursaba sobre `_avanzar()` sin
+    actualizar antes `item_reproduciendo()`/`item_siguiente()` — la
+    vuelta siguiente volvía a resolver el MISMO comando como
+    candidato, disparando una recursión infinita silenciada por el
+    `sys.excepthook` global (por eso "quedaba trabado en el FMT" sin
+    ningún error visible, y cada vuelta de la recursión volvía a
+    generar y apilar otro lote de 8 ítems — "cargó infinitas veces el
+    mismo archivo"). Corregido marcando el comando como reproduciendo
+    y recalculando el próximo ítem ANTES de recursar. De paso: un
+    Comando FMT ahora LIMPIA Emisión antes de cargar el lote nuevo
+    (`PanelReproductor.limpiar_items()`, nuevo — atrapado en el camino
+    un bug real de delegación faltante en `VentanaEmision`/
+    `VentanaAuxiliar`, mismo patrón ya documentado varias veces en
+    este archivo), y la vuelta automática a Ventana 2 cuando el
+    Comando FMT es el último ítem de un bloque quedó resuelta sola, sin
+    tocar nada más, en cuanto la recursión infinita dejó de "atascar"
+    la máquina de estados antes de llegar ahí. Probado con 5 tests
+    nuevos sobre el flujo REAL de avance natural (fin de ítem, no un
+    llamado directo a la ejecución del comando como hacían los tests
+    de la ronda anterior — por eso no habían atrapado esto) + suite de
+    regresión completa sin fallos nuevos. Falta que Santiago repita su
+    prueba original con una categoría con más de un archivo y confirme
+    los 4 puntos.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

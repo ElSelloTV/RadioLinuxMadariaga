@@ -292,6 +292,18 @@ class PanelReproductor(QWidget):
         self.tree.addTopLevelItem(item)
         return item
 
+    def limpiar_items(self):
+        """Vacía la lista por completo (pedido explícito: un Comando
+        FMT reemplaza el contenido de Emisión, no lo acumula arriba de
+        lo que hubiera antes). A diferencia de `quitar_item()`, esto NO
+        respeta el bloqueo de rojo/verde — el propio operador pidió el
+        reemplazo total al insertar el comando FMT en su programación,
+        así que limpia las referencias ANTES de vaciar el árbol (nunca
+        tocar un QTreeWidgetItem ya eliminado)."""
+        self.marcar_reproduciendo(-1)
+        self.marcar_siguiente(-1)
+        self.tree.clear()
+
     def marcar_reproduciendo(self, fila: int):
         self._pintar_item(self._item_reproduciendo, ESTADO_NORMAL)
         item = self.tree.topLevelItem(fila)
