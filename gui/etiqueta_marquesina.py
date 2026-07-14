@@ -27,8 +27,13 @@ class EtiquetaMarquesina(QWidget):
         self._offset = 0
         self._ancho_texto = 0
         self._necesita_scroll = False
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumHeight(30)
+        # Pedido explícito ("las ventanas de antes y luego deberían
+        # ser mucho más angosta"): Preferred en vez de Expanding — el
+        # frame que la contiene ahora se agrega con AlignLeft (ver
+        # panel_reproductor.py / ventana_publicidad.py), así el
+        # sticker ya no reclama todo el ancho disponible del panel.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(22)
 
         self._timer = QTimer(self)
         self._timer.setInterval(self._INTERVALO_MS)
@@ -47,14 +52,14 @@ class EtiquetaMarquesina(QWidget):
         return self._texto
 
     def sizeHint(self) -> QSize:
-        return QSize(220, 30)
+        # Antes 220px: pedido explícito de achicarlo bastante para que
+        # el cartel "Ahora"/"Luego" no quede tan grande — con
+        # marquesina, un título largo se sigue viendo completo
+        # desplazándose, no hace falta ancho fijo grande.
+        return QSize(130, 22)
 
     def minimumSizeHint(self) -> QSize:
-        # Ancho "ideal" 220px (sizeHint) pero el mínimo real es chico
-        # a propósito: así el panel entero (Ventana 2) puede achicarse
-        # de verdad — con marquesina, el texto igual se sigue viendo
-        # completo desplazándose, no hace falta ancho fijo grande.
-        return QSize(40, 30)
+        return QSize(40, 22)
 
     def resizeEvent(self, evento):
         super().resizeEvent(evento)

@@ -357,6 +357,12 @@ ESTADO_SIGUIENTE = 2
 # MotorAudio.reproducir() igual que ya hacía GestorExplorador.
 ROL_ANALISIS_AUDIO = 1002
 
+# Marca "ya se reprodujo en esta sesión" (pedido explícito: un ícono a
+# la izquierda, sin texto, para saber de un vistazo qué ítems ya
+# sonaron) — se pone al arrancar a sonar (ESTADO_REPRODUCIENDO) y ya
+# NUNCA se saca, ni cuando el ítem deja de estar en rojo/verde.
+ROL_YA_REPRODUCIDO = 1003
+
 # Colores por género, usados en la Ventana 3 (Explorador) para pintar
 # el fondo de cada fila según el tipo de material (pedido explícito).
 GENERO_COLORES = {
@@ -397,3 +403,33 @@ def color_texto_legible(color_hex: str) -> str:
         return "white"
     luminancia = 0.299 * r + 0.587 * g + 0.114 * b
     return "black" if luminancia > 150 else "white"
+
+
+_ICONO_YA_REPRODUCIDO = None
+
+
+def icono_reproducido():
+    """Tilde verde "ya reproducido" (pedido explícito: "una marca a la
+    izquierda, con algún ícono de OK... no escrito, solo ícono"). Se
+    arma a mano con QPainter (no hay assets reales de Dinesat) y se
+    cachea en un módulo-global — un QPixmap no se puede construir
+    antes de que exista QApplication, así que la primera llamada real
+    ocurre en tiempo de ejecución, nunca al importar este módulo."""
+    global _ICONO_YA_REPRODUCIDO
+    if _ICONO_YA_REPRODUCIDO is None:
+        from PySide6.QtGui import QIcon, QPixmap, QPainter, QPen, QPolygon, QColor as _QColor
+        from PySide6.QtCore import Qt as _Qt, QPoint
+
+        pixmap = QPixmap(14, 14)
+        pixmap.fill(_Qt.GlobalColor.transparent)
+        pintor = QPainter(pixmap)
+        pintor.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        lapiz = QPen(_QColor("#2ecc71"))
+        lapiz.setWidth(2)
+        lapiz.setCapStyle(_Qt.PenCapStyle.RoundCap)
+        lapiz.setJoinStyle(_Qt.PenJoinStyle.RoundJoin)
+        pintor.setPen(lapiz)
+        pintor.drawPolyline(QPolygon([QPoint(2, 7), QPoint(6, 11), QPoint(12, 3)]))
+        pintor.end()
+        _ICONO_YA_REPRODUCIDO = QIcon(pixmap)
+    return _ICONO_YA_REPRODUCIDO

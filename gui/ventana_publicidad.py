@@ -41,6 +41,7 @@ from gui.medidor_nivel import MedidorNivelDecorativo
 from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
+    ROL_YA_REPRODUCIDO, icono_reproducido,
 )
 from config.settings import cargar_configuracion, titulo_bloque_sin_prefijo_hora
 
@@ -64,6 +65,7 @@ class VentanaPublicidad(QWidget):
     solicitud_abrir_programador = Signal()
     solicitud_cargar_programacion_hoy = Signal()
     item_doble_click = Signal(object)   # emite el QTreeWidgetItem clickeado
+    programacion_cargada = Signal()     # cada vez que cargar_bloques() reemplaza el árbol (preload)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -136,7 +138,10 @@ class VentanaPublicidad(QWidget):
         fila_ahora.addWidget(lbl_ahora)
         self.lbl_titulo_actual = EtiquetaMarquesina()
         fila_ahora.addWidget(self.lbl_titulo_actual)
-        layout_grupo.addWidget(frame_ahora)
+        # AlignLeft (pedido explícito, "mucho más angosta"): sin esto,
+        # QVBoxLayout estira el frame a todo el ancho del panel sin
+        # importar el tamaño de sus hijos.
+        layout_grupo.addWidget(frame_ahora, 0, Qt.AlignmentFlag.AlignLeft)
 
         frame_luego = QFrame()
         frame_luego.setObjectName("frameLuego")
@@ -147,14 +152,16 @@ class VentanaPublicidad(QWidget):
         fila_luego.addWidget(lbl_luego)
         self.lbl_titulo_siguiente = EtiquetaMarquesina()
         fila_luego.addWidget(self.lbl_titulo_siguiente)
-        layout_grupo.addWidget(frame_luego)
+        layout_grupo.addWidget(frame_luego, 0, Qt.AlignmentFlag.AlignLeft)
 
         # --- 2) Controles de reproducción — grilla estilo Dinesat
         # (pedido explícito): botón VERDE grande a la izquierda
         # (Play/"Siguiente con fundido" según haya algo sonando o no),
-        # y a la derecha 2 filas: arriba Stop/Fade-Stop, abajo
-        # Pausa/Cut/Stop diferido/AUTOMÁTICO (el 4to botón, exclusivo
-        # de esta ventana). ---
+        # y a la derecha 2 filas: arriba Stop/AUTOMÁTICO (4to botón,
+        # exclusivo de esta ventana — pedido explícito: más a la vista
+        # que en el lugar donde antes estaba Fade), abajo Pausa/Cut/
+        # Stop diferido/Fade-Stop (Fade pasó al lugar que dejó libre
+        # AUTOMÁTICO). ---
         barra_botones = QHBoxLayout()
         barra_botones.setSpacing(4)
 
@@ -185,7 +192,11 @@ class VentanaPublicidad(QWidget):
         self.btn_stop.clicked.connect(self._on_click_stop)
         self.btn_fade_stop.clicked.connect(self._on_click_fade_stop)
         fila_superior.addWidget(self.btn_stop)
-        fila_superior.addWidget(self.btn_fade_stop)
+        # AUTOMÁTICO pasa a la fila de arriba, en el lugar donde
+        # estaba FADE (pedido explícito: "más intuitivo y a la vista,
+        # que es más importante") — FADE se va al lugar que dejó
+        # libre AUTOMÁTICO en la fila de abajo (ver más abajo).
+        fila_superior.addWidget(self.btn_automatico)
         grilla.addLayout(fila_superior)
 
         fila_inferior = QHBoxLayout()
@@ -210,8 +221,8 @@ class VentanaPublicidad(QWidget):
         fila_inferior.addWidget(self.btn_pausa)
         fila_inferior.addWidget(self.btn_cut)
         fila_inferior.addWidget(self.btn_stop_diferido)
-        # 4to botón exclusivo de Ventana 1 (pedido explícito).
-        fila_inferior.addWidget(self.btn_automatico)
+        # FADE ocupa el 4to lugar que dejó AUTOMÁTICO (pedido explícito).
+        fila_inferior.addWidget(self.btn_fade_stop)
         grilla.addLayout(fila_inferior)
 
         barra_botones.addLayout(grilla)
@@ -273,6 +284,7 @@ class VentanaPublicidad(QWidget):
                     item.get("ganancia_db") or 0.0,
                 )
             nodo_bloque.setExpanded(True)
+        self.programacion_cargada.emit()
 
     def agregar_tanda(self, nodo_bloque, titulo: str, duracion: str, codigo: str, ruta: str = "",
                        punto_inicio_ms: int = 0, punto_fin_ms: int = None, ganancia_db: float = 0.0):
@@ -574,6 +586,11 @@ class VentanaPublicidad(QWidget):
         item.setData(0, ROL_ESTADO_ITEM, estado)
         if estado == ESTADO_REPRODUCIENDO:
             color_fondo = QBrush(QColor(COLOR_REPRODUCIENDO))
+            # Marca "ya reproducido" (pedido explícito, ícono a la
+            # izquierda, sin texto) — se pone al arrancar a sonar y ya
+            # NUNCA se saca, ni cuando el ítem deja el rojo.
+            item.setData(0, ROL_YA_REPRODUCIDO, True)
+            item.setIcon(0, icono_reproducido())
         elif estado == ESTADO_SIGUIENTE:
             color_fondo = QBrush(QColor(COLOR_SIGUIENTE))
         else:

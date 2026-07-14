@@ -47,7 +47,7 @@ from gui.medidor_nivel import MedidorNivelDecorativo
 from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
-    GENERO_COLORES, color_texto_legible,
+    GENERO_COLORES, color_texto_legible, ROL_YA_REPRODUCIDO, icono_reproducido,
 )
 from config.settings import cargar_configuracion
 
@@ -130,7 +130,10 @@ class PanelReproductor(QWidget):
         fila_titulo.addWidget(lbl_ahora)
         self.lbl_titulo_actual = EtiquetaMarquesina()
         fila_titulo.addWidget(self.lbl_titulo_actual)
-        layout_grupo.addWidget(frame_ahora)
+        # AlignLeft (pedido explícito, "mucho más angosta"): sin esto,
+        # QVBoxLayout estira el frame a todo el ancho del panel sin
+        # importar el tamaño de sus hijos.
+        layout_grupo.addWidget(frame_ahora, 0, Qt.AlignmentFlag.AlignLeft)
 
         frame_luego = QFrame()
         frame_luego.setObjectName("frameLuego")
@@ -141,7 +144,7 @@ class PanelReproductor(QWidget):
         fila_siguiente.addWidget(lbl_luego)
         self.lbl_titulo_siguiente = EtiquetaMarquesina()
         fila_siguiente.addWidget(self.lbl_titulo_siguiente)
-        layout_grupo.addWidget(frame_luego)
+        layout_grupo.addWidget(frame_luego, 0, Qt.AlignmentFlag.AlignLeft)
 
         # 2) Controles de reproducción — grilla estilo Dinesat (pedido
         # explícito): un botón VERDE grande a la izquierda que hace de
@@ -459,6 +462,11 @@ class PanelReproductor(QWidget):
         item.setData(0, ROL_ESTADO_ITEM, estado)
         if estado == ESTADO_REPRODUCIENDO:
             color = QBrush(QColor(COLOR_REPRODUCIENDO))
+            # Marca "ya reproducido" (pedido explícito, ícono a la
+            # izquierda, sin texto) — se pone al arrancar a sonar y ya
+            # NUNCA se saca, ni cuando el ítem deja el rojo.
+            item.setData(0, ROL_YA_REPRODUCIDO, True)
+            item.setIcon(0, icono_reproducido())
         elif estado == ESTADO_SIGUIENTE:
             color = QBrush(QColor(COLOR_SIGUIENTE))
         else:

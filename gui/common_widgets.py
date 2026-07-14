@@ -17,11 +17,43 @@ el resto de la GUI las usa por composición.
 --------------------------------------------------------
 """
 
-from PySide6.QtWidgets import QTreeWidget, QAbstractItemView, QHeaderView, QSlider, QStyle, QStyleOptionSlider
+from PySide6.QtWidgets import (
+    QTreeWidget, QAbstractItemView, QHeaderView, QSlider, QStyle, QStyleOptionSlider,
+    QStyledItemDelegate, QStyleOptionViewItem,
+)
 from PySide6.QtCore import Qt, Signal, QMimeData, QUrl
-from PySide6.QtGui import QDrag
+from PySide6.QtGui import QDrag, QPen, QColor
 
-from gui.styles import ROL_ESTADO_ITEM, ESTADO_REPRODUCIENDO
+from gui.styles import ROL_ESTADO_ITEM, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE, COLOR_SELECCION
+
+
+class DelegadoConservaColorEstado(QStyledItemDelegate):
+    """Pedido explícito (paridad Dinesat): el rojo (en punta) y el
+    verde (en cola) de un ítem NUNCA deben cambiar al seleccionarlo —
+    el celeste es solo el cursor de selección, y solo se ve como tal
+    en los ítems SIN estado. Con QSS puro esto no se puede lograr: la
+    regla ::item:selected no puede "preguntar" si el ítem tiene un
+    color propio, así que terminaba pisando igual el rojo/verde (bug
+    real reportado). Acá, si el ítem está en rojo/verde Y
+    seleccionado, se pinta SIN el flag de selección (así conserva su
+    propio color de fondo) y se agrega a mano un borde celeste fino;
+    cualquier otro ítem sigue el camino normal (QSS de siempre)."""
+
+    def paint(self, painter, option, index):
+        indice_columna_0 = index.sibling(index.row(), 0)
+        estado = indice_columna_0.data(ROL_ESTADO_ITEM)
+        if estado in (ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE) and bool(option.state & QStyle.StateFlag.State_Selected):
+            opcion = QStyleOptionViewItem(option)
+            opcion.state &= ~QStyle.StateFlag.State_Selected
+            super().paint(painter, opcion, index)
+            painter.save()
+            lapiz = QPen(QColor(COLOR_SELECCION))
+            lapiz.setWidth(2)
+            painter.setPen(lapiz)
+            painter.drawRect(option.rect.adjusted(1, 1, -2, -2))
+            painter.restore()
+        else:
+            super().paint(painter, option, index)
 
 
 class SliderBusqueda(QSlider):
@@ -156,6 +188,10 @@ class ArbolPublicidadConDrop(ArbolConDrop):
     (armar en rojo si está en silencio, encolar en verde si algo ya
     suena). Los nodos de bloque (sin ruta propia) no reaccionan."""
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setItemDelegate(DelegadoConservaColorEstado(self))
+
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             item = self.currentItem()
@@ -199,6 +235,7 @@ class ArbolReproductorConDrop(QTreeWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.viewport().setAcceptDrops(True)
+        self.setItemDelegate(DelegadoConservaColorEstado(self))
 
     def dragEnterEvent(self, event):
         if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
