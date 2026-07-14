@@ -1137,6 +1137,31 @@ prefijo "HH:MM:SS - " de un título — usado también en
 que ya haya quedado corrupta por el bug se AUTOCURA sola la próxima vez
 que se carga, sin necesitar reparar los datos a mano.
 
+**Copiar/Pegar entre bloques (implementado, pedido explícito: "un menu
+contextual donde en la selección múltiple... pueda copiar y pegar los
+elementos... en otro bloque horario, así me es más fácil
+programar")**: primer menú contextual real del árbol del Programador
+(antes todas las acciones eran solo botones) — `self.tree.
+customContextMenuRequested` conectado a `_mostrar_menu_contextual()`,
+con dos entradas: "📋 Copiar" y "📌 Pegar en este bloque" (deshabilitada
+si el portapapeles está vacío). `_copiar_seleccionados()` toma TODOS
+los ítems seleccionados (ignora bloques enteros si están mezclados en
+la selección — "copiar" es a nivel ítem, no bloque) y los serializa con
+`_serializar_item()` — un helper NUEVO extraído de `_serializar_bloques()`
+(que ahora lo reusa, en vez de tener la lógica de armar el dict
+duplicada) — así el portapapeles (`self._portapapeles`, lista de
+dicts en memoria, se pierde al cerrar la ventana, no se persiste a
+disco) usa el MISMO formato de datos que ya usa el guardado a JSON,
+sin un tipo de dato paralelo. "Pegar" resuelve el bloque destino con
+el mismo criterio ya existente (`_bloque_destino_actual()` — el bloque
+del nodo con foco, o el último bloque como fallback) y reconstruye
+cada ítem copiado con `_agregar_registro_a_bloque()`/
+`_agregar_comando_a_bloque()` según corresponda — soporta copiar y
+pegar Comandos FMT igual que tandas de audio normales. Copiar es una
+COPIA, no un mover — los ítems originales quedan intactos en su
+bloque de origen, se puede pegar el mismo portapapeles en varios
+bloques distintos sin volver a copiar.
+
 ### Paridad de diseño con Hardata Dinesat 9 (Ventana 1 y Ventana 2)
 Pedido explícito de Santiago, con 4 fotos de referencia de Dinesat 9
 ("el mejor a mi gusto"): igualar lo más posible el display y la
@@ -1921,6 +1946,118 @@ siempre del sandbox): falta que Santiago repita su prueba original
 archivo esta vez) y confirme que ahora sí avanza solo, genera un lote
 razonable, limpia lo anterior, y vuelve sola a Emisión al terminar.
 
+**Ronda de refinamiento tras el uso real (Pisador específico, columnas
+CLASE/TIPO/DETALLE, series de cantidad EXACTA, refill robusto incluso
+con 1 solo ítem)**: Santiago probó el Musicalizador ya andando y pidió
+4 cambios, dos de diseño y dos de motor — los de motor resultaron ser
+un cambio de fondo en cómo se genera la música, no un ajuste chico:
+
+**a) Pisador del ítem: Categoría O Archivo específico (pedido
+explícito: "debo tener las dos opciones")**: antes el Pisador de un
+ítem Específico/Aleatorio SOLO podía apuntar a una categoría (elegido
+al azar en cada generación). Ahora `DialogoItemMusicalizador` tiene un
+selector de tipo propio para el Pisador (radio "Categoría (aleatorio)"
+/ "Archivo específico", con su propio `QStackedWidget`) — igual
+concepto que el tipo del ítem principal, acotado a estas dos
+variantes. El archivo específico se elige con
+`gui/dialogo_elegir_pisador.py` (el MISMO diálogo que ya usa "Agregar
+Pisador" en Ventana 2/Auxiliar, filtrado a género "Pisador" vía
+`listar_registros_por_genero`) — su propio selector de posición
+Intro/Outro se IGNORA a propósito (el formulario del Musicalizador ya
+tiene el suyo, compartido entre ambos tipos, para no preguntar dos
+veces). Datos: `pisador_tipo: "categoria"|"especifico"` (default
+`"categoria"` — formatos guardados ANTES de este cambio siguen
+funcionando sin migración) + `pisador_ruta` (nuevo) o
+`pisador_categoria` (ya existía) según corresponda.
+`core/musicalizador.py:_resolver_pisador()` bifurca por `pisador_tipo`
+— un archivo específico SIEMPRE resuelve el mismo registro (nunca al
+azar), consistente con el resto del motor. `validar_formato()` ganó el
+aviso simétrico ("el archivo específico del Pisador ya no existe") sin
+bloquear el guardado, mismo criterio que las demás referencias.
+
+**b) Columnas CLASE / TIPO / DETALLE / PISADOR (pedido explícito: "que
+yo sepa que voy musicalizando")**: `self.lista_items`
+(`gui/ventana_musicalizador.py`) pasó de un `QListWidget` con un texto
+resumen único a un `QTreeWidget` de 4 columnas. `_texto_tipo()`
+(Específico/Aleatorio/"—" para Subformato), `_texto_detalle()` (ruta
+del archivo / camino de categoría / "nombre — N min" del subformato),
+y `_texto_pisador()` (posición + ruta o categoría del Pisador, vacío
+si no tiene) son puramente derivados del `item_config`, sin Qt.
+`_texto_clase()` sí necesita el `ventana_explorador` — decisión propia
+(no preguntada, documentada acá por si Santiago la quiere ajustar):
+para un ítem **Subformato** la CLASE es literal `"Subformato"` (es un
+contenedor, no tiene género); para un ítem **Específico**, la CLASE es
+el género REAL del archivo (`registro["genero"]`, ya cargado en la
+biblioteca); para un ítem **Aleatorio**, como apunta a una CATEGORÍA
+completa (no un archivo puntual), la CLASE se DERIVA mirando el género
+de los archivos que hay ahí: si todos comparten género, se muestra ese
+género; si están mezclados, `"(variado)"`; si la categoría está vacía
+o rota, un texto que lo indica. Se recalcula en vivo cada vez que se
+refresca la lista — nunca queda desactualizada si la biblioteca
+cambia.
+
+**c) y d) Series de cantidad EXACTA + refill que nunca corta la
+música (pedido explícito, el cambio de fondo de esta ronda)**: Santiago
+fue explícito en que el motor debía cargar "el número exacto de
+musicalización... la cantidad que haya programado. Solo se extiende si
+en la serie hay sub-formato" — esto contradecía el diseño anterior
+(`generar_items(explorador, nombre, cantidad)`, que repetía el esquema
+completo del formato las veces que hicieran falta para juntar un
+**lote fijo de 8 ítems**, `TAMAÑO_LOTE_MUSICALIZADOR`). Reemplazado por
+`generar_serie(explorador, nombre_formato)` (`core/musicalizador.py`,
+sin parámetro `cantidad`): UNA sola pasada por los ítems programados
+del formato, en orden — ni más ni menos. Un ítem Subformato SÍ sigue
+expandiéndose según SU PROPIA duración configurada (`_generar_por_duracion`,
+sin cambios ahí) — es la única forma en que una serie "se extiende",
+tal cual pidió Santiago. Cada llamada nueva resuelve los ítems
+Aleatorio de nuevo (nuevas elecciones al azar, con el mismo no-repetir
+de siempre) y mantiene los Específicos siempre iguales — así "otra
+serie diferente" (punto b de su pedido) usa "otros archivos de los
+aleatorios, el mismo específico", tal cual lo describió.
+`GestorPlaylist._generar_serie_musicalizador()` (renombrado desde
+`_generar_lote_musicalizador`) llama a `generar_serie()` sin cantidad;
+el disparo de refill sigue en el mismo lugar de siempre (`_avanzar()`,
+al marcar en verde el ÚLTIMO ítem de la lista actual, se precarga otra
+serie completa ANTES de que la reproducción llegue a quedarse sin
+nada).
+
+**Bug real encontrado y corregido de paso, mientras se revisaba este
+mecanismo**: con el lote fijo de 8 de antes, una serie chica nunca se
+notaba este problema, pero con series de cantidad EXACTA (que ahora
+pueden ser de 1 solo ítem) apareció un caso real donde el refill NUNCA
+se disparaba: el "marcar en verde el último y precargar" solo puede
+pasar si hay un "ante-último" desde donde hacerlo — con una serie de
+UN solo ítem no existe tal cosa (el ítem es a la vez el primero Y el
+último), así que nunca llegaba a marcarse nada en verde, y al terminar
+ese único ítem `_avanzar()` simplemente se rendía (`motor.detener()`)
+en vez de seguir. Corregido en `core/gestor_emision.py:_avanzar()`:
+cuando se detecta que YA NO HAY más ítems a continuación
+(`fila_siguiente >= total`) y el Musicalizador está activo, se genera
+una serie nueva AHÍ MISMO (como red de seguridad) antes de rendirse, y
+recién si TODAVÍA no alcanza (formato roto que no genera nada) se
+detiene — cubre tanto series de 1 solo ítem como cualquier otro caso
+donde el refill preventivo no llegó a tiempo. Probado con un test
+dedicado (`test_musicalizador_serie_refill.py`) que confirma el
+comportamiento general (serie de 3 ítems, precarga al marcar verde el
+último) Y el caso límite de 1 solo ítem (refill de emergencia al
+terminar, sin cortar la música).
+
+Probado con 2 tests nuevos del motor puro (Pisador específico siempre
+resuelve el mismo archivo, aviso de validación si ese archivo se
+borra) + reescritura de los tests existentes del motor para reflejar
+la nueva semántica de "una serie = cantidad exacta, sin repetir el
+esquema" (antes asumían el lote fijo de 8) + tests nuevos de
+integración GUI (columnas CLASE/TIPO/DETALLE/PISADOR, cantidad exacta
+contra el Explorador real, refill de una serie de 1 solo ítem sin
+cortar la música) + `test_musicalizador_serie_refill.py` dedicado +
+suite de regresión completa sin fallos nuevos (mismos 3 fallos
+preexistentes de siempre). **Sigue sin poder probarse con audio/VLC
+real**: falta que Santiago confirme que una serie real (por ejemplo
+sus 7 ítems del ejemplo que mandó) carga la cantidad exacta, que el
+Pisador específico se escucha, que las columnas nuevas se leen bien de
+un vistazo, y que el refill nunca corta la música al llegar al final
+de una serie — sea de 1 ítem o de 20.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -2652,6 +2789,35 @@ todo el resto.
     regresión completa sin fallos nuevos. Falta que Santiago repita su
     prueba original con una categoría con más de un archivo y confirme
     los 4 puntos.
+30. ~~Copiar/Pegar en el Programador + refinamiento del Musicalizador
+    (Pisador específico, columnas CLASE/TIPO/DETALLE, series de
+    cantidad exacta, refill robusto)~~ — dos pedidos en paralelo: (1)
+    menú contextual NUEVO en el árbol del Programador (antes todo era
+    por botones) con Copiar/Pegar sobre la selección múltiple ya
+    existente, para reprogramar el mismo ítem en otro bloque horario
+    sin rearmarlo a mano — reusa el mismo formato de serialización que
+    ya usa el guardado a JSON, portapapeles solo en memoria; (2) en el
+    Musicalizador: Pisador con selector propio Categoría/Archivo
+    específico (antes solo categoría), columnas CLASE/TIPO/DETALLE/
+    PISADOR en la lista de ítems (antes un texto resumen único) para
+    "saber qué se está musicalizando" de un vistazo, y el cambio de
+    fondo — el motor ahora genera series de cantidad EXACTA (los
+    ítems que el operador programó, ni más ni menos; un Subformato
+    sigue expandiéndose por su propia duración) en vez de un lote fijo
+    de 8 ítems repitiendo el esquema. Bug real encontrado y corregido
+    en el camino: con series muy cortas (el caso límite de 1 solo
+    ítem) el refill continuo NUNCA se disparaba — el mecanismo
+    dependía de poder marcar en verde un "ante-último" que, con 1 solo
+    ítem, no existe; corregido con un refill de emergencia en
+    `_avanzar()` cuando se detecta que no queda nada más y el
+    Musicalizador sigue activo. Implementado y probado (motor puro +
+    integración GUI + test dedicado de series/refill + suite de
+    regresión completa sin fallos nuevos). Falta que Santiago pruebe
+    con su biblioteca real: el Copiar/Pegar del Programador en su flujo
+    de armar bloques, el Pisador específico con audio real, que las
+    columnas nuevas se lean claro, y que una serie real (sus 7 ítems
+    del ejemplo, o los que programe) cargue la cantidad exacta y
+    nunca corte la música al recargar.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

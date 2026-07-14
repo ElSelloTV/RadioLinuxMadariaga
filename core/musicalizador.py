@@ -54,11 +54,28 @@ def _duracion_a_segundos(texto_duracion: str) -> int:
 
 
 def _resolver_pisador(explorador, item_config: dict):
-    """Si el ítem del formato pide Pisador (tiene una categoría de
-    Pisador configurada), elige UNO al azar de esa categoría — SIN
-    garantía de no-repetición (eso es solo para la canción principal,
-    pedido explícito). Devuelve (registro_pisador, posicion) o
-    (None, None) si no corresponde o la categoría ya no existe."""
+    """Si el ítem del formato pide Pisador, lo resuelve de una de DOS
+    formas (pedido explícito, punto a: "debo tener las dos opciones,
+    elegir un aleatorio de la categoría PISADORES, o bien elegir un
+    archivo específico de pisador") — `pisador_tipo` decide cuál:
+    - "especifico" (nuevo): SIEMPRE el mismo archivo (`pisador_ruta`).
+    - "categoria" (default, compatible con formatos ya guardados antes
+      de este cambio): uno al azar de esa categoría, SIN garantía de
+      no-repetición (eso es solo para la canción principal).
+    Devuelve (registro_pisador, posicion) o (None, None) si no
+    corresponde o la referencia ya no existe."""
+    tipo_pisador = item_config.get("pisador_tipo", "categoria")
+    posicion = item_config.get("pisador_posicion") or "inicio"
+
+    if tipo_pisador == "especifico":
+        ruta = item_config.get("pisador_ruta")
+        if not ruta:
+            return None, None
+        registro = explorador.buscar_registro_por_ruta(ruta)
+        if not registro:
+            return None, None
+        return registro, posicion
+
     ruta_categoria = item_config.get("pisador_categoria")
     if not ruta_categoria:
         return None, None
@@ -68,7 +85,7 @@ def _resolver_pisador(explorador, item_config: dict):
     registro = explorador.elegir_aleatorio_de_categoria(categoria, recursivo=True)
     if registro is None:
         return None, None
-    return registro, item_config.get("pisador_posicion") or "inicio"
+    return registro, posicion
 
 
 def _resolver_aleatorio(explorador, item_config: dict) -> dict | None:
@@ -145,35 +162,31 @@ def _generar_por_duracion(explorador, nombre_formato: str, duracion_objetivo_seg
     return resultado
 
 
-def generar_items(explorador, nombre_formato: str, cantidad: int) -> list:
-    """Punto de entrada del motor: genera hasta `cantidad` "ítems
-    concretos" ({"registro", "pisador", "pisador_posicion"})
-    recorriendo `nombre_formato` en orden y REPITIENDO el esquema
-    completo cuantas veces haga falta (pedido explícito: "siempre
-    repitiendo el esquema del musicalizador... de manera continua").
-    Lo usa GestorPlaylist (core/gestor_emision.py) para la generación
-    inicial al disparar un comando FMT y para el relleno continuo."""
-    if cantidad <= 0:
-        return []
+def generar_serie(explorador, nombre_formato: str) -> list:
+    """Punto de entrada del motor: genera UNA serie completa — la
+    cantidad EXACTA de "ítems concretos" que produce UNA sola pasada
+    por `nombre_formato`, en el orden programado (pedido explícito:
+    "debe cargar el número exacto de musicalización... la cantidad que
+    haya programado. Solo se extiende si en la serie hay sub-formato,
+    ya que en este caso carga la cantidad de ESE sub-formato" — la
+    expansión por duración de un subformato no cambia, ver
+    `_generar_por_duracion`; lo único que cambió es que el formato
+    "padre" ya NO repite su propio esquema para completar un tamaño de
+    lote artificial). Cada llamada resuelve los ítems "aleatorio" de
+    nuevo (nuevas elecciones al azar) y mantiene los "específico"
+    siempre iguales — así una serie nueva usa "otros archivos de los
+    aleatorios, el mismo específico" (pedido explícito). Lo usa
+    GestorPlaylist (core/gestor_emision.py) para la carga inicial al
+    disparar un Comando FMT y para cargar la próxima serie cuando la
+    anterior está por terminarse (relleno continuo)."""
     formato = obtener_formato(nombre_formato)
     if not formato or not formato.get("items"):
         return []
     visitados = frozenset({nombre_formato})
-
     resultado = []
-    while len(resultado) < cantidad:
-        agregados_esta_vuelta = 0
-        for item_config in formato["items"]:
-            if len(resultado) >= cantidad:
-                break
-            for concreto in _resolver_item(explorador, item_config, visitados):
-                if len(resultado) >= cantidad:
-                    break
-                resultado.append(concreto)
-                agregados_esta_vuelta += 1
-        if agregados_esta_vuelta == 0:
-            break  # el formato entero está roto/vacío — no insistir en un loop infinito
-    return resultado[:cantidad]
+    for item_config in formato["items"]:
+        resultado.extend(_resolver_item(explorador, item_config, visitados))
+    return resultado
 
 
 # ------------------------------------------------------------------
@@ -229,8 +242,14 @@ def validar_formato(explorador, nombre_formato_actual: str, items: list, todos_l
                 problemas.append({"item": i, "bloquea": True,
                                    "mensaje": f"Ítem {i}: el subformato '{nombre_sub}' genera un bucle "
                                               f"infinito con este formato — no se puede guardar así."})
-        ruta_pisador = item_config.get("pisador_categoria")
-        if ruta_pisador and explorador.buscar_categoria_por_ruta(ruta_pisador) is None:
-            problemas.append({"item": i, "bloquea": False,
-                               "mensaje": f"Ítem {i}: la categoría del Pisador ya no existe."})
+        if item_config.get("pisador_tipo") == "especifico":
+            ruta_pisador_especifico = item_config.get("pisador_ruta")
+            if ruta_pisador_especifico and not explorador.buscar_registro_por_ruta(ruta_pisador_especifico):
+                problemas.append({"item": i, "bloquea": False,
+                                   "mensaje": f"Ítem {i}: el archivo específico del Pisador ya no existe."})
+        else:
+            ruta_pisador = item_config.get("pisador_categoria")
+            if ruta_pisador and explorador.buscar_categoria_por_ruta(ruta_pisador) is None:
+                problemas.append({"item": i, "bloquea": False,
+                                   "mensaje": f"Ítem {i}: la categoría del Pisador ya no existe."})
     return problemas

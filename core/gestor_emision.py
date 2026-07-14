@@ -105,7 +105,7 @@ from PySide6.QtCore import Qt, QTimer
 
 from core.audio_engine import MotorAudio
 from core.analizador_audio import volumen_ajustado_por_ganancia
-from core.musicalizador import generar_items
+from core.musicalizador import generar_serie
 from config.settings import cargar_playlist_emision, guardar_playlist_emision, registrar_error, registrar_evento
 
 DURACION_FADE_PISADOR_SEGUNDOS = 0.8
@@ -113,9 +113,6 @@ DURACION_FADE_PISADOR_SEGUNDOS = 0.8
 # antes del final del tema se dispara un Pisador de posición "final".
 UMBRAL_DISPARO_PISADOR_OUTRO_MS = 3000
 DEBOUNCE_GUARDADO_MS = 500
-# Musicalizador Avanzado (pedido explícito, punto 7/9): cuántos ítems
-# concretos se generan de una vez cada vez que hace falta rellenar.
-TAMAÑO_LOTE_MUSICALIZADOR = 8
 # Pedido explícito (paridad con Dinesat): el botón verde Play/Siguiente
 # hace de "Siguiente con fundido" cuando ya hay algo sonando, y el
 # botón Fade-Stop apaga con fundido en vez de corte seco. Duración
@@ -632,6 +629,19 @@ class GestorPlaylist:
         if fila_siguiente >= total:
             if self.repetir_al_finalizar:
                 fila_siguiente = 0
+            elif self._formato_musicalizador_activo is not None:
+                # Pedido explícito (punto b): "al llegar al último...
+                # debe dejar abajo otra carga de otra serie diferente"
+                # — red de seguridad para cuando NO hubo chance de
+                # precargar a tiempo más abajo (series muy cortas, ej.
+                # de un solo ítem, donde nunca existe un "ante-último"
+                # desde donde marcar verde y disparar la carga). Se
+                # genera la serie siguiente ACÁ MISMO antes de rendirse.
+                self._generar_serie_musicalizador()
+                total = self.panel.cantidad_items()
+                if fila_siguiente >= total:
+                    self.motor.detener()
+                    return
             else:
                 self.motor.detener()
                 return
@@ -643,13 +653,15 @@ class GestorPlaylist:
             candidata_siguiente = 0 if self.repetir_al_finalizar else -1
         if candidata_siguiente >= 0:
             self.panel.marcar_siguiente(candidata_siguiente)
-            # Musicalizador Avanzado (pedido explícito, punto 7): "cuando
-            # llegue al ante-último ítem, poniendo en verde el último,
-            # volverá a cargar otra serie" — apenas el ÚLTIMO ítem de la
-            # lista queda marcado en cola, se genera otro lote ANTES de
-            # que la reproducción realmente llegue a quedarse sin nada.
+            # Musicalizador Avanzado (pedido explícito, punto 7/b): "al
+            # llegar al último en color verde, debe dejar abajo otra
+            # carga de otra serie diferente, como si volviera a cargar
+            # el FMT" — apenas el ÚLTIMO ítem de la lista queda marcado
+            # en cola, se genera OTRA SERIE completa (misma lógica,
+            # nuevas elecciones aleatorias) ANTES de que la
+            # reproducción realmente llegue a quedarse sin nada.
             if self._formato_musicalizador_activo is not None and candidata_siguiente == total - 1:
-                self._generar_lote_musicalizador()
+                self._generar_serie_musicalizador()
 
         self._reproducir_fila(fila_siguiente)
 
@@ -679,7 +691,7 @@ class GestorPlaylist:
         # mientras suena (ver _avanzar()) es aparte y NUNCA limpia —
         # eso cortaría la música que está sonando.
         self._limpiar_playlist_para_musicalizador()
-        self._generar_lote_musicalizador()
+        self._generar_serie_musicalizador()
 
     def detener_musicalizador(self):
         if self._formato_musicalizador_activo is not None:
@@ -695,12 +707,16 @@ class GestorPlaylist:
         self.panel.set_indicador_en_vivo(False)
         self.panel.limpiar_items()
 
-    def _generar_lote_musicalizador(self):
+    def _generar_serie_musicalizador(self):
+        """Genera UNA serie completa (pedido explícito, punto a: "debe
+        cargar el número exacto de musicalización... la cantidad que
+        haya programado. Solo se extiende si en la serie hay
+        sub-formato") — ya NO un tamaño de lote fijo, sino exactamente
+        lo que produce una pasada por el formato (ver
+        core/musicalizador.py:generar_serie)."""
         if self._formato_musicalizador_activo is None or self._ventana_explorador is None:
             return
-        items_generados = generar_items(
-            self._ventana_explorador, self._formato_musicalizador_activo, TAMAÑO_LOTE_MUSICALIZADOR,
-        )
+        items_generados = generar_serie(self._ventana_explorador, self._formato_musicalizador_activo)
         if not items_generados:
             registrar_error(
                 f"Musicalizador: el formato '{self._formato_musicalizador_activo}' no generó "
