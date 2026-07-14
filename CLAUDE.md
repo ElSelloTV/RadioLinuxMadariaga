@@ -2295,6 +2295,14 @@ todo el resto.
     en el Explorador y un tab en Configuración para ciudad/unidades —
     mismo espíritu que Dinesat, sin comprometerse a nada hasta tener
     la fuente de datos real).
+27. ~~Ajuste estético: título de ventana (QGroupBox) a 14pt~~ — pedido
+    explícito, cambio chico: `QGroupBox::title` (gui/styles.py) pasó a
+    `font-size: 14pt` (antes heredaba el 10pt general); `margin-top`
+    del propio `QGroupBox` subió de 18px a 24px de paso, para que el
+    título más grande no quede recortado contra el borde superior del
+    panel. Aplica a los 3 títulos principales (PROGRAMACIÓN/ROTATIVA,
+    EMISIÓN, EXPLORADOR) y a cualquier otro `QGroupBox` de la app
+    (es una regla QSS global, no por ventana puntual).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
