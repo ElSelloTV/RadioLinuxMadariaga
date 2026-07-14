@@ -262,7 +262,25 @@ class GestorPublicidad:
         if not self._item_valido(item):
             return
         if self.ventana.es_comando(item):
+            # Bug real corregido: antes esto llamaba a self._avanzar()
+            # sin actualizar item_reproduciendo()/item_siguiente() —
+            # la próxima vuelta de _avanzar() volvía a resolver este
+            # MISMO comando como candidato (item_reproduciendo() seguía
+            # apuntando al ítem ANTERIOR, e item_siguiente() todavía
+            # apuntaba a este comando), reejecutando el FMT una y otra
+            # vez en recursión sin fin hasta el límite de pila de
+            # Python — silenciado por el excepthook global, así que
+            # visualmente "quedaba en el FMT" sin ningún error. Ahora
+            # se marca el comando como reproduciendo (para que
+            # item_base avance de verdad) y se recalcula el próximo
+            # ítem ANTES de seguir — item_siguiente() nunca vuelve a
+            # apuntar a este mismo comando.
+            self.ventana.marcar_reproduciendo_item(item)
             self._ejecutar_comando(item)
+            siguiente = self.ventana.tree.itemBelow(item)
+            while siguiente is not None and not self._item_valido(siguiente):
+                siguiente = self.ventana.tree.itemBelow(siguiente)
+            self.ventana.marcar_siguiente_item(siguiente)
             self._avanzar()
             return
         self.ventana.tree.setCurrentItem(item)
@@ -547,12 +565,20 @@ class GestorPublicidad:
             self._notificar_fin_reproduccion()
             return
 
+        es_comando = self.ventana.es_comando(candidato)
         self._reproducir_item(candidato)
 
         # Marca automáticamente el siguiente ítem reproducible como
         # "en cola" (verde) — mismo comportamiento que Ventana 2 al
         # avanzar naturalmente (no en un Play manual sobre el ítem ya
-        # armado), da una vista previa continua de qué sigue.
+        # armado), da una vista previa continua de qué sigue. Si
+        # `candidato` era un Comando, _reproducir_item() YA resolvió y
+        # marcó todo esto (y probablemente avanzó más allá, en
+        # cascada) al ejecutarlo — recalcularlo acá pisaría ese estado
+        # ya correcto con uno viejo (marcaría en verde un ítem que en
+        # realidad ya quedó sonando en rojo).
+        if es_comando:
+            return
         siguiente_candidato = self.ventana.tree.itemBelow(candidato)
         while siguiente_candidato is not None and not self._item_valido(siguiente_candidato):
             siguiente_candidato = self.ventana.tree.itemBelow(siguiente_candidato)

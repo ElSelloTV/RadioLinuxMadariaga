@@ -672,6 +672,13 @@ class GestorPlaylist:
             return
         self._formato_musicalizador_activo = nombre_formato
         registrar_evento(f"Musicalizador: activado formato '{nombre_formato}' (persistir={self.persistir})")
+        # Pedido explícito (punto c): un Comando FMT REEMPLAZA el
+        # contenido de Emisión, nunca lo acumula arriba de lo que
+        # hubiera antes (ítems sueltos del operador, o el lote de un
+        # formato anterior). La recarga CONTINUA de este mismo formato
+        # mientras suena (ver _avanzar()) es aparte y NUNCA limpia —
+        # eso cortaría la música que está sonando.
+        self._limpiar_playlist_para_musicalizador()
         self._generar_lote_musicalizador()
 
     def detener_musicalizador(self):
@@ -681,6 +688,12 @@ class GestorPlaylist:
                 f"persistir={self.persistir})"
             )
         self._formato_musicalizador_activo = None
+
+    def _limpiar_playlist_para_musicalizador(self):
+        if self.motor.esta_reproduciendo():
+            self.motor.detener()
+        self.panel.set_indicador_en_vivo(False)
+        self.panel.limpiar_items()
 
     def _generar_lote_musicalizador(self):
         if self._formato_musicalizador_activo is None or self._ventana_explorador is None:

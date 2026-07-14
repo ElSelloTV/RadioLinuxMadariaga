@@ -81,6 +81,9 @@ class VentanaAuxiliar(QDialog):
     def cantidad_items(self):
         return self.panel.cantidad_items()
 
+    def limpiar_items(self):
+        self.panel.limpiar_items()
+
     def ruta_en_fila(self, fila):
         return self.panel.ruta_en_fila(fila)
 
