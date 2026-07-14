@@ -1411,13 +1411,77 @@ angostos como pidió, que el rojo/verde ya no se pierde nunca al
 seleccionar con un click real, y que el preload (cursor de espera +
 mensaje) se nota lo suficiente sin resultar molesto en el uso diario.
 
+### Ronda de aprovechamiento de espacio (relojes apilados, renombre de
+ventanas, nombre de emisora configurable)
+Pedido explícito, 3 puntos:
+
+**a) Relojes apilados a la izquierda + Ahora/Luego a la derecha (ahorra
+otra fila)**: antes la fila de contadores (reloj transcurrido + reloj
+restante lado a lado + medidor) y las filas "Ahora"/"Luego" eran 3
+filas separadas. Ahora es UNA sola fila combinada
+(`fila_info = QHBoxLayout()`, en `panel_reproductor.py` y
+`ventana_publicidad.py`): a la izquierda una columna angosta
+(`columna_relojes = QVBoxLayout()`) con el reloj transcurrido arriba y
+el restante abajo (`setMaximumWidth(90)` en los dos, y la fuente de
+`QLabel#lblTiempoTranscurrido`/`#lblTiempoRestante` bajó de 14pt a
+11pt en `gui/styles.py` — apilados verticalmente ya no necesitan tanto
+ancho), el medidor de nivel decorativo al costado, y a la derecha
+`columna_ahora_luego` con los mismos frames "Ahora"/"Luego" de
+siempre, uno arriba del otro. `fila_info.addStretch()` al final
+mantiene las dos columnas compactas a la izquierda (mismo criterio que
+el `AlignLeft` de la ronda anterior, pero acá hace falta un stretch
+porque ahora son sub-layouts anidados dentro de un `QHBoxLayout`, no
+widgets sueltos en el `QVBoxLayout` del panel).
+
+**b) Ventanas renombradas (pedido explícito)**: el título del
+`QGroupBox` de Ventana 1 pasó de "PUBLICIDAD" a "PROGRAMACIÓN /
+ROTATIVA" (`ventana_publicidad.py`), y el de Ventana 2 de "EMISIÓN
+MUSICAL ACTUAL" a solo "EMISIÓN" (`ventana_emision.py`, se lo pasa a
+`PanelReproductor`). Es solo el título VISIBLE — los nombres de clase
+(`VentanaPublicidad`, `GestorPublicidad`, etc.), archivos, variables y
+comentarios internos NO se tocaron (cambiarlos hubiera sido un
+refactor grande sin pedido explícito para eso).
+
+**c) Nombre de emisora configurable, junto al reloj del toolbar
+(reemplaza el cartel fijo de cada panel)**: nueva clave
+`general.nombre_emisora` en `config_general.json` (default
+`"RADIO TUYÚ FM 92.5"`, así una instalación existente no "pierde" el
+texto que ya tenía fijo) — campo de texto en Configuración → General
+(`gui/ventana_configuracion.py`, `txt_nombre_emisora`). El cartel
+"RADIO TUYÚ FM 92.5" que antes vivía DUPLICADO en cada panel
+(`lbl_nombre_estacion` en `panel_reproductor.py` Y en
+`ventana_publicidad.py`) se sacó de los dos por completo — ese
+espacio ahora es una fila menos de alto en Ventana 1 y 2 (para el
+punto (a) de arriba), y el nombre se muestra UNA sola vez, en el
+toolbar de `MainWindow` (`lbl_nombre_emisora`, objectName
+`lblNombreEstacion` — reutiliza el mismo selector QSS que ya existía,
+mismo aspecto naranja/decorativo), a la izquierda del reloj de
+día/hora. `MainWindow._actualizar_nombre_emisora()` lo refresca en
+`_construir_toolbar()` (arranque) y en `_aplicar_configuracion_en_vivo()`
+(al guardar Configuración) — cambiar el nombre no requiere reiniciar
+la app, mismo patrón ya establecido para el resto de "aplicar
+configuración en vivo".
+
+Probado con 7 tests nuevos dedicados (títulos de Ventana 1/2 por
+`QGroupBox.title()`, relojes apilados verificados por geometría real
+tras `show()` — misma X, Y creciente, Ahora/Luego a la derecha en la
+misma fila combinada—, ausencia del atributo `lbl_nombre_estacion` en
+ambos paneles, nombre de emisora por defecto visible en el toolbar,
+actualización en vivo del toolbar al guardar Configuración, y
+carga/guardado correcto del campo nuevo en `VentanaConfiguracion`) +
+suite de regresión completa sin fallos nuevos (mismos 4 fallos
+preexistentes de siempre, ninguno relacionado con este cambio). Falta
+que Santiago confirme en su notebook real cuánto espacio vertical
+ganó de verdad, y que el nombre de emisora se vea bien ubicado junto
+al reloj del toolbar.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
 logs), Reproducción y Automatización (avanzar en error, reintentos,
 repetir lista, tolerancia de silencio — el checkbox "modo automático
 al iniciar" se retiró: el Automático arranca siempre ON, ver Ventana 1),
-General (confirmaciones, reloj, tema), **Apariencia** (colores por
+General (nombre de emisora, confirmaciones, reloj, tema), **Apariencia** (colores por
 género, ver abajo), **Actualizaciones** (ver abajo), **Diagnóstico**
 (log de errores, ver abajo). Todo persiste en
 `config/data/config_general.json`. Deliberadamente **sin nada de
@@ -2034,6 +2098,25 @@ todo el resto.
     Falta que Santiago confirme en su notebook real el ancho de los
     carteles, que el rojo/verde ya no se pierda con un click real, y
     si el preload se nota lo justo sin molestar en el uso diario.
+25. ~~Aprovechamiento de espacio (relojes apilados, renombre de
+    ventanas, nombre de emisora configurable)~~ — (a) relojes
+    transcurrido/restante apilados a la izquierda (angostos, 11pt,
+    max-width 90px) con "Ahora"/"Luego" a la derecha en la MISMA fila
+    combinada, en vez de 3 filas separadas — ahorra otra fila de alto
+    de panel en Ventana 1 y 2; (b) título de Ventana 1 "PUBLICIDAD" →
+    "PROGRAMACIÓN / ROTATIVA", título de Ventana 2 "EMISIÓN MUSICAL
+    ACTUAL" → "EMISIÓN" (solo el texto visible, sin tocar nombres de
+    clase/archivo); (c) nombre de emisora ahora es un campo editable
+    en Configuración → General (`nombre_emisora`, default "RADIO TUYÚ
+    FM 92.5") que se muestra UNA sola vez, a la izquierda del reloj de
+    día/hora del toolbar — se sacó el cartel fijo que antes vivía
+    duplicado en cada panel, liberando otra fila más y permitiendo ver
+    más ítems de la lista; se actualiza en vivo al guardar
+    Configuración, sin reiniciar — implementado y probado (7 tests
+    nuevos + suite de regresión completa sin fallos nuevos, mismos 4
+    preexistentes de siempre). Falta que Santiago confirme cuánto
+    espacio ganó de verdad en su pantalla y que el nombre de emisora
+    se vea bien ubicado junto al reloj del toolbar.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

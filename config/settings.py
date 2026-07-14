@@ -53,6 +53,10 @@ CONFIG_POR_DEFECTO = {
         "confirmar_antes_de_eliminar": True,
         "mostrar_segundos_en_reloj": True,
         "tema": "oscuro",
+        # Pedido explícito: nombre de emisora editable, se muestra a
+        # la izquierda del reloj de día/hora en el toolbar — antes era
+        # un texto fijo ("RADIO TUYÚ FM 92.5") repetido en cada panel.
+        "nombre_emisora": "RADIO TUYÚ FM 92.5",
     },
     "apariencia": {
         # Colores por género (Ventana 3, columna "Categoría", y el

@@ -81,7 +81,7 @@ class VentanaPublicidad(QWidget):
         layout_principal.setContentsMargins(6, 6, 6, 6)
         layout_principal.setSpacing(6)
 
-        grupo = QGroupBox("PUBLICIDAD")
+        grupo = QGroupBox("PROGRAMACIÓN / ROTATIVA")
         layout_grupo = QVBoxLayout(grupo)
 
         # --- Barra superior: solo la leyenda de estado. El botón
@@ -104,29 +104,40 @@ class VentanaPublicidad(QWidget):
         barra_superior.addStretch()
         layout_grupo.addLayout(barra_superior)
 
-        # --- 1) Nameplate + contadores de tiempo + medidor (arriba de
-        # todo) — pedido explícito, imitando la distribución de
-        # Dinesat. ---
-        self.lbl_nombre_estacion = QLabel("RADIO TUYÚ FM 92.5")
-        self.lbl_nombre_estacion.setObjectName("lblNombreEstacion")
-        layout_grupo.addWidget(self.lbl_nombre_estacion)
+        # --- 1) Fila combinada relojes + Ahora/Luego (pedido explícito,
+        # "aprovechar más el espacio", igual criterio que Ventana 2):
+        # el nameplate fijo se sacó de acá (ver Configuración →
+        # General → nombre de emisora, ahora se muestra junto al reloj
+        # del toolbar en MainWindow) y los contadores pasan a apilarse
+        # a la IZQUIERDA (angostos, uno arriba y otro abajo) — a la
+        # derecha, en las mismas 2 líneas, van "Ahora"/"Luego" como ya
+        # estaban. Ahorra una fila entera de alto de panel. ---
+        fila_info = QHBoxLayout()
+        fila_info.setSpacing(6)
 
-        layout_contadores = QHBoxLayout()
+        columna_relojes = QVBoxLayout()
+        columna_relojes.setSpacing(2)
         self.lbl_tiempo_transcurrido = QLabel("00:00:00")
         self.lbl_tiempo_transcurrido.setObjectName("lblTiempoTranscurrido")
         self.lbl_tiempo_transcurrido.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_tiempo_transcurrido.setMaximumWidth(90)
         self.lbl_tiempo_restante = QLabel("00:00:00")
         self.lbl_tiempo_restante.setObjectName("lblTiempoRestante")
         self.lbl_tiempo_restante.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_tiempo_restante.setMaximumWidth(90)
+        columna_relojes.addWidget(self.lbl_tiempo_transcurrido)
+        columna_relojes.addWidget(self.lbl_tiempo_restante)
+        fila_info.addLayout(columna_relojes)
+
         self.medidor_nivel = MedidorNivelDecorativo()
-        layout_contadores.addWidget(self.lbl_tiempo_transcurrido)
-        layout_contadores.addWidget(self.lbl_tiempo_restante)
-        layout_contadores.addWidget(self.medidor_nivel)
-        layout_grupo.addLayout(layout_contadores)
+        fila_info.addWidget(self.medidor_nivel)
 
         # --- "Ahora"/"Luego" con contorno rojo/verde (igual que
         # Ventana 2) — pedido explícito, más robusto que depender
         # solo del color de fila en el árbol. ---
+        columna_ahora_luego = QVBoxLayout()
+        columna_ahora_luego.setSpacing(2)
+
         frame_ahora = QFrame()
         frame_ahora.setObjectName("frameAhora")
         fila_ahora = QHBoxLayout(frame_ahora)
@@ -138,10 +149,7 @@ class VentanaPublicidad(QWidget):
         fila_ahora.addWidget(lbl_ahora)
         self.lbl_titulo_actual = EtiquetaMarquesina()
         fila_ahora.addWidget(self.lbl_titulo_actual)
-        # AlignLeft (pedido explícito, "mucho más angosta"): sin esto,
-        # QVBoxLayout estira el frame a todo el ancho del panel sin
-        # importar el tamaño de sus hijos.
-        layout_grupo.addWidget(frame_ahora, 0, Qt.AlignmentFlag.AlignLeft)
+        columna_ahora_luego.addWidget(frame_ahora)
 
         frame_luego = QFrame()
         frame_luego.setObjectName("frameLuego")
@@ -152,7 +160,11 @@ class VentanaPublicidad(QWidget):
         fila_luego.addWidget(lbl_luego)
         self.lbl_titulo_siguiente = EtiquetaMarquesina()
         fila_luego.addWidget(self.lbl_titulo_siguiente)
-        layout_grupo.addWidget(frame_luego, 0, Qt.AlignmentFlag.AlignLeft)
+        columna_ahora_luego.addWidget(frame_luego)
+
+        fila_info.addLayout(columna_ahora_luego)
+        fila_info.addStretch()
+        layout_grupo.addLayout(fila_info)
 
         # --- 2) Controles de reproducción — grilla estilo Dinesat
         # (pedido explícito): botón VERDE grande a la izquierda

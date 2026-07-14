@@ -262,17 +262,19 @@ QPushButton#btnAutomatico[activo="false"] {{
 }}
 
 /* ---------- Contadores de tiempo (estilo display) ----------
-   Antes 26pt: ese tamaño solo, con 2 contadores lado a lado, ya
-   imponía un ancho mínimo de ~300-350px al panel entero (Ventana 1
-   y 2) — era lo que impedía achicar columnas de verdad y lo que
-   hacía invisible al botón "Expandir" de Ventana 3. Bajado a 14pt. */
+   Antes 26pt (impedía achicar columnas), después 14pt lado a lado.
+   Pedido explícito de esta ronda: los relojes pasan a apilarse a la
+   IZQUIERDA (uno arriba, otro abajo) en vez de ir lado a lado —
+   bajado a 11pt + ancho máximo fijo para que la columna quede
+   angosta de verdad y sobre espacio para "Ahora"/"Luego" a la
+   derecha en la misma fila. */
 QLabel#lblTiempoTranscurrido, QLabel#lblTiempoRestante {{
     background-color: #101010;
     color: #f5f5f5;
     border: 1px solid {COLOR_BORDE};
     border-radius: 4px;
     font-family: "DejaVu Sans Mono", monospace;
-    font-size: 14pt;
+    font-size: 11pt;
     font-weight: bold;
     padding: 1px 4px;
 }}
