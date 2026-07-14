@@ -1301,6 +1301,116 @@ si el medidor de nivel decorativo cumple su función visual aunque no
 mida audio real, y si el fundido secuencial de Ventana 1 (a diferencia
 del solapado de Ventana 2) se nota o le alcanza así.
 
+### Ronda de ajustes post-Dinesat (Ahora/Luego angostos, selección
+que nunca pisa rojo/verde, preload, swap Automático/Fade, ícono "ya
+reproducido")
+Pedido explícito tras la primera comparación con Dinesat, 5 puntos:
+
+**a) "Ahora"/"Luego" mucho más angostos**: `EtiquetaMarquesina`
+(`gui/etiqueta_marquesina.py`) usaba `sizeHint() = 220x30` con
+política `Expanding` — dentro de un `QHBoxLayout` era el único widget
+que podía crecer, así que se comía TODO el ancho sobrante del panel,
+inflando el frame entero a un cartel enorme de punta a punta. Bajado
+a `sizeHint() = 130x22` y política `Preferred`; y, más importante,
+`frame_ahora`/`frame_luego` ahora se agregan a `layout_grupo` con
+`Qt.AlignmentFlag.AlignLeft` (`panel_reproductor.py` y
+`ventana_publicidad.py`) — sin eso, un `QVBoxLayout` estira igual
+CUALQUIER hijo a todo su ancho sin importar la política del hijo; con
+`AlignLeft` el frame se dimensiona por el `sizeHint()` real de su
+contenido (indicador + etiqueta + sticker angosto) en vez de ocupar
+todo el panel.
+
+**b) Rojo/verde NUNCA cambian al seleccionar (bug real corregido)**:
+Santiago reportó que, a pesar del cambio de la ronda anterior, un
+ítem en rojo/verde SEGUÍA perdiendo su color al seleccionarlo. Causa
+de fondo: la técnica QSS usada (`background-color: transparent;
+border: 2px solid celeste` en `::item:selected`) tiene una limitación
+real de Qt — en cuanto el stylesheet define CUALQUIER propiedad para
+un estado (`:selected`), Qt deja de pintar el brush propio del ítem
+(`Qt::BackgroundRole`, seteado por `item.setBackground()`) para ESE
+estado y pinta directamente lo que dice el QSS; como acá decía
+"transparent", el rojo/verde se perdía por completo al seleccionar
+(quedaba solo el borde celeste sobre el fondo oscuro del árbol) — el
+QSS no tiene forma de "preguntar" si el ítem tiene un color propio
+antes de decidir qué pintar. Corregido con un delegado propio,
+`DelegadoConservaColorEstado` (`gui/common_widgets.py`, subclase de
+`QStyledItemDelegate`): si el ítem está en rojo/verde
+(`ROL_ESTADO_ITEM`, leído siempre de la columna 0 vía
+`index.sibling(index.row(), 0)` porque el rol solo se guarda ahí, aunque
+el color se pinte en las 3 columnas) Y está seleccionado, se le saca el
+flag `State_Selected` a una copia de la opción antes de pintar (así
+`super().paint()` usa el color propio del ítem, nunca el highlight) y
+se dibuja a mano un borde celeste fino encima — mismo aspecto que
+antes, pero sin perder el fondo. Cualquier ítem SIN estado sigue el
+camino de siempre (QSS puro, ya confirmado correcto por Santiago: "el
+color es celeste, correcto" para ítems normales). El delegado se
+instala en `ArbolReproductorConDrop.__init__` y
+`ArbolPublicidadConDrop.__init__` (nuevo), cubriendo Ventana 1, 2 y
+Auxiliar (que reutiliza `ArbolReproductorConDrop`) de una sola vez.
+
+**c) Preload al iniciar / cargar música / cargar programación**:
+`main.py` muestra un `QSplashScreen` (ícono + "Cargando Auto-Radio
+Tuyú...") entre crear la `QApplication` y terminar de construir
+`MainWindow`, cerrado con `splash.finish(ventana)` recién cuando la
+ventana ya está lista. Dentro de la app, `MainWindow._mostrar_preload(
+texto, duracion_ms=900)` (cursor de espera + mensaje en la barra de
+estado, con timeout propio en `showMessage()` para no pisar un
+mensaje posterior — antes un `clearMessage()` diferido a mano hubiera
+podido borrar prematuramente un mensaje DISTINTO mostrado después,
+como "Agregado: X") se dispara en tres puntos: al terminar
+`MainWindow.__init__` (arranque), en `VentanaPublicidad.
+cargar_bloques()` — nueva señal `programacion_cargada`, cubre los 4
+lugares que llaman a `cargar_bloques()` (manual, scheduler de
+medianoche/arranque, "Aplicar ahora") con un solo punto de enganche —
+y en `MainWindow._on_archivo_agregado()` (ya conectado a
+`VentanaExplorador.archivo_agregado`, que ya disparaba tanto para alta
+individual como en lote — no hizo falta tocar `ventana_explorador.py`).
+`_preload_activo` evita apilar `setOverrideCursor()` si se dispara de
+nuevo antes de que termine el anterior.
+
+**d) AUTOMÁTICO y FADE intercambiados (Ventana 1, pedido explícito
+"más intuitivo y a la vista")**: en `ventana_publicidad.py`,
+`fila_superior` pasó de [Stop, Fade-Stop] a [Stop, AUTOMÁTICO] y
+`fila_inferior` de [Pausa, Cut, Stop diferido, AUTOMÁTICO] a [Pausa,
+Cut, Stop diferido, Fade-Stop] — mismos botones, mismas conexiones,
+solo se reordenaron las líneas `addWidget()`. Exclusivo de Ventana 1
+(Ventana 2/Auxiliar no tienen botón AUTOMÁTICO).
+
+**e) Ícono "ya reproducido" (pedido explícito: "una marca a la
+izquierda, con ícono de OK... no escrito, solo ícono")**: nuevo rol
+`ROL_YA_REPRODUCIDO` (`gui/styles.py`) y `icono_reproducido()` —
+tilde verde armada a mano con `QPainter` sobre un `QPixmap` de 14x14
+(no hay assets reales), cacheada en un global del módulo porque un
+`QPixmap` no se puede construir antes de que exista `QApplication`
+(la primera construcción real ocurre recién en tiempo de ejecución).
+`_pintar_item()` (en `panel_reproductor.py` Y `ventana_publicidad.py`,
+mismo patrón en las dos) llama `item.setIcon(0, icono_reproducido())`
+únicamente en la rama `ESTADO_REPRODUCIENDO` — se pone al arrancar a
+sonar y **ya nunca se saca**, ni cuando el ítem deja el rojo (la rama
+que limpia el color a `ESTADO_NORMAL` no toca el ícono). Como
+`setIcon()` es un ícono real de Qt (no texto concatenado al título),
+aparece a la izquierda del texto de la columna 0 sin tocar el título
+en sí. Cubre Ventana 1, 2 y Auxiliar (misma `PanelReproductor`). La
+marca es solo de la sesión actual (no se persiste a disco) —
+consistente con que los bloques/playlists ya se recargan solos cada
+día/reinicio.
+
+Probado con 10 tests nuevos dedicados (ancho de `EtiquetaMarquesina`,
+frames "Ahora" bastante más angostos que el panel en Ventana 1 y 2,
+delegado instalado en ambos árboles, color de fondo intacto tras
+seleccionar un ítem rojo, preload manual se muestra/retira solo,
+`cargar_bloques()` dispara el preload, agregar música dispara el
+preload, posición intercambiada de Automático/Fade por coordenada Y
+real tras `show()`, ícono aparece al sonar y persiste en Ventana 1 y
+2) + suite de regresión completa sin fallos nuevos — los mismos 4
+fallos preexistentes de siempre (`test_confirmaciones.py`,
+`test_log_git.py`, y los 2 dependientes de la hora real del sistema)
+confirmados sin relación con este cambio (`git stash`). Falta que
+Santiago confirme en su notebook real que los carteles ahora se ven
+angostos como pidió, que el rojo/verde ya no se pierde nunca al
+seleccionar con un click real, y que el preload (cursor de espera +
+mensaje) se nota lo suficiente sin resultar molesto en el uso diario.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -1897,6 +2007,33 @@ todo el resto.
     decorativo cumple su función aunque no mida audio real, y si el
     fundido secuencial de Ventana 1 le alcanza o prefiere pedir el
     crossfade solapado real ahí también más adelante.
+24. ~~Ronda de ajustes post-Dinesat~~ — 5 pedidos puntuales tras la
+    primera comparación con las fotos: (a) "Ahora"/"Luego" mucho más
+    angostos (`EtiquetaMarquesina` de 220 a 130px + `AlignLeft` al
+    agregar el frame, antes `QVBoxLayout` lo estiraba a todo el ancho
+    del panel sin importar el tamaño del contenido); (b) bug real
+    corregido — el rojo/verde SEGUÍA perdiéndose al seleccionar pese
+    al cambio de la ronda anterior: la técnica QSS
+    (`background-color: transparent` en `:selected`) no puede
+    "preguntar" si el ítem tiene color propio, así que lo perdía
+    igual; corregido con `DelegadoConservaColorEstado`
+    (`gui/common_widgets.py`), que pinta sin el flag de selección
+    cuando el ítem está en rojo/verde (conserva su color) y agrega el
+    borde celeste a mano; (c) preload (cursor de espera + mensaje) al
+    iniciar (`QSplashScreen` en `main.py` + `MainWindow.
+    _mostrar_preload()`), al cargar música (`archivo_agregado`) y al
+    cargar una programación (nueva señal `programacion_cargada` en
+    `VentanaPublicidad.cargar_bloques()`, cubre sus 4 puntos de
+    llamada de una sola vez); (d) AUTOMÁTICO y Fade-Stop
+    intercambiados de fila en Ventana 1 (Automático ahora arriba,
+    junto a Stop); (e) ícono "ya reproducido" (tilde verde armada con
+    QPainter, `gui/styles.py:icono_reproducido()`) a la izquierda del
+    título, puesto al arrancar a sonar y que YA NUNCA se saca —
+    implementado y probado (10 tests nuevos + suite de regresión
+    completa sin fallos nuevos, mismos 4 preexistentes de siempre).
+    Falta que Santiago confirme en su notebook real el ancho de los
+    carteles, que el rojo/verde ya no se pierda con un click real, y
+    si el preload se nota lo justo sin molestar en el uso diario.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

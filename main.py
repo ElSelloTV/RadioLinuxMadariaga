@@ -17,8 +17,9 @@ import os
 import sys
 import traceback
 
-from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import Qt
 
 from gui.main_window import MainWindow
 from gui.styles import QSS_APLICACION
@@ -51,6 +52,24 @@ def main():
         app.setWindowIcon(QIcon(RUTA_ICONO))
     app.setStyleSheet(QSS_APLICACION)
 
+    # Preload de arranque (pedido explícito): una pantalla breve con
+    # el ícono mientras se arma la ventana principal (carga de
+    # configuración, biblioteca, playlists persistidas), en vez de que
+    # el operador vea la pantalla en blanco unos instantes.
+    splash = None
+    if os.path.exists(RUTA_ICONO):
+        pixmap = QPixmap(RUTA_ICONO).scaled(
+            160, 160, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        )
+        splash = QSplashScreen(pixmap)
+        splash.showMessage(
+            "Cargando Auto-Radio Tuyú...",
+            Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
+            Qt.GlobalColor.white,
+        )
+        splash.show()
+        app.processEvents()
+
     try:
         cargar_configuracion()
     except Exception as error:
@@ -60,6 +79,8 @@ def main():
 
     ventana = MainWindow()
     ventana.show()
+    if splash is not None:
+        splash.finish(ventana)
 
     codigo_salida = app.exec()
     registrar_evento(f"Aplicación cerrada (código {codigo_salida})")

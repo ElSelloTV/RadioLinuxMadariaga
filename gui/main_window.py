@@ -18,7 +18,7 @@ import os
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QWidget, QVBoxLayout, QLabel,
     QToolBar, QStatusBar, QMenuBar, QSizePolicy,
-    QMessageBox
+    QMessageBox, QApplication
 )
 from PySide6.QtCore import Qt, QTimer, QDateTime
 from PySide6.QtGui import QAction, QKeySequence
@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
         self._explorador_expandido = False
         self._tamaños_splitter_previos = None
         self._cerrando_por_actualizacion = False
+        self._preload_activo = False
 
         self._config = cargar_configuracion()
 
@@ -70,6 +71,8 @@ class MainWindow(QMainWindow):
         self._timer_reloj.timeout.connect(self._actualizar_reloj)
         self._timer_reloj.start(1000)
         self._actualizar_reloj()
+
+        self._mostrar_preload("Cargando Auto-Radio Tuyú...")
 
     # ------------------------------------------------------------------
     # Menú superior
@@ -307,6 +310,29 @@ class MainWindow(QMainWindow):
         status.addPermanentWidget(self.lbl_status_materiales)
 
     # ------------------------------------------------------------------
+    # "Preload" (pedido explícito): indicador visual breve de carga —
+    # cursor de espera + mensaje en la barra de estado, se retira solo.
+    # Se dispara al iniciar el programa, al cargar música (Ventana 3)
+    # y al cargar una programación (Ventana 1, cualquier vía: manual,
+    # scheduler de medianoche/arranque, o "Aplicar ahora").
+    # ------------------------------------------------------------------
+    def _mostrar_preload(self, texto: str, duracion_ms: int = 900):
+        if not self._preload_activo:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            self._preload_activo = True
+        # Con timeout propio (en vez de showMessage sin límite + un
+        # clearMessage() diferido): así, si justo después se muestra
+        # OTRO mensaje de estado (ej. "Agregado: ..."), este preload
+        # nunca se lo borra antes de tiempo.
+        self.statusBar().showMessage(texto, duracion_ms)
+        QTimer.singleShot(duracion_ms, self._ocultar_preload)
+
+    def _ocultar_preload(self):
+        if self._preload_activo:
+            QApplication.restoreOverrideCursor()
+            self._preload_activo = False
+
+    # ------------------------------------------------------------------
     # Señales entre ventanas
     # ------------------------------------------------------------------
     def _conectar_señales(self):
@@ -314,6 +340,9 @@ class MainWindow(QMainWindow):
         self.ventana_publicidad.archivo_soltado.connect(self._on_archivo_soltado_publicidad)
         self.ventana_publicidad.solicitud_abrir_programador.connect(self.abrir_programador)
         self.ventana_publicidad.solicitud_cargar_programacion_hoy.connect(self._cargar_programacion_de_hoy_manual)
+        self.ventana_publicidad.programacion_cargada.connect(
+            lambda: self._mostrar_preload("Cargando programación...")
+        )
 
         self.ventana_emision.archivo_soltado.connect(self._on_archivo_soltado_emision)
         self.ventana_emision.solicitud_abrir_auxiliar.connect(self.abrir_ventana_auxiliar)
@@ -354,6 +383,7 @@ class MainWindow(QMainWindow):
         self._aviso_sin_bloque.show()
 
     def _on_archivo_agregado(self, ruta: str):
+        self._mostrar_preload("Cargando música...")
         self.statusBar().showMessage(f"Agregado: {ruta}", 4000)
 
     def _on_archivo_movido(self, titulo: str, categoria_destino: str):
