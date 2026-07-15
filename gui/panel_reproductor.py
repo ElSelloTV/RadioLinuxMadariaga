@@ -70,7 +70,8 @@ class PanelReproductor(QWidget):
     solicitud_eliminar_definitivo = Signal(str)   # ruta a borrar de TODA la biblioteca
 
     def __init__(self, titulo_panel: str, mostrar_boton_auxiliar: bool = False,
-                 mostrar_barra_progreso: bool = False, parent=None):
+                 mostrar_barra_progreso: bool = False, acepta_desde_publicidad: bool = False,
+                 parent=None):
         super().__init__(parent)
         self._item_reproduciendo = None
         self._item_siguiente = None
@@ -78,10 +79,10 @@ class PanelReproductor(QWidget):
         self.slider_progreso = None
         self._stop_bloqueado_por_automatico = False
         self._titulo_panel = titulo_panel
-        self._construir_ui(titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso)
+        self._construir_ui(titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso, acepta_desde_publicidad)
 
     # ------------------------------------------------------------------
-    def _construir_ui(self, titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso):
+    def _construir_ui(self, titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso, acepta_desde_publicidad=False):
         layout_principal = QVBoxLayout(self)
         layout_principal.setContentsMargins(6, 6, 6, 6)
         layout_principal.setSpacing(6)
@@ -244,7 +245,7 @@ class PanelReproductor(QWidget):
             layout_grupo.addWidget(self.slider_progreso)
 
         # 3) Lista de reproducción (al final)
-        self.tree = ArbolReproductorConDrop()
+        self.tree = ArbolReproductorConDrop(acepta_desde_publicidad=acepta_desde_publicidad)
         self.tree.setObjectName("tree_reproductor")
         self.tree.setColumnCount(3)
         self.tree.setHeaderLabels(["Título", "Duración", "Código"])

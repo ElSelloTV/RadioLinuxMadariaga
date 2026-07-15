@@ -313,6 +313,15 @@ class VentanaExplorador(QWidget):
     # Persistencia (config/data/biblioteca.json) — ver nota al inicio
     # del archivo. Se guarda ante cada mutación, no solo al cerrar.
     # ------------------------------------------------------------------
+    def recargar_biblioteca_desde_disco(self):
+        """Público (a diferencia de _cargar_biblioteca_inicial):
+        pedido explícito para poder refrescar el árbol EN VIVO después
+        de una reanalización en bloque (config/settings.reanalizar_
+        biblioteca) hecha por fuera de esta ventana — sin esto, el
+        operador tendría que cerrar y reabrir la app para ver los
+        nuevos puntos de recorte."""
+        self._cargar_categorias_desde_datos(cargar_biblioteca())
+
     def _cargar_biblioteca_inicial(self):
         categorias_guardadas = cargar_biblioteca()
         if categorias_guardadas:

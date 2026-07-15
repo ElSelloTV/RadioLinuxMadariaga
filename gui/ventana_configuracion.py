@@ -27,18 +27,26 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 
-from config.settings import cargar_configuracion, guardar_configuracion, ARCHIVO_LOG, ARCHIVO_HISTORIAL_REPRODUCCION
+from config.settings import (
+    cargar_configuracion, guardar_configuracion, reanalizar_biblioteca,
+    ARCHIVO_LOG, ARCHIVO_HISTORIAL_REPRODUCCION,
+)
 from core.audio_engine import MotorAudio
 from core import actualizador
 from gui.styles import LISTA_GENEROS
 
 
 class VentanaConfiguracion(QDialog):
-    def __init__(self, parent=None, pestaña_inicial: int = 0):
+    def __init__(self, parent=None, pestaña_inicial: int = 0, ventana_explorador=None):
         super().__init__(parent)
         self.setWindowTitle("Configuración")
         self.setMinimumSize(560, 520)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
+
+        # Pedido explícito: "Reanalizar biblioteca" (tab Diagnóstico)
+        # necesita refrescar el árbol EN VIVO del Explorador después
+        # de recalcular el recorte de silencio de todo lo ya importado.
+        self._ventana_explorador = ventana_explorador
 
         self._config = cargar_configuracion()
         self._construir_ui()
@@ -200,11 +208,28 @@ class VentanaConfiguracion(QDialog):
         self.spin_tolerancia_silencio.setRange(0.0, 10.0)
         self.spin_tolerancia_silencio.setSingleStep(0.5)
         self.spin_tolerancia_silencio.setSuffix(" s")
+        self.spin_tolerancia_silencio.setToolTip(
+            "Margen de silencio que se DEJA a propósito al recortar Música/\n"
+            "Artística/Pisador/HTH al importarlos (no es exclusivo de la\n"
+            "vista previa de Ventana 3: este recorte queda grabado en cada\n"
+            "material y se aplica después en la reproducción real de\n"
+            "Ventana 1 y 2). Un valor más alto deja MÁS silencio al final.\n"
+            "OJO: cambiar este valor NO es retroactivo — los archivos ya\n"
+            "importados conservan el recorte calculado en su momento; usá\n"
+            "\"Reanalizar biblioteca\" (pestaña Diagnóstico) para aplicar el\n"
+            "valor nuevo a lo que ya estaba cargado."
+        )
 
         self.spin_tolerancia_silencio_v1 = QDoubleSpinBox()
         self.spin_tolerancia_silencio_v1.setRange(0.0, 5.0)
         self.spin_tolerancia_silencio_v1.setSingleStep(0.1)
         self.spin_tolerancia_silencio_v1.setSuffix(" s")
+        self.spin_tolerancia_silencio_v1.setToolTip(
+            "Mismo concepto, pero para Publicidad/Separadores/HTH — sin\n"
+            "margen por defecto (recorte más agresivo, pensado para que\n"
+            "las tandas queden bien pegadas). También aplica en Ventana 1/2\n"
+            "y tampoco es retroactivo — ver \"Reanalizar biblioteca\"."
+        )
 
         self.spin_umbral_silencio = QDoubleSpinBox()
         self.spin_umbral_silencio.setRange(-60.0, -10.0)
@@ -224,8 +249,8 @@ class VentanaConfiguracion(QDialog):
         form.addRow(self.chk_avanzar_en_error)
         form.addRow("Fallos consecutivos antes de detenerse:", self.spin_reintentos)
         form.addRow(self.chk_repetir_lista)
-        form.addRow("Tolerancia de silencio al recortar (Ventana 3):", self.spin_tolerancia_silencio)
-        form.addRow("Tolerancia de silencio estricta (Publicidad/Separadores):", self.spin_tolerancia_silencio_v1)
+        form.addRow("Tolerancia de silencio al recortar (Música/Artística/Pisador):", self.spin_tolerancia_silencio)
+        form.addRow("Tolerancia de silencio estricta (Publicidad/Separadores/HTH):", self.spin_tolerancia_silencio_v1)
         form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
         form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
         form.addRow("Fade OUT entre tandas de Ventana 1:", self.spin_fade_out_v1)
@@ -408,6 +433,30 @@ class VentanaConfiguracion(QDialog):
         nota_subida.setObjectName("lblTituloBloqueActivo")
         nota_subida.setWordWrap(True)
         layout.addWidget(nota_subida)
+
+        # Pedido explícito ("los temas siguen teniendo silencio al
+        # final"): el recorte de silencio se calcula UNA vez al
+        # importar/reemplazar un archivo — cambiar la tolerancia en
+        # esta misma pestaña de Configuración NO afecta solo con
+        # guardar a lo que ya estaba cargado. Este botón fuerza un
+        # reanálisis de TODA la biblioteca con los valores actuales.
+        nota_reanalizar = QLabel(
+            "Reanalizar biblioteca: vuelve a calcular el recorte de\n"
+            "silencio y el nivelado de TODO lo ya importado, con la\n"
+            "tolerancia/umbral actuales de esta pestaña — necesario porque\n"
+            "cambiar esos valores no es retroactivo por sí solo. Puede\n"
+            "tardar según el tamaño de la biblioteca; el programa queda sin\n"
+            "responder mientras tanto."
+        )
+        nota_reanalizar.setObjectName("lblTituloBloqueActivo")
+        nota_reanalizar.setWordWrap(True)
+        layout.addWidget(nota_reanalizar)
+        self.btn_reanalizar_biblioteca = QPushButton("🔄 Reanalizar biblioteca (recorte de silencio)")
+        self.btn_reanalizar_biblioteca.clicked.connect(self._reanalizar_biblioteca)
+        layout.addWidget(self.btn_reanalizar_biblioteca)
+        if self._ventana_explorador is None:
+            self.btn_reanalizar_biblioteca.setEnabled(False)
+
         layout.addStretch()
 
         if not actualizador.es_instalacion_git():
@@ -454,6 +503,51 @@ class VentanaConfiguracion(QDialog):
         self.lbl_estado_log.setText(mensaje)
         if not exito:
             QMessageBox.warning(self, "Subir log", mensaje)
+
+    def _reanalizar_biblioteca(self):
+        if self._ventana_explorador is None:
+            return
+        respuesta = QMessageBox.question(
+            self, "Reanalizar biblioteca",
+            "Esto vuelve a calcular el recorte de silencio y el nivelado de\n"
+            "TODOS los archivos ya importados, con los valores de tolerancia/\n"
+            "umbral que están puestos AHORA MISMO en la pestaña Reproducción\n"
+            "y Automatización (aunque todavía no hayas apretado Guardar).\n"
+            "Puede tardar varios minutos con una biblioteca grande, y el\n"
+            "programa queda sin responder mientras tanto.\n\n"
+            "¿Confirmás que querés continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+
+        # Usa los valores YA TIPEADOS en esta ventana, no self._config
+        # (que todavía tiene los viejos hasta que se guarde) — así el
+        # operador puede ajustar la tolerancia y reanalizar de una,
+        # sin tener que guardar-cerrar-reabrir primero.
+        config_temporal = {
+            "reproduccion": {
+                "tolerancia_silencio_segundos": self.spin_tolerancia_silencio.value(),
+                "tolerancia_silencio_v1_segundos": self.spin_tolerancia_silencio_v1.value(),
+                "umbral_silencio_dbfs": self.spin_umbral_silencio.value(),
+            },
+        }
+        texto_original = self.btn_reanalizar_biblioteca.text()
+        self.btn_reanalizar_biblioteca.setEnabled(False)
+        self.btn_reanalizar_biblioteca.setText("Reanalizando... (puede tardar)")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            cantidad = reanalizar_biblioteca(config_temporal)
+            self._ventana_explorador.recargar_biblioteca_desde_disco()
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.btn_reanalizar_biblioteca.setEnabled(True)
+            self.btn_reanalizar_biblioteca.setText(texto_original)
+        QMessageBox.information(
+            self, "Reanalizar biblioteca",
+            f"Listo: {cantidad} archivo(s) reanalizado(s) con los valores nuevos.",
+        )
 
     # ------------------------------------------------------------------
     # Tab: Actualizaciones
