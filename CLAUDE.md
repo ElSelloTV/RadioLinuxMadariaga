@@ -3370,9 +3370,120 @@ todo el resto.
     en el Programador se sienta natural, y (5) que Agregar/Reemplazar
     Item en Ventana 1 cumple lo que esperaba sin tener que abrir el
     Programador.
+36. ~~Bug real con audio real: el bloque automático cortaba el ítem de
+    Emisión a mitad (pausa resumible) en vez de dejarlo terminar y
+    liberar de verdad~~ — Santiago reportó, ya reproduciendo en
+    producción con el Musicalizador/FMT: "está reproduciendo la
+    ventana 2... llega la tanda y no deja terminar el tema en
+    reproducción, lo deja en pausa, termina la publicidad y vuelve
+    luego de la pausa... si en la ventana 1 hay otro FMT, reproduce
+    desde la pausa el ítem que quedó cargado (no quiero eso). Y si hay
+    otro FMT aunque sea el mismo, debe comenzar un ciclo nuevo desde
+    0". Causa de fondo: el mecanismo viejo (`_fade_pausar_emision()`)
+    cortaba Emisión con un fundido apenas llegaba la hora del bloque y
+    la dejaba en PAUSA (resumible) mientras sonaba Publicidad — y
+    `MotorAudio.esta_reproduciendo()` da `False` con el motor en
+    pausa, así que si el bloque disparaba OTRO Comando FMT,
+    `_limpiar_playlist_para_musicalizador()`'s guard
+    (`if self.motor.esta_reproduciendo(): self.motor.detener()`) se
+    saltaba el `detener()` — el motor viejo quedaba pausado en el
+    tema de antes, sin que nadie lo tocara, y al volver de Publicidad
+    el mecanismo de "reanudar" (`motor.pausar()`, que alterna) revivía
+    ESE tema viejo en vez de la serie nueva recién generada en el
+    panel.
+
+    Rediseño de fondo (confirmado con Santiago vía `AskUserQuestion`
+    que el Play MANUAL en Ventana 1 sigue cortando Emisión de
+    inmediato, sin esperar — solo el disparo AUTOMÁTICO por horario
+    cambia):
+    - **`GestorPlaylist.ceder_control_al_terminar_item(callback)`**
+      (`core/gestor_emision.py`), nuevo: si Emisión está sonando, NO
+      corta nada — arma un flag de una sola vez
+      (`_ceder_control_armado`, mismo patrón que "Stop diferido" pero
+      invisible al operador, lo arma el Scheduler) que bloquea
+      `_chequear_crossfade()` (no arranca una transición nueva) y se
+      resuelve en el próximo fin NATURAL del ítem, dentro de
+      `_avanzar()`: recién ahí hace un `detener()` DE VERDAD (nunca
+      pausa) y llama a `callback()`. Si no hay nada sonando, cede el
+      control ya mismo (nada que esperar).
+    - **`SchedulerAutomatico._disparar_bloque()`** ya no llama a
+      `_fade_pausar_emision()` — arma `ceder_control_al_terminar_item()`
+      con un callback que recién ahí dispara
+      `GestorPublicidad.disparar_bloque()`. Nueva bandera
+      `_esperando_liberar_emision` evita que `_tick()` intente
+      disparar un SEGUNDO bloque mientras el primero sigue esperando
+      que Emisión libere el control (puede tardar varios minutos si el
+      tema en curso recién empezó — a propósito, prioriza nunca cortar
+      sobre ser puntual al segundo).
+    - **`cortar_emision_por_play_manual()`** (Play manual en Ventana
+      1, pedido de una ronda anterior, sin cambios en el TIMING —
+      sigue cortando YA, con el mismo fundido corto de siempre) se
+      simplificó para usar `motor.fade_volumen_a(0, duracion)` +
+      `QTimer.singleShot(..., self.gestor_emision.detener)` — MISMO
+      arreglo de fondo que el automático: detiene de verdad, nunca
+      pausa, para no dejar la misma clase de bug latente en este
+      camino manual.
+    - **`_reanudar_o_arrancar_emision()`** se simplificó radicalmente:
+      al no existir más una "pausa" que resumir, perdió el parámetro
+      `estaba_sonando` y las dos ramas de resume — ahora SIEMPRE es un
+      arranque de cero: si Emisión no está sonando por su cuenta y hay
+      ítems en el panel, llama a `reproducir_actual()` (Play normal:
+      el ítem en punta, o una serie NUEVA del Musicalizador si un
+      Comando FMT disparó una durante el bloque) con el mismo fundido
+      de entrada de siempre.
+    - Eliminados por completo: `_fade_pausar_emision()`,
+      `_pausar_emision_tras_fade()`, `_volumen_objetivo_emision()`, y
+      los atributos `_emision_estaba_sonando`/`_volumen_emision_previo`/
+      `_generacion_pausa_emision` — toda la infraestructura de
+      pausa/resume/generación quedó obsoleta de raíz, no solo
+      parcheada.
+
+    Con esto, el escenario reportado por Santiago queda resuelto en la
+    raíz: como Emisión nunca vuelve a quedar "pausada" en un tema
+    viejo, un Comando FMT (mismo formato o distinto) que dispare
+    durante el bloque SIEMPRE genera su serie sobre un panel/motor ya
+    liberado — no hay nada que revivir por accidente, nunca.
+
+    Probado con `test_ciclo_deja_terminar_item.py` (nuevo, 31
+    verificaciones: `ceder_control_al_terminar_item` no corta un ítem
+    sonando y lo deja terminar solo antes de detener de verdad;
+    control cedido de inmediato si no hay nada sonando; bloquea el
+    crossfade mientras espera; `_disparar_bloque` espera si Emisión
+    suena y dispara ya si no; `_tick()` no dispara un segundo bloque
+    mientras el primero espera; un Comando FMT "aunque sea el mismo"
+    genera una serie nueva de punta a punta tras el ciclo completo;
+    `_al_terminar_publicidad` siempre hace un Play normal, nunca un
+    resume; Play manual sigue cortando de inmediato sin esperar, pero
+    ahora libera en vez de pausar) + reescritura completa de la
+    sección de disparo por horario de `test_ciclo_automatico.py` (el
+    test viejo codificaba literalmente el mecanismo de pausa que se
+    eliminó — sus fallos no eran una regresión, sino aserciones que
+    verificaban el comportamiento que Santiago pidió cambiar) + suite
+    de regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py`). **Sigue sin poder probarse
+    con audio/VLC real** (como todo lo que toca este motor): falta que
+    Santiago confirme con su radio real que ahora el tema de Emisión
+    siempre termina entero antes de que entre el bloque, que Emisión
+    arranca fresca al volver (nunca el tema viejo a mitad), y que un
+    Comando FMT del mismo formato genera contenido realmente nuevo
+    cada vez.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
+- **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
+  después tiene que "volver limpio"** (bug real con audio real, ver
+  roadmap ronda 36): `MotorAudio.esta_reproduciendo()` da `False` con
+  el motor en pausa — cualquier guard tipo `if self.motor.
+  esta_reproduciendo(): self.motor.detener()` en OTRO lugar del código
+  (ej. `_limpiar_playlist_para_musicalizador()`) se salta el
+  `detener()` pensando que ya no hay nada que parar, y el motor queda
+  pausado en un ítem viejo que nadie toca — hasta que algo intenta
+  "reanudar" (`motor.pausar()`, que alterna) y revive ese ítem viejo
+  en vez de arrancar el contenido nuevo. Regla: para un handoff donde
+  después hay que "empezar de cero" (no reanudar la MISMA posición),
+  usar SIEMPRE `detener()` de verdad, nunca `pausar()` — aunque
+  pausar parezca más elegante/menos disruptivo a primera vista.
 - El bug de Drag&Drop que no funcionaba (ver regla de oro arriba).
 - **El Pisador no sonaba porque faltaba una delegación** (ver nota
   completa en Ventana 2): cuando un wrapper (`VentanaEmision`/

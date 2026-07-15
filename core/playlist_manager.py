@@ -837,15 +837,15 @@ class SchedulerAutomatico:
 
         self._dia_actual = QDate.currentDate()
         self._horas_disparadas_hoy = set()
-        self._emision_estaba_sonando = False
-        self._volumen_emision_previo = 0
         self._ultima_hora_tick = QTime.currentTime()
-        # Generación de la pausa diferida post-fade: si Emisión vuelve
-        # al aire ANTES de que el fade de salida termine (bloque más
-        # corto que el fundido), la pausa vieja se invalida en vez de
-        # pausar lo recién reanudado — mismo patrón que
-        # _generacion_pisador en core/gestor_emision.py.
-        self._generacion_pausa_emision = 0
+        # Pedido explícito (bug real reportado con audio real): un
+        # bloque disparado por horario ya NO corta a Emisión a mitad
+        # de tema — arma un "ceder" en GestorPlaylist
+        # (ceder_control_al_terminar_item) y espera a que el ítem en
+        # curso termine SOLO antes de arrancar el bloque. Esta bandera
+        # evita que _tick() dispare un SEGUNDO bloque mientras el
+        # primero todavía está esperando ese "ceder".
+        self._esperando_liberar_emision = False
 
         # Fin de reproducción de Publicidad fuera de un bloque
         # disparado (freno por hora, fin del árbol, cascada de errores)
@@ -956,7 +956,7 @@ class SchedulerAutomatico:
                 registrar_error(f"Inicio: error mostrando el aviso de bloque faltante: {error}")
         if self.ventana.esta_en_automatico():
             registrar_evento("Inicio: sin bloque vigente — arranca Emisión (Automático activo)")
-            self._reanudar_o_arrancar_emision(estaba_sonando=False)
+            self._reanudar_o_arrancar_emision()
 
     # ------------------------------------------------------------------
     def _tick(self):
@@ -968,127 +968,93 @@ class SchedulerAutomatico:
             self._cargar_programacion_del_dia()
 
         ahora = QTime.currentTime()
-        for bloque in self.ventana.bloques():
-            hora_str = self.ventana.hora_de_bloque(bloque)
-            if not hora_str or hora_str in self._horas_disparadas_hoy:
-                continue
-            hora_bloque = QTime.fromString(hora_str, "HH:mm:ss")
-            if not hora_bloque.isValid():
-                continue
-            # Disparo por TRANSICIÓN: la hora del bloque cayó entre el
-            # tick anterior y este. Un bloque agregado durante el día
-            # con hora ya pasada nunca se dispara retroactivamente.
-            if self._ultima_hora_tick <= hora_bloque <= ahora:
-                if not self._bloque_tiene_items(bloque):
-                    continue  # un bloque vacío no corta nada
-                self._horas_disparadas_hoy.add(hora_str)
-                self._disparar_bloque(bloque)
-                break  # un bloque por chequeo alcanza y sobra
+        # Ya hay un bloque esperando que Emisión libere el control
+        # (ver _disparar_bloque) — no busca otro hasta que arranque.
+        if not self._esperando_liberar_emision:
+            for bloque in self.ventana.bloques():
+                hora_str = self.ventana.hora_de_bloque(bloque)
+                if not hora_str or hora_str in self._horas_disparadas_hoy:
+                    continue
+                hora_bloque = QTime.fromString(hora_str, "HH:mm:ss")
+                if not hora_bloque.isValid():
+                    continue
+                # Disparo por TRANSICIÓN: la hora del bloque cayó entre
+                # el tick anterior y este. Un bloque agregado durante
+                # el día con hora ya pasada nunca se dispara
+                # retroactivamente.
+                if self._ultima_hora_tick <= hora_bloque <= ahora:
+                    if not self._bloque_tiene_items(bloque):
+                        continue  # un bloque vacío no corta nada
+                    self._horas_disparadas_hoy.add(hora_str)
+                    self._disparar_bloque(bloque)
+                    break  # un bloque por chequeo alcanza y sobra
         self._ultima_hora_tick = ahora
 
     # ------------------------------------------------------------------
-    # Transiciones con fundido Ventana 2 <-> bloque de Publicidad
+    # Transición Ventana 2 -> bloque de Publicidad
     # ------------------------------------------------------------------
     def _disparar_bloque(self, bloque):
-        self._fade_pausar_emision()
-        self.gestor_publicidad.disparar_bloque(bloque, al_finalizar=self._al_terminar_publicidad)
-
-    def _fade_pausar_emision(self):
-        """Corta (con fundido superpuesto, nunca un bache de silencio)
-        lo que esté sonando en Emisión — extraído de `_disparar_bloque`
-        para reusarlo también desde `cortar_emision_por_play_manual()`
-        (pedido explícito: el Play manual de Ventana 1 corta Emisión
-        con fundido SIEMPRE, incluso con el Automático activo)."""
-        motor_emision = self.gestor_emision.motor
-        sonando_ahora = motor_emision.esta_reproduciendo()
-        # "or": si dos disparos se encadenan (el segundo llega antes
-        # de que Emisión llegara a reanudarse), no se pierde el dato de
-        # que Emisión debía volver al final.
-        self._emision_estaba_sonando = sonando_ahora or self._emision_estaba_sonando
-        if not sonando_ahora:
-            return
-        self._volumen_emision_previo = motor_emision.obtener_volumen()
-        duracion = self._duracion_fade()
-        self._generacion_pausa_emision += 1
-        generacion = self._generacion_pausa_emision
-        # Fundido de salida SUPERPUESTO: lo nuevo arranca ya mientras
-        # Emisión baja — nunca hay un bache de silencio.
-        motor_emision.fade_volumen_a(0, duracion)
-        QTimer.singleShot(
-            int(duracion * 1000) + 150,
-            lambda: self._pausar_emision_tras_fade(motor_emision, generacion),
+        """Pedido explícito (bug real reportado con audio real): "que
+        llegado el momento de reproducir el bloque horario de la
+        ventana 1, deje terminar el ítem de la ventana 2... una vez
+        que vaya a la ventana 1, el archivo y la reproducción de la
+        ventana 2 debe liberarse" — ya NO corta el ítem de Emisión a
+        mitad con un fundido: lo deja terminar SOLO y recién ahí
+        libera Emisión de verdad (nunca la deja en pausa, resumible a
+        medias — esa pausa era la causa real del bug) antes de
+        arrancar el bloque."""
+        self._esperando_liberar_emision = True
+        self.gestor_emision.ceder_control_al_terminar_item(
+            lambda: self._arrancar_bloque_ya_liberado(bloque)
         )
 
-    def cortar_emision_por_play_manual(self):
-        """Pedido explícito: "cuando pase de la ventana 2 a la 1,
-        haciendo play, cortará en fade la reproducción de la ventana
-        2, incluso si está en automático" — conectado a
-        `GestorPublicidad.al_arrancar_manual` por MainWindow. A
-        diferencia del botón STOP (bloqueado con el Automático
-        activo), el Play manual de Ventana 1 SIEMPRE corta Emisión."""
-        self._fade_pausar_emision()
+    def _arrancar_bloque_ya_liberado(self, bloque):
+        self._esperando_liberar_emision = False
+        self.gestor_publicidad.disparar_bloque(bloque, al_finalizar=self._al_terminar_publicidad)
 
-    def _pausar_emision_tras_fade(self, motor_emision, generacion: int):
-        # Solo pausa si esta pausa sigue vigente: si Emisión ya volvió
-        # al aire antes de que el fundido terminara (bloque más corto
-        # que el fade), la generación cambió y no hay que tocar nada.
-        if generacion != self._generacion_pausa_emision:
+    def cortar_emision_por_play_manual(self):
+        """Pedido explícito (ronda anterior, sin cambios en esta):
+        "cuando pase de la ventana 2 a la 1, haciendo play, cortará en
+        fade la reproducción de la ventana 2, incluso si está en
+        automático" — a diferencia del bloque automático (que ahora
+        espera a que termine el ítem), un Play manual es una decisión
+        explícita del operador y corta YA MISMO, con el mismo fundido
+        corto de siempre. Lo que sí cambió: ahora libera Emisión de
+        verdad (detiene, nunca pausa) — mismo arreglo de fondo que el
+        bloque automático, para que al volver arranque siempre fresco
+        en vez de resumir un tema viejo a mitad."""
+        motor_emision = self.gestor_emision.motor
+        if not motor_emision.esta_reproduciendo():
             return
-        if motor_emision.esta_reproduciendo():
-            motor_emision.pausar()
-            # Con Emisión ya pausada (inaudible), el volumen vuelve al
-            # nivel previo — así un Play/reanudación manual posterior
-            # (por ejemplo con Automático apagado) nunca se encuentra
-            # el volumen atrapado en 0 sin explicación.
-            motor_emision.set_volumen(self._volumen_objetivo_emision())
-            # Pedido explícito: al pasar de Emisión al bloque de
-            # Publicidad (cambio de ventana), la barra de progreso de
-            # Emisión no debe quedar congelada en la posición donde
-            # se pausó.
-            self.gestor_emision.panel.resetear_reproduccion()
+        duracion = self._duracion_fade()
+        motor_emision.fade_volumen_a(0, duracion)
+        QTimer.singleShot(int(duracion * 1000) + 150, self.gestor_emision.detener)
 
     def _al_terminar_publicidad(self):
-        estaba_sonando = self._emision_estaba_sonando
-        self._emision_estaba_sonando = False
         if not self.ventana.esta_en_automatico():
             # Punto 3 del pedido: sin el botón AUTOMÁTICO, el bloque
             # suena a su hora y después la estación queda en silencio.
             registrar_evento("Publicidad: fin de reproducción — Automático apagado, queda en silencio")
             return
-        self._reanudar_o_arrancar_emision(estaba_sonando)
+        self._reanudar_o_arrancar_emision()
 
-    def _volumen_objetivo_emision(self) -> int:
-        return self._volumen_emision_previo or self.gestor_emision._volumen_base
-
-    def _reanudar_o_arrancar_emision(self, estaba_sonando: bool):
+    def _reanudar_o_arrancar_emision(self):
+        """Pedido explícito: Emisión ya NO se pausa en el handoff con
+        Publicidad — se detiene de verdad (ver
+        GestorPlaylist.ceder_control_al_terminar_item /
+        cortar_emision_por_play_manual), así que volver acá SIEMPRE es
+        un arranque "de cero": el ítem en punta (rojo), o una serie
+        NUEVA del Musicalizador si un Comando FMT disparó una durante
+        el bloque — nunca el resume de una posición vieja a mitad de
+        tema."""
         motor = self.gestor_emision.motor
         duracion = self._duracion_fade()
 
-        if estaba_sonando and motor.esta_reproduciendo():
-            # El bloque terminó antes de que la pausa diferida llegara
-            # a ejecutarse: Emisión nunca dejó de correr, solo quedó en
-            # volumen 0 — se invalida esa pausa pendiente y basta con
-            # subirla de nuevo en fade.
-            self._generacion_pausa_emision += 1
-            motor.fade_volumen_a(self._volumen_objetivo_emision(), duracion)
-            registrar_evento("Automático: Emisión vuelve al aire (seguía corriendo, sube en fade)")
-            return
-
-        if estaba_sonando and not motor.esta_reproduciendo():
-            motor.set_volumen(0)  # arranca inaudible para que la vuelta sea un fundido real
-            motor.pausar()  # pausar() alterna: reanuda lo que estaba pausado
-            motor.fade_volumen_a(self._volumen_objetivo_emision(), duracion)
-            registrar_evento("Automático: Emisión reanudada con fundido de entrada")
-            return
-
         if motor.esta_reproduciendo():
-            # Emisión ya está al aire por su cuenta (el bloque nunca la
-            # pausó): no hay nada que arrancar ni que tocar.
+            # Emisión ya está al aire por su cuenta (alguien la
+            # arrancó mientras tanto): no hay nada que hacer.
             return
 
-        # Emisión no estaba sonando: arranca desde el ítem en rojo (o
-        # el primero de la lista) — punto 2 del pedido — con fundido
-        # de entrada.
         if self.gestor_emision.panel.cantidad_items() == 0:
             registrar_evento("Automático: Emisión sin ítems — no hay nada para reproducir")
             return
