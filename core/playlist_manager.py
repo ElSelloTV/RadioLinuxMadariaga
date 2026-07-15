@@ -85,18 +85,30 @@ class GestorPublicidad:
         avanzar_en_error: bool = True,
         reintentos_maximos: int = 3,
         persistir: bool = False,
+        duracion_fade_out_v1_ms: int = 500,
     ):
         self.ventana = ventana_publicidad
         self.motor = MotorAudio(id_dispositivo)
         self.avanzar_en_error = avanzar_en_error
         self.reintentos_maximos = max(1, reintentos_maximos)
         self.persistir = persistir
+        # Fade OUT automático y corto entre tandas (pedido explícito,
+        # "bien pegados uno a otro, incluso 500 milisegundos de
+        # fade... el fade OUT de la ventana 1") — configurable en ms,
+        # ver Configuración → Reproducción y Automatización. Se
+        # dispara CON ANTICIPACIÓN sobre el ítem SALIENTE (nunca hay
+        # fade-in en el entrante — pedido explícito, "el fade es
+        # siempre OUT, no usaremos el fade IN").
+        self.duracion_fade_out_v1_ms = duracion_fade_out_v1_ms
         self._fallos_consecutivos = 0
         self._volumen_base = 100
         self._bloque_automatico_actual = None
         self._callback_bloque_finalizado = None
         self._restaurando = False
         self._fundido_en_curso = False
+        # Referencia al ítem cuyo fade-out automático ya se disparó —
+        # evita redispararlo en cada tick de restante_ms_cambio.
+        self._item_fade_out_v1_disparado = None
         # "Stop diferido" (Dinesat): armado, deja terminar el ítem
         # actual y recién ahí detiene TODO — no avanza al siguiente.
         self._stop_diferido_armado = False
@@ -135,6 +147,7 @@ class GestorPublicidad:
         self.motor.finalizo_item.connect(self._on_fin_de_item)
         self.motor.error_reproduccion.connect(self._on_error)
         self.motor.restante_ms_cambio.connect(self._actualizar_progreso)
+        self.motor.restante_ms_cambio.connect(self._chequear_fade_out_automatico)
 
         # Pedido explícito (paridad con Dinesat): el botón verde es
         # Play SI está en silencio, o "Siguiente con fundido" si ya
@@ -187,11 +200,34 @@ class GestorPublicidad:
             return
         self.motor.buscar_posicion_ms(int(total_ms * permille / 1000))
 
+    def _chequear_fade_out_automatico(self, restante_ms: int):
+        """Fade OUT automático y corto entre tandas de Publicidad
+        (pedido explícito, ver duracion_fade_out_v1_ms) — se dispara
+        CON ANTICIPACIÓN sobre el ítem que YA está sonando, cerca de
+        su final, para que la transición a la siguiente tanda quede
+        "bien pegada" en vez de un corte seco. Nunca compite con un
+        fundido manual (_avanzar_con_fundido) ni con el Stop diferido,
+        y solo se dispara UNA vez por ítem (guard por referencia,
+        evita redispararse en cada tick)."""
+        if self._fundido_en_curso or self._stop_diferido_armado:
+            return
+        if self.duracion_fade_out_v1_ms <= 0:
+            return
+        item_actual = self.ventana.item_reproduciendo()
+        if item_actual is None or item_actual is self._item_fade_out_v1_disparado:
+            return
+        if 0 < restante_ms <= self.duracion_fade_out_v1_ms:
+            self._item_fade_out_v1_disparado = item_actual
+            self.motor.fade_volumen_a(0, self.duracion_fade_out_v1_ms / 1000.0)
+
     def _detener(self):
         registrar_evento("Publicidad: Stop")
         self.motor.detener()
         self._fallos_consecutivos = 0
         self.ventana.set_indicador_en_vivo(False)
+        # Pedido explícito: la barra de progreso no debe quedar
+        # "pegada" en la posición donde se detuvo — Stop la reinicia.
+        self.ventana.resetear_reproduccion()
         if self._bloque_automatico_actual is not None:
             self._finalizar_bloque_automatico()
         if self._stop_diferido_armado:
@@ -293,6 +329,10 @@ class GestorPublicidad:
             return
         self.ventana.tree.setCurrentItem(item)
         self.ventana.marcar_reproduciendo_item(item)
+        # Nuevo ítem arrancando: habilita de nuevo el fade-out
+        # automático para ESTE ítem (el guard de arriba es por
+        # referencia, no se "hereda" del ítem anterior).
+        self._item_fade_out_v1_disparado = None
 
         # Bug real corregido: antes se llamaba motor.reproducir(ruta)
         # sin el recorte de silencio ni el nivelado ya calculados —
@@ -429,6 +469,9 @@ class GestorPublicidad:
         registrar_evento("Publicidad: bloque automático finalizado")
         self.motor.detener()
         self.ventana.set_indicador_en_vivo(False)
+        # Pedido explícito: al volver a Emisión (cambio de ventana), la
+        # barra de progreso de Publicidad no debe quedar congelada.
+        self.ventana.resetear_reproduccion()
         bloque_terminado = self._bloque_automatico_actual
         callback = self._callback_bloque_finalizado
         self._bloque_automatico_actual = None
@@ -481,6 +524,22 @@ class GestorPublicidad:
             self._fallos_consecutivos = 0
             self.ventana.marcar_reproduciendo_item(item)
             registrar_evento(f"Publicidad: '{item.text(0)}' armado en punta (rojo)")
+            # Pedido explícito (mismo criterio que Ventana 2): el verde
+            # SIEMPRE se recalcula al de abajo del rojo recién elegido
+            # a mano, descartando cualquier verde viejo que apuntara a
+            # otro ítem distinto.
+            self._recalcular_verde_tras_nuevo_rojo(item)
+
+    def _recalcular_verde_tras_nuevo_rojo(self, item_rojo):
+        """SIEMPRE recalcula el verde como el ítem de abajo del rojo
+        recién elegido a mano — a diferencia de `_asegurar_rojo_y_verde()`
+        (que respeta un verde ya válido, sin importar dónde apunte),
+        acá se sobrescribe cualquier verde viejo apuntando a otra
+        tanda/bloque."""
+        candidato = self.ventana.tree.itemBelow(item_rojo)
+        while candidato is not None and not self._item_valido(candidato):
+            candidato = self.ventana.tree.itemBelow(candidato)
+        self.ventana.marcar_siguiente_item(candidato)
 
     # ------------------------------------------------------------------
     def _avanzar_al_siguiente(self):
@@ -593,6 +652,7 @@ class GestorPublicidad:
                     self.motor.detener()
                     self.ventana.marcar_reproduciendo_item(None)
                     self.ventana.set_indicador_en_vivo(False)
+                    self.ventana.resetear_reproduccion()
                     # El ítem "en cola" (verde) sobre el bloque futuro
                     # queda puesto a propósito: es la señal de "listo,
                     # esperando su hora" (pedido explícito del ciclo
@@ -605,6 +665,7 @@ class GestorPublicidad:
             self.motor.detener()
             self.ventana.marcar_reproduciendo_item(None)
             self.ventana.set_indicador_en_vivo(False)
+            self.ventana.resetear_reproduccion()
             self._notificar_fin_reproduccion()
             return
 
@@ -980,6 +1041,11 @@ class SchedulerAutomatico:
             # (por ejemplo con Automático apagado) nunca se encuentra
             # el volumen atrapado en 0 sin explicación.
             motor_emision.set_volumen(self._volumen_objetivo_emision())
+            # Pedido explícito: al pasar de Emisión al bloque de
+            # Publicidad (cambio de ventana), la barra de progreso de
+            # Emisión no debe quedar congelada en la posición donde
+            # se pausó.
+            self.gestor_emision.panel.resetear_reproduccion()
 
     def _al_terminar_publicidad(self):
         estaba_sonando = self._emision_estaba_sonando

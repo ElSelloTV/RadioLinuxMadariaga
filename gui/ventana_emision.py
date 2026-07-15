@@ -111,6 +111,9 @@ class VentanaEmision(QWidget):
     def actualizar_progreso(self, permille: int):
         self.panel.actualizar_progreso(permille)
 
+    def resetear_reproduccion(self):
+        self.panel.resetear_reproduccion()
+
     @property
     def tree(self):
         # core/gestor_emision.py (persistencia) necesita el árbol

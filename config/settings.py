@@ -52,6 +52,19 @@ CONFIG_POR_DEFECTO = {
         "tolerancia_silencio_segundos": 2.0,
         "umbral_silencio_dbfs": -40.0,
         "pisador_bajada_db": -4.0,
+        # Pedido explícito ("corte de silencio estricto... que sea
+        # bien pegados uno a otro"): Publicidad y Separadores (el
+        # material de Ventana 1) se analizan con esta tolerancia, MÁS
+        # ESTRICTA que la general — 0 por defecto, sin margen extra de
+        # silencio, a diferencia de "tolerancia_silencio_segundos" de
+        # arriba (que sí deja un colchón a propósito para Música). Ver
+        # config/settings.py:tolerancia_silencio_para_genero().
+        "tolerancia_silencio_v1_segundos": 0.0,
+        # Fade OUT automático y corto entre tandas de Ventana 1
+        # (pedido explícito, en MILISEGUNDOS — a diferencia de
+        # "duracion_fade_segundos" de Fade/Transiciones, que es en
+        # segundos y es para el crossfade/fundido manual de Ventana 2).
+        "duracion_fade_out_v1_ms": 500,
     },
     "general": {
         "confirmar_antes_de_eliminar": True,
@@ -126,6 +139,25 @@ def cargar_configuracion() -> dict:
 
 def guardar_configuracion(config: dict):
     _guardar_json_atomico(ARCHIVO_CONFIG_GENERAL, config)
+
+
+# Géneros del material típico de Ventana 1 (pedido explícito: "hay
+# spot publicitarios y separadores que tienen algunos segundos o
+# milisegundos de silencio... sacalos absolutamente").
+GENEROS_CORTE_ESTRICTO = ("Publicidad", "Separador")
+
+
+def tolerancia_silencio_para_genero(config: dict, genero: str) -> float:
+    """Publicidad y Separadores usan la tolerancia ESTRICTA
+    (`tolerancia_silencio_v1_segundos`, 0 por defecto — sin margen) en
+    vez de la general (`tolerancia_silencio_segundos`, que deja a
+    propósito un colchón de silencio para Música y el resto). Se
+    aplica en el momento de ANALIZAR el archivo (Ventana 3, al
+    agregar/reemplazar), no en cada reproducción."""
+    reproduccion = config.get("reproduccion", {})
+    if genero in GENEROS_CORTE_ESTRICTO:
+        return reproduccion.get("tolerancia_silencio_v1_segundos", 0.0)
+    return reproduccion.get("tolerancia_silencio_segundos", 2.0)
 
 
 def _rotar_archivo_si_corresponde(ruta: str):

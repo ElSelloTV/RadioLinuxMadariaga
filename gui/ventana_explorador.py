@@ -71,7 +71,9 @@ from gui.dialogo_vigencia import DialogoVigencia
 from gui.estado_ui import guardar_columnas, restaurar_columnas
 from core.analizador_audio import analizar_audio
 from core.audio_engine import obtener_duracion_formateada
-from config.settings import cargar_configuracion, cargar_biblioteca, guardar_biblioteca
+from config.settings import (
+    cargar_configuracion, cargar_biblioteca, guardar_biblioteca, tolerancia_silencio_para_genero,
+)
 
 EXTENSIONES_SOPORTADAS = (".mp3", ".wav", ".mp4", ".m4a")
 
@@ -501,7 +503,10 @@ class VentanaExplorador(QWidget):
             return
 
         config = cargar_configuracion()
-        tolerancia = config["reproduccion"].get("tolerancia_silencio_segundos", 2.0)
+        # Pedido explícito ("corte de silencio estricto"): Publicidad
+        # y Separadores usan una tolerancia sin margen — ver
+        # config/settings.py:tolerancia_silencio_para_genero().
+        tolerancia = tolerancia_silencio_para_genero(config, datos["genero"])
         umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
         analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio)
 
@@ -548,7 +553,7 @@ class VentanaExplorador(QWidget):
         item_categoria = datos["item_categoria"]
         genero = datos["genero"]
         config = cargar_configuracion()
-        tolerancia = config["reproduccion"].get("tolerancia_silencio_segundos", 2.0)
+        tolerancia = tolerancia_silencio_para_genero(config, genero)
         umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
 
         registros = item_categoria.data(0, ROL_ARCHIVOS) or []
@@ -619,7 +624,7 @@ class VentanaExplorador(QWidget):
         registro = item.data(0, ROL_REGISTRO)
         ruta_anterior = registro.get("ruta")
         config = cargar_configuracion()
-        tolerancia = config["reproduccion"].get("tolerancia_silencio_segundos", 2.0)
+        tolerancia = tolerancia_silencio_para_genero(config, registro.get("genero", ""))
         umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
         analisis = analizar_audio(ruta_nueva, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio)
 

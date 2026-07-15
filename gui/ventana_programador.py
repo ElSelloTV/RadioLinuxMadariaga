@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDate, QTime, Signal
 from PySide6.QtGui import QBrush, QColor
 
-from gui.common_widgets import ArbolConDrop
+from gui.common_widgets import ArbolProgramadorConDrop
 from gui.styles import (
     ROL_ANALISIS_AUDIO, ROL_VIGENCIA, ROL_ES_COMANDO, ROL_TIPO_COMANDO, ROL_PARAMETRO_COMANDO, COLOR_COMANDO,
 )
@@ -165,7 +165,7 @@ class VentanaProgramador(QDialog):
         barra_bloque.addWidget(self.btn_agregar_bloque)
         layout_grupo.addLayout(barra_bloque)
 
-        self.tree = ArbolConDrop()
+        self.tree = ArbolProgramadorConDrop()
         self.tree.setColumnCount(3)
         self.tree.setHeaderLabels(["Título", "Duración", "Código"])
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -290,7 +290,19 @@ class VentanaProgramador(QDialog):
             return None
         return self.tree.topLevelItem(self.tree.topLevelItemCount() - 1)
 
-    def _agregar_registro_a_bloque(self, bloque, registro: dict):
+    def _indice_insercion_actual(self, bloque):
+        """Si hay un ÍTEM (no un bloque) seleccionado DENTRO de
+        `bloque`, la próxima inserción va justo DESPUÉS de él —
+        pedido explícito: "que lo haga en el lugar donde haya
+        seleccionado y no necesariamente al final". Sin una selección
+        útil, sigue agregando al final (`None`, comportamiento de
+        siempre)."""
+        item = self.tree.currentItem()
+        if item is not None and item.parent() is bloque:
+            return bloque.indexOfChild(item) + 1
+        return None
+
+    def _agregar_registro_a_bloque(self, bloque, registro: dict, indice: int = None):
         hijo = QTreeWidgetItem([
             registro.get("titulo") or "Sin título", registro.get("duracion", ""), registro.get("codigo", "—"),
         ])
@@ -303,11 +315,14 @@ class VentanaProgramador(QDialog):
         hijo.setData(0, ROL_VIGENCIA, {
             "fecha_inicio": registro.get("fecha_inicio"), "fecha_fin": registro.get("fecha_fin"),
         })
-        bloque.addChild(hijo)
+        if indice is None:
+            bloque.addChild(hijo)
+        else:
+            bloque.insertChild(indice, hijo)
         bloque.setExpanded(True)
         return hijo
 
-    def _agregar_comando_a_bloque(self, bloque, tipo_comando: str, parametro: str):
+    def _agregar_comando_a_bloque(self, bloque, tipo_comando: str, parametro: str, indice: int = None):
         """Comando FMT (pedido explícito, encadenado con el
         Musicalizador Avanzado) — mismo concepto que
         VentanaPublicidad.agregar_comando(), acá en el editor del
@@ -321,7 +336,10 @@ class VentanaProgramador(QDialog):
         for columna in range(3):
             hijo.setBackground(columna, fondo)
             hijo.setForeground(columna, QBrush(QColor("white")))
-        bloque.addChild(hijo)
+        if indice is None:
+            bloque.addChild(hijo)
+        else:
+            bloque.insertChild(indice, hijo)
         bloque.setExpanded(True)
         return hijo
 
@@ -335,7 +353,7 @@ class VentanaProgramador(QDialog):
             return
         formato = dialogo.formato_elegido()
         if formato:
-            self._agregar_comando_a_bloque(bloque, "FMT", formato)
+            self._agregar_comando_a_bloque(bloque, "FMT", formato, self._indice_insercion_actual(bloque))
 
     # ==================================================================
     # Copiar / Pegar (pedido explícito, menú contextual): en la
@@ -395,13 +413,20 @@ class VentanaProgramador(QDialog):
         if bloque is None:
             QMessageBox.information(self, "Pegar", "Primero creá un bloque horario.")
             return
+        # Pedido explícito: pegar debe insertar en el LUGAR seleccionado,
+        # no siempre al final — cada ítem pegado avanza el índice para
+        # que la serie completa quede en orden, justo después del
+        # ítem que estaba seleccionado.
+        indice = self._indice_insercion_actual(bloque)
         for item_data in self._portapapeles:
             if item_data.get("es_comando"):
                 self._agregar_comando_a_bloque(
-                    bloque, item_data.get("tipo_comando", "FMT"), item_data.get("parametro_comando", ""),
+                    bloque, item_data.get("tipo_comando", "FMT"), item_data.get("parametro_comando", ""), indice,
                 )
             else:
-                self._agregar_registro_a_bloque(bloque, item_data)
+                self._agregar_registro_a_bloque(bloque, item_data, indice)
+            if indice is not None:
+                indice += 1
         bloque.setExpanded(True)
 
     def _on_archivo_soltado(self, ruta, item_destino):
@@ -448,8 +473,11 @@ class VentanaProgramador(QDialog):
         if dialogo.exec() != QDialog.DialogCode.Accepted:
             return
 
+        indice = self._indice_insercion_actual(bloque)
         for registro in dialogo.registros_elegidos():
-            self._agregar_registro_a_bloque(bloque, registro)
+            self._agregar_registro_a_bloque(bloque, registro, indice)
+            if indice is not None:
+                indice += 1
         self._guardar_ultima_categoria(dialogo.ruta_categoria_seleccionada())
 
     def _reemplazar_seleccionado(self):

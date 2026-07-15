@@ -389,6 +389,17 @@ class PanelReproductor(QWidget):
             return
         self.slider_progreso.setValue(max(0, min(1000, permille)))
 
+    def resetear_reproduccion(self):
+        """Pedido explícito: "la barra de reproducción queda en estado
+        pausa... cuando hago stop, fade o pasa a otra ventana, la
+        reproducción debe reiniciarse" — reinicia la barra de progreso
+        y los contadores a cero, en vez de quedar congelados en la
+        última posición. NUNCA se llama en una Pausa normal (ahí la
+        posición debe conservarse para reanudar)."""
+        if self.slider_progreso is not None:
+            self.slider_progreso.setValue(0)
+        self.actualizar_contadores("00:00:00", "00:00:00")
+
     def fila_reproduciendo(self) -> int:
         return self.tree.indexOfTopLevelItem(self._item_reproduciendo) if self._item_reproduciendo else -1
 

@@ -64,6 +64,9 @@ class VentanaAuxiliar(QDialog):
     def actualizar_contadores(self, transcurrido, restante):
         self.panel.actualizar_contadores(transcurrido, restante)
 
+    def resetear_reproduccion(self):
+        self.panel.resetear_reproduccion()
+
     def agregar_item(self, titulo, duracion, codigo, ruta="",
                       punto_inicio_ms=0, punto_fin_ms=None, ganancia_db=0.0):
         return self.panel.agregar_item(titulo, duracion, codigo, ruta,

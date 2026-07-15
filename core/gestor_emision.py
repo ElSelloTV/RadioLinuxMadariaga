@@ -361,6 +361,9 @@ class GestorPlaylist:
         self._cancelar_pisador_en_curso()
         self._fallos_consecutivos = 0
         self.panel.set_indicador_en_vivo(False)
+        # Pedido explícito: la barra de progreso no debe quedar
+        # "pegada" en la posición donde se detuvo — Stop la reinicia.
+        self.panel.resetear_reproduccion()
         if self._stop_diferido_armado:
             self._cancelar_stop_diferido()
 
@@ -635,6 +638,32 @@ class GestorPlaylist:
             # Play (reproducir_actual usa el ítem ya marcado).
             self._fallos_consecutivos = 0
             self.panel.marcar_reproduciendo(fila)
+            # Pedido explícito: "por debajo del ítem que entra en rojo,
+            # el de abajo pasa a verde en previo... si está en stop,
+            # elijo uno con doble clic para ponerse en rojo, pero el
+            # verde quedó en otro ítem diferente" — a diferencia de
+            # _asegurar_rojo_y_verde() (que no toca un verde ya
+            # válido), acá el verde SIEMPRE se recalcula al de abajo
+            # del rojo recién elegido, descartando cualquier verde
+            # viejo que hubiera quedado apuntando a otro lado.
+            self._recalcular_verde_tras_nuevo_rojo(fila)
+
+    def _recalcular_verde_tras_nuevo_rojo(self, fila_roja: int):
+        """SIEMPRE recalcula el verde como el ítem de abajo del rojo
+        recién elegido a mano — a diferencia de `_asegurar_rojo_y_verde()`
+        (que respeta un verde ya válido, sin importar dónde apunte),
+        acá se sobrescribe cualquier verde viejo. `_marcar_siguiente_con_refill`
+        se encarga de repintar el verde anterior a su color normal."""
+        total = self.panel.cantidad_items()
+        candidata = fila_roja + 1
+        if candidata >= total:
+            candidata = 0 if self.repetir_al_finalizar else -1
+        if candidata == fila_roja:
+            candidata = -1
+        if candidata >= 0:
+            self._marcar_siguiente_con_refill(candidata)
+        else:
+            self.panel.marcar_siguiente(-1)
 
     # ------------------------------------------------------------------
     # Avance normal (fin de tema / botón Siguiente) y avance forzado por error
@@ -690,9 +719,11 @@ class GestorPlaylist:
                 total = self.panel.cantidad_items()
                 if fila_siguiente >= total:
                     self.motor.detener()
+                    self.panel.resetear_reproduccion()
                     return
             else:
                 self.motor.detener()
+                self.panel.resetear_reproduccion()
                 return
 
         self.panel.marcar_reproduciendo(fila_siguiente)
