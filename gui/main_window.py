@@ -38,6 +38,7 @@ from core.playlist_manager import GestorPublicidad, GestorExplorador, SchedulerA
 from core.gestor_emision import GestorPlaylist
 from core.audio_engine import obtener_duracion_formateada
 from core import easyeffects_control
+from core import actualizador
 from config.settings import cargar_configuracion, registrar_evento
 
 
@@ -80,6 +81,13 @@ class MainWindow(QMainWindow):
         # sin esperar respuesta — para no demorar el arranque de la
         # radio ni un segundo.
         self._iniciar_easyeffects_en_segundo_plano()
+
+        # Pedido explícito: buscar actualización SOLA al abrir el
+        # programa (antes solo se buscaba a mano, en Configuración →
+        # Actualizaciones). Diferida unos segundos para no competir
+        # con el arranque de la radio — es una consulta de red (git
+        # fetch), misma prioridad que ya se le dio a EasyEffects.
+        QTimer.singleShot(2500, self._buscar_actualizacion_automatica)
 
     # ------------------------------------------------------------------
     # Menú superior
@@ -472,6 +480,59 @@ class MainWindow(QMainWindow):
         if self._preload_activo:
             QApplication.restoreOverrideCursor()
             self._preload_activo = False
+
+    # ------------------------------------------------------------------
+    # Buscar actualización SOLA al abrir el programa (pedido explícito)
+    # ------------------------------------------------------------------
+    def _buscar_actualizacion_automatica(self):
+        """Antes solo se buscaba a mano en Configuración →
+        Actualizaciones — ahora también se chequea sola al abrir,
+        diferida unos segundos (ver __init__) para no competir con el
+        arranque de la radio. Es una consulta de red (git fetch),
+        así que corre con el mismo cursor de espera que el resto de
+        la app en vez de trabar el arranque en silencio. Si hay una
+        actualización, pregunta "ahora" o "más tarde" — nunca la
+        aplica sola sin confirmación."""
+        self._mostrar_preload("Buscando actualización...", duracion_ms=500)
+        hay_actualizacion, mensaje = actualizador.hay_actualizacion_disponible()
+        if not hay_actualizacion:
+            registrar_evento(f"Buscar actualización automática: {mensaje}")
+            return
+
+        registrar_evento("Buscar actualización automática: hay una disponible.")
+        if not self._preguntar_actualizar_ahora():
+            return
+
+        self._mostrar_preload("Descargando actualización...", duracion_ms=500)
+        exito, mensaje_aplicar = actualizador.aplicar_actualizacion()
+        if not exito:
+            QMessageBox.warning(self, "Actualizar", mensaje_aplicar)
+            return
+
+        QMessageBox.information(self, "Actualizar", "Actualización aplicada. La aplicación se va a reiniciar.")
+        # Mismo flag que ya usa el botón manual de Configuración: evita
+        # que closeEvent vuelva a preguntar por la emisión en curso.
+        self.preparar_cierre_por_actualizacion()
+        actualizador.reiniciar_aplicacion(QApplication.instance())
+
+    def _preguntar_actualizar_ahora(self) -> bool:
+        """Extraído aparte (en vez de en línea dentro de
+        _buscar_actualizacion_automatica) para poder testear la
+        decisión sin simular un click real sobre un QMessageBox real
+        — offscreen no puede. Botones con texto propio en vez de Sí/No
+        genérico, pedido explícito: "preguntar si desea actualizar
+        ahora o luego"."""
+        caja = QMessageBox(self)
+        caja.setWindowTitle("Actualización disponible")
+        caja.setText(
+            "Hay una actualización disponible para Auto-Radio Tuyú.\n"
+            "¿Querés actualizarla ahora? La aplicación se va a reiniciar sola."
+        )
+        boton_ahora = caja.addButton("Actualizar ahora", QMessageBox.ButtonRole.AcceptRole)
+        boton_luego = caja.addButton("Más tarde", QMessageBox.ButtonRole.RejectRole)
+        caja.setDefaultButton(boton_luego)
+        caja.exec()
+        return caja.clickedButton() is boton_ahora
 
     # ------------------------------------------------------------------
     # Señales entre ventanas

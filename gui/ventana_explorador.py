@@ -57,7 +57,7 @@ import shutil
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidget,
     QTreeWidgetItem, QPushButton, QFileDialog, QSplitter, QLineEdit,
-    QMessageBox, QInputDialog, QMenu, QAbstractItemView
+    QMessageBox, QInputDialog, QMenu, QAbstractItemView, QApplication
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QProcess
 from PySide6.QtGui import QColor, QBrush, QDesktopServices
@@ -193,12 +193,15 @@ class VentanaExplorador(QWidget):
 
         barra_archivos = QHBoxLayout()
         self.btn_agregar = QPushButton("＋ Agregar")
+        self.btn_info = QPushButton("✏ Info")
+        self.btn_info.setToolTip("Editar información (título, artista, género, categoría) sin tocar el audio")
         self.btn_reemplazar = QPushButton("⟲ Reemplazar")
         self.btn_eliminar = QPushButton("✕ Eliminar")
         self.btn_agregar.clicked.connect(self._agregar_archivos)
+        self.btn_info.clicked.connect(self._editar_informacion_archivo)
         self.btn_reemplazar.clicked.connect(self._reemplazar_archivo)
         self.btn_eliminar.clicked.connect(self._eliminar_archivo)
-        for btn in (self.btn_agregar, self.btn_reemplazar, self.btn_eliminar):
+        for btn in (self.btn_agregar, self.btn_info, self.btn_reemplazar, self.btn_eliminar):
             barra_archivos.addWidget(btn)
         layout_archivos.addLayout(barra_archivos)
 
@@ -569,24 +572,39 @@ class VentanaExplorador(QWidget):
         siguiente_numero = len(registros) + 1
         prefijo = GENERO_PREFIJOS_CODIGO.get(genero, "GEN")
 
-        for ruta in rutas:
-            analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio)
-            registro = {
-                "titulo": os.path.splitext(os.path.basename(ruta))[0],
-                "artista": "",
-                "genero": genero,
-                "codigo": f"{prefijo}{siguiente_numero:05d}",
-                "ruta": ruta,
-                "duracion": obtener_duracion_formateada(ruta),
-                "punto_inicio_ms": analisis["punto_inicio_ms"],
-                "punto_fin_ms": analisis["punto_fin_ms"] or None,
-                "ganancia_db": analisis["ganancia_db"],
-                "analizado": analisis["analizado"],
-                "fecha_inicio": None,
-                "fecha_fin": None,
-            }
-            registros.append(registro)
-            siguiente_numero += 1
+        # Pedido explícito ("hay operaciones que demoran... deberíamos
+        # poner un preload"): importar en lote analiza CADA archivo
+        # (pydub/ffmpeg), lento de verdad con una biblioteca grande
+        # (700 archivos, caso real de Santiago) — sin threading en
+        # esta app (nunca se usó, ver CLAUDE.md), el cursor de espera +
+        # un `processEvents()` periódico es lo que evita que se vea
+        # "colgada" mientras procesa, aunque siga siendo bloqueante.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            for indice, ruta in enumerate(rutas):
+                analisis = analizar_audio(
+                    ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio,
+                )
+                registro = {
+                    "titulo": os.path.splitext(os.path.basename(ruta))[0],
+                    "artista": "",
+                    "genero": genero,
+                    "codigo": f"{prefijo}{siguiente_numero:05d}",
+                    "ruta": ruta,
+                    "duracion": obtener_duracion_formateada(ruta),
+                    "punto_inicio_ms": analisis["punto_inicio_ms"],
+                    "punto_fin_ms": analisis["punto_fin_ms"] or None,
+                    "ganancia_db": analisis["ganancia_db"],
+                    "analizado": analisis["analizado"],
+                    "fecha_inicio": None,
+                    "fecha_fin": None,
+                }
+                registros.append(registro)
+                siguiente_numero += 1
+                if indice % 15 == 0:
+                    QApplication.processEvents()
+        finally:
+            QApplication.restoreOverrideCursor()
 
         item_categoria.setData(0, ROL_ARCHIVOS, registros)
         if item_categoria is self._categoria_actual() and not self._en_busqueda:
@@ -677,6 +695,75 @@ class VentanaExplorador(QWidget):
         item.setData(0, ROL_REGISTRO, registro)
         self._sincronizar_registro_en_categoria(categoria, registro.get("ruta"), registro)
         self._guardar_biblioteca()
+
+    def _editar_informacion_archivo(self, item=None):
+        """Pedido explícito: editar título/artista/género/categoría de
+        un material YA importado, sin tocar el audio ni re-analizarlo
+        (distinto de "🎚 Editar audio" y de "⟲ Reemplazar")."""
+        if item is None:
+            item = self.tree_archivos.currentItem()
+        if item is None:
+            QMessageBox.information(self, "Editar información", "Seleccioná un archivo.")
+            return
+
+        registro = item.data(0, ROL_REGISTRO)
+        if not registro:
+            return
+        ruta = registro.get("ruta")
+        categoria_actual = self._buscar_categoria_de_ruta(ruta)
+        if categoria_actual is None:
+            QMessageBox.warning(self, "Editar información", "No se encontró la categoría de este archivo.")
+            return
+
+        from gui.dialogo_editar_informacion import DialogoEditarInformacion
+        dialogo = DialogoEditarInformacion(registro, self.tree_categorias, categoria_actual, parent=self)
+        if dialogo.exec() != DialogoEditarInformacion.DialogCode.Accepted:
+            return
+        resultado = dialogo.resultado()
+        if resultado is None:
+            return
+
+        categoria_nueva = resultado["item_categoria"]
+        cambia_categoria = categoria_nueva is not categoria_actual
+
+        if cambia_categoria:
+            config = cargar_configuracion()
+            if config["general"]["confirmar_antes_de_eliminar"]:
+                respuesta = QMessageBox.question(
+                    self, "Editar información",
+                    f"Además del cambio de información, esto mueve '{resultado['titulo']}'\n"
+                    f"a la categoría '{categoria_nueva.text(0)}'. ¿Continuar?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if respuesta != QMessageBox.StandardButton.Yes:
+                    return
+
+        registro["titulo"] = resultado["titulo"]
+        registro["artista"] = resultado["artista"]
+        registro["genero"] = resultado["genero"]
+
+        if cambia_categoria:
+            # Mismo patrón que _mover_archivos_a_categoria: se saca de
+            # la categoría vieja y se agrega a la nueva, código y
+            # demás metadata SIN tocar — comparar por ruta, no por
+            # identidad (ver nota en _sincronizar_registro_en_categoria).
+            registros_origen = [r for r in (categoria_actual.data(0, ROL_ARCHIVOS) or []) if r.get("ruta") != ruta]
+            categoria_actual.setData(0, ROL_ARCHIVOS, registros_origen)
+            registros_destino = categoria_nueva.data(0, ROL_ARCHIVOS) or []
+            registros_destino.append(registro)
+            categoria_nueva.setData(0, ROL_ARCHIVOS, registros_destino)
+        else:
+            self._sincronizar_registro_en_categoria(categoria_actual, ruta, registro)
+
+        self._guardar_biblioteca()
+
+        if self._en_busqueda:
+            self._buscar()
+        else:
+            self._on_categoria_seleccionada(self._categoria_actual(), None)
+
+        if cambia_categoria:
+            self.archivo_movido.emit(registro["titulo"], categoria_nueva.text(0))
 
     def _eliminar_archivo(self):
         items = self.tree_archivos.selectedItems()
@@ -810,7 +897,8 @@ class VentanaExplorador(QWidget):
         menu.addSeparator()
         accion_exportar = menu.addAction("📤 Exportar...")
         accion_reemplazar = menu.addAction("⟲ Reemplazar...")
-        accion_editar = menu.addAction("🎚 Editar")
+        accion_info = menu.addAction("✏ Editar información...")
+        accion_editar = menu.addAction("🎚 Editar audio")
         accion_vigencia = menu.addAction("📅 Vigencia...")
         menu.addSeparator()
         texto_eliminar = "✕ Eliminar" if len(seleccionados) <= 1 else f"✕ Eliminar {len(seleccionados)}"
@@ -819,6 +907,7 @@ class VentanaExplorador(QWidget):
         hay_seleccion_unica = len(seleccionados) == 1
         accion_exportar.setEnabled(hay_seleccion_unica)
         accion_reemplazar.setEnabled(hay_seleccion_unica)
+        accion_info.setEnabled(hay_seleccion_unica)
         accion_editar.setEnabled(hay_seleccion_unica)
         accion_vigencia.setEnabled(hay_seleccion_unica)
         accion_eliminar.setEnabled(len(seleccionados) > 0)
@@ -830,6 +919,8 @@ class VentanaExplorador(QWidget):
             self._exportar_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_reemplazar:
             self._reemplazar_archivo()
+        elif accion_elegida == accion_info:
+            self._editar_informacion_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_editar:
             self._editar_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_vigencia:

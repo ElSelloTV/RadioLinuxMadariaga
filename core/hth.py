@@ -22,7 +22,6 @@ del Explorador; el título es el que se compara, no importa en qué
 categoría/subcategoría estén archivados ni las mayúsculas/espacios de
 más, se normaliza al comparar):
 
-    INTRO HORA                              (clip fijo, "Es la hora...")
     HORA 00 .. HORA 23
     MINUTOS 00 .. MINUTOS 59
     TEMPERATURA GRADOS 00 .. TEMPERATURA GRADOS 50   (valor absoluto)
@@ -30,13 +29,21 @@ más, se normaliza al comparar):
     HUMEDAD 000 .. HUMEDAD 100               (3 dígitos)
 
 Decisiones confirmadas con Santiago (AskUserQuestion, ver CLAUDE.md):
-- El manual de Dinesat no documenta un clip de intro para la hora —
-  se agrega "INTRO HORA" como clip fijo propio de esta app.
 - Sin décimas: la temperatura se redondea a grados enteros (no hace
   falta grabar TEMPERATURA DECIMA).
 - Bajo cero = prefijo fijo "TEMPERATURA BAJO CERO" + reutiliza el
   mismo clip de TEMPERATURA GRADOS XX del valor absoluto (no hace
   falta grabar un clip completo por cada valor negativo).
+
+Bug real corregido (pedido explícito de Santiago tras importar sus
+HTH reales): el diseño original agregaba un clip de intro fijo propio
+de esta app, "INTRO HORA" (el manual de Dinesat no documenta uno). En
+la práctica, los archivos reales de Santiago ya traen la frase
+completa grabada DENTRO de cada clip de hora ("es la hora cero", "es
+la hora una", etc.) — un "INTRO HORA" aparte no solo era innecesario,
+sino que además nunca iba a poder resolverse (no existe ese material),
+así que el comando se salteaba SIEMPRE sin sonar nada. Se sacó del
+todo: `resolver_clips_hora()` ahora solo concatena HORA XX + MINUTOS XX.
 --------------------------------------------------------
 """
 
@@ -83,7 +90,6 @@ def _resolver_lista(explorador, titulos: list) -> list | None:
 
 def resolver_clips_hora(explorador, hora: int, minuto: int) -> list | None:
     return _resolver_lista(explorador, [
-        "INTRO HORA",
         f"HORA {hora:02d}",
         f"MINUTOS {minuto:02d}",
     ])

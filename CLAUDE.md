@@ -3969,6 +3969,105 @@ todo el resto.
     de Ventana 1 a la Auxiliar funciona y que intentarlo sobre Ventana
     2 no hace nada, y que "Reanalizar biblioteca" deja los temas
     musicales sin silencio al final con una tolerancia más baja.
+41. ~~4 pedidos tras importar los HTH reales: sacar INTRO HORA,
+    buscar actualización sola al abrir, preload en operaciones lentas,
+    "Editar información" en el Explorador~~ — Santiago terminó de
+    importar sus HTH reales y reportó 4 pedidos más:
+
+    **a) Bug real: el Comando HTH nunca sonaba — "es la hora..." ya
+    viene grabado DENTRO de cada clip de hora**: el diseño original
+    (ronda 39) inventó un clip de intro fijo, "INTRO HORA", que el
+    manual de Dinesat no documenta — pero los archivos reales de
+    Santiago no lo necesitan: cada clip `HORA XX` ya dice la frase
+    completa ("es la hora cero", "es la hora una"). Como ese material
+    "INTRO HORA" no existe (nunca se iba a grabar), el comando HORA se
+    saltaba SIEMPRE sin sonar nada — el mismo criterio "todo o nada"
+    de `core/hth.py` que evita un anuncio a medias también terminaba
+    bloqueando el caso normal. Corregido sacando "INTRO HORA" por
+    completo de `resolver_clips_hora()` — ahora concatena únicamente
+    `HORA XX` + `MINUTOS XX`. **Regla para el futuro**: un clip
+    "genérico" inventado por esta app (no documentado en el manual de
+    Dinesat) es un candidato a redundar con lo que el operador ya
+    tiene grabado — conviene confirmar contra el material real antes
+    de exigirlo como obligatorio.
+
+    **b) Buscar actualización sola al abrir, preguntando ahora/luego**
+    (antes solo se buscaba a mano en Configuración → Actualizaciones):
+    `MainWindow.__init__` dispara `_buscar_actualizacion_automatica()`
+    diferido 2.5s (`QTimer.singleShot`, misma prioridad ya usada para
+    EasyEffects — no competir con el arranque de la radio). Es una
+    consulta de red (`git fetch`, ver `core/actualizador.py`), así que
+    corre con el mismo cursor de espera que el resto de la app en vez
+    de trabar el arranque en silencio. Si hay una actualización,
+    pregunta con botones de texto propio ("Actualizar ahora"/"Más
+    tarde", no un Sí/No genérico) — NUNCA la aplica sola sin
+    confirmación. La decisión del diálogo se extrajo a
+    `_preguntar_actualizar_ahora()`, un método aparte devolviendo
+    `bool`, específicamente para poder testearla sin tener que simular
+    un click real sobre un `QMessageBox` (imposible en offscreen). Si
+    el operador elige "ahora", reusa el mismo camino que ya tenía el
+    botón manual de Configuración (`aplicar_actualizacion()` +
+    `preparar_cierre_por_actualizacion()` + `reiniciar_aplicacion()`).
+
+    **c) Preload en operaciones lentas (pedido explícito, "que se
+    congele es normal, pero deberíamos poner un preload")**: esta app
+    nunca usó threading (confirmado, cero `QThread` en todo el
+    código) — la solución adoptada, consistente con ese estilo
+    deliberadamente simple, es cursor de espera (`WaitCursor`) +
+    `QApplication.processEvents()` periódico (cada 15 archivos)
+    DURANTE el bucle lento, no reemplazar el bloqueo por threading
+    real. Aplicado al caso que Santiago reportó en carne propia
+    (importar 700 archivos de una — `VentanaExplorador.
+    _importar_archivos_masivo()`, el único bucle que corre
+    `analizar_audio()` — pydub/ffmpeg, lento de verdad — por cada
+    archivo del lote). Los altas/reemplazos de UN solo archivo y
+    "Reanalizar biblioteca" (ronda 40) ya tenían o no necesitan este
+    tratamiento (un solo archivo es rápido; reanalizar ya usaba
+    `WaitCursor` desde que se creó).
+
+    **d) "Editar información" (menú contextual + botón, Explorador)**:
+    pedido explícito para poder "cambiar nombre, etc." de un material
+    YA importado sin tocar el audio ni re-analizarlo — distinto de
+    "🎚 Editar audio" (ya existía, abre el editor de audio del
+    sistema, renombrado en el menú para no confundirlo) y de "⟲
+    Reemplazar" (cambia el archivo de audio en sí). Nuevo diálogo
+    `gui/dialogo_editar_informacion.py` (mismo patrón de combo de
+    categoría con sangría que `DialogoAgregarArchivo`) edita título/
+    artista/género, y opcionalmente MUEVE el material a otra
+    categoría — en ese caso, mismo criterio que un move por
+    drag&drop (`_mover_archivos_a_categoria`): el registro conserva su
+    código y el resto de su metadata, solo cambia de lista; gateado
+    por el mismo flag `confirmar_antes_de_eliminar` que ya usa el
+    resto de operaciones "riesgosas" del Explorador. Botón "✏ Info"
+    nuevo junto a Agregar/Reemplazar/Eliminar, y entrada "✏ Editar
+    información..." en el menú contextual.
+
+    Probado con `test_ronda_hth_update_preload_editar.py` (nuevo, 18
+    verificaciones): `resolver_clips_hora()` ya no pide "INTRO HORA";
+    `_buscar_actualizacion_automatica()` con
+    `hay_actualizacion_disponible`/`aplicar_actualizacion` mockeados
+    cubre los 4 casos (sin actualización no pregunta nada, "Más
+    tarde" no aplica nada, "Actualizar ahora" aplica+reinicia, y un
+    fallo de `aplicar_actualizacion()` no dispara el reinicio);
+    importación masiva con `analizar_audio` mockeado confirma que el
+    cursor de espera se restaura al terminar (comparando profundidad
+    de pila, no un `None` absoluto, porque el preload de arranque de
+    `MainWindow.__init__` puede dejar su propio cursor apilado sin
+    que corra su QTimer de auto-retiro en un script sin event loop
+    real) y que los 5 archivos de prueba quedan importados;
+    "Editar información" con el diálogo mockeado confirma edición
+    sin mover categoría (código y ruta intactos) y edición CON
+    cambio de categoría (el registro aparece en la categoría destino,
+    desaparece de la origen, código igual) — + suite de regresión
+    completa sin fallos nuevos (mismos 3 fallos preexistentes de
+    siempre: `test_confirmaciones.py`, `test_log_git.py`,
+    `test_ventana3.py`). **Sigue sin poder probarse con audio/VLC/git
+    reales**: falta que Santiago confirme que el Comando HTH de HORA
+    ahora sí suena con sus clips reales, que la búsqueda de
+    actualización automática no demora el arranque de forma molesta,
+    que el preload se nota en una importación grande de verdad, y que
+    "Editar información" cambia lo esperado sin romper nada de lo ya
+    cargado.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
