@@ -201,6 +201,11 @@ class VentanaConfiguracion(QDialog):
         self.spin_tolerancia_silencio.setSingleStep(0.5)
         self.spin_tolerancia_silencio.setSuffix(" s")
 
+        self.spin_tolerancia_silencio_v1 = QDoubleSpinBox()
+        self.spin_tolerancia_silencio_v1.setRange(0.0, 5.0)
+        self.spin_tolerancia_silencio_v1.setSingleStep(0.1)
+        self.spin_tolerancia_silencio_v1.setSuffix(" s")
+
         self.spin_umbral_silencio = QDoubleSpinBox()
         self.spin_umbral_silencio.setRange(-60.0, -10.0)
         self.spin_umbral_silencio.setSingleStep(1.0)
@@ -211,17 +216,26 @@ class VentanaConfiguracion(QDialog):
         self.spin_bajada_pisador.setSingleStep(0.5)
         self.spin_bajada_pisador.setSuffix(" dB")
 
+        self.spin_fade_out_v1 = QSpinBox()
+        self.spin_fade_out_v1.setRange(0, 5000)
+        self.spin_fade_out_v1.setSingleStep(50)
+        self.spin_fade_out_v1.setSuffix(" ms")
+
         form.addRow(self.chk_avanzar_en_error)
         form.addRow("Fallos consecutivos antes de detenerse:", self.spin_reintentos)
         form.addRow(self.chk_repetir_lista)
         form.addRow("Tolerancia de silencio al recortar (Ventana 3):", self.spin_tolerancia_silencio)
+        form.addRow("Tolerancia de silencio estricta (Publicidad/Separadores):", self.spin_tolerancia_silencio_v1)
         form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
         form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
+        form.addRow("Fade OUT entre tandas de Ventana 1:", self.spin_fade_out_v1)
 
         nota_silencio = QLabel(
             "El recorte de silencio SOLO mira el principio y el final de\n"
             "cada tema, nunca el medio — una pausa breve a mitad de una\n"
-            "canción nunca se corta, sin importar el umbral elegido."
+            "canción nunca se corta, sin importar el umbral elegido.\n"
+            "Publicidad y Separadores usan una tolerancia más estricta (por\n"
+            "defecto 0, sin margen) para que las tandas queden bien pegadas."
         )
         nota_silencio.setObjectName("lblTituloBloqueActivo")
         form.addRow(nota_silencio)
@@ -536,8 +550,10 @@ class VentanaConfiguracion(QDialog):
         self.spin_reintentos.setValue(reproduccion["reintentos_antes_de_detener"])
         self.chk_repetir_lista.setChecked(reproduccion["repetir_lista_al_finalizar"])
         self.spin_tolerancia_silencio.setValue(reproduccion["tolerancia_silencio_segundos"])
+        self.spin_tolerancia_silencio_v1.setValue(reproduccion["tolerancia_silencio_v1_segundos"])
         self.spin_umbral_silencio.setValue(reproduccion["umbral_silencio_dbfs"])
         self.spin_bajada_pisador.setValue(reproduccion["pisador_bajada_db"])
+        self.spin_fade_out_v1.setValue(reproduccion["duracion_fade_out_v1_ms"])
 
         general = self._config["general"]
         self.txt_nombre_emisora.setText(general.get("nombre_emisora", ""))
@@ -583,8 +599,10 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["reintentos_antes_de_detener"] = self.spin_reintentos.value()
         self._config["reproduccion"]["repetir_lista_al_finalizar"] = self.chk_repetir_lista.isChecked()
         self._config["reproduccion"]["tolerancia_silencio_segundos"] = self.spin_tolerancia_silencio.value()
+        self._config["reproduccion"]["tolerancia_silencio_v1_segundos"] = self.spin_tolerancia_silencio_v1.value()
         self._config["reproduccion"]["umbral_silencio_dbfs"] = self.spin_umbral_silencio.value()
         self._config["reproduccion"]["pisador_bajada_db"] = self.spin_bajada_pisador.value()
+        self._config["reproduccion"]["duracion_fade_out_v1_ms"] = self.spin_fade_out_v1.value()
 
         self._config["general"]["nombre_emisora"] = self.txt_nombre_emisora.text().strip()
         self._config["general"]["confirmar_antes_de_eliminar"] = self.chk_confirmar_eliminar.isChecked()

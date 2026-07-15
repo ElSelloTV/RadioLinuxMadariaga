@@ -204,6 +204,11 @@ class MainWindow(QMainWindow):
         self.ventana_publicidad = VentanaPublicidad()
         self.ventana_emision = VentanaEmision()
         self.ventana_explorador = VentanaExplorador()
+        # Pedido explícito: Agregar/Reemplazar Item en el menú
+        # contextual de Ventana 1 necesita el Explorador para el
+        # buscador de biblioteca — se setea acá porque se construye
+        # DESPUÉS de Ventana 1.
+        self.ventana_publicidad.set_ventana_explorador(self.ventana_explorador)
 
         self.splitter_principal = QSplitter(Qt.Orientation.Horizontal)
         self.splitter_principal.setChildrenCollapsible(False)
@@ -327,7 +332,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _construir_status_bar(self):
         status: QStatusBar = self.statusBar()
-        self.lbl_status_modo = QLabel("Modo: MANUAL")
+        # Pedido explícito (ronda posterior): la leyenda "Modo Manual"/
+        # "Automático Activo" (roja cuando está activo) de Ventana 1
+        # se movió ACÁ, reemplazando la vieja leyenda duplicada "Modo:
+        # AUTOMÁTICO"/"Modo: MANUAL" — reusa el mismo objectName/QSS
+        # que ya tenía `VentanaPublicidad.lbl_estado`
+        # (`lblEstadoAutomatico[activo="true"/"false"]`), así el color
+        # rojo sale gratis sin QSS nuevo.
+        self.lbl_status_modo = QLabel("Modo Manual")
+        self.lbl_status_modo.setObjectName("lblEstadoAutomatico")
+        self.lbl_status_modo.setProperty("activo", "false")
         self.lbl_status_materiales = QLabel("0 materiales")
         status.addWidget(self.lbl_status_modo)
         status.addPermanentWidget(self.lbl_status_materiales)
@@ -378,7 +392,10 @@ class MainWindow(QMainWindow):
         self.ventana_explorador.archivo_movido.connect(self._on_archivo_movido)
 
     def _on_automatico_cambiado(self, activo: bool):
-        self.lbl_status_modo.setText(f"Modo: {'AUTOMÁTICO' if activo else 'MANUAL'}")
+        self.lbl_status_modo.setText("Automático Activo" if activo else "Modo Manual")
+        self.lbl_status_modo.setProperty("activo", "true" if activo else "false")
+        self.lbl_status_modo.style().unpolish(self.lbl_status_modo)
+        self.lbl_status_modo.style().polish(self.lbl_status_modo)
         # Pedido explícito (robustez de emisión): mientras el
         # Automático está activo, el STOP de Emisión (Ventana 2)
         # queda deshabilitado — igual que el de Publicidad, que se
@@ -567,6 +584,7 @@ class MainWindow(QMainWindow):
             avanzar_en_error=reproduccion["avanzar_automaticamente_en_error"],
             reintentos_maximos=reproduccion["reintentos_antes_de_detener"],
             persistir=True,
+            duracion_fade_out_v1_ms=reproduccion["duracion_fade_out_v1_ms"],
         )
         # Comando FMT (pedido explícito, encadenado con el
         # Musicalizador Avanzado): al pasar por un ítem-comando FMT en
@@ -645,6 +663,7 @@ class MainWindow(QMainWindow):
 
         self.gestor_publicidad.avanzar_en_error = reproduccion["avanzar_automaticamente_en_error"]
         self.gestor_publicidad.reintentos_maximos = max(1, reproduccion["reintentos_antes_de_detener"])
+        self.gestor_publicidad.duracion_fade_out_v1_ms = reproduccion["duracion_fade_out_v1_ms"]
         if self.gestor_publicidad.motor.id_dispositivo() != id_dispositivo_master:
             self.gestor_publicidad.motor.set_dispositivo_salida(id_dispositivo_master)
         self.gestor_publicidad.set_volumen_base(audio["volumen_master"])

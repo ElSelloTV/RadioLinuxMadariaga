@@ -201,6 +201,118 @@ class ArbolPublicidadConDrop(ArbolConDrop):
         super().keyPressEvent(event)
 
 
+class ArbolProgramadorConDrop(ArbolConDrop):
+    """ArbolConDrop + reordenar ítems arrastrando (pedido explícito,
+    Ventana Programador: "que pueda arrastrar/modificar el orden de
+    los ítems, ya que actualmente cuando se agrega uno, lo hace al
+    final y no le puedo cambiar de orden"). A diferencia de
+    `ArbolReproductorConDrop` (lista plana, Ventana 2), acá el árbol
+    es jerárquico (bloque -> tandas) — solo los ÍTEMS (hijos) se
+    arrastran, nunca los bloques enteros; un ítem se puede reordenar
+    DENTRO de su bloque o moverlo a OTRO bloque, siempre como hijo de
+    nivel 1 (nunca se anida más profundo).
+
+    Mismo patrón que ArbolReproductorConDrop para evitar el bug real
+    ya documentado ("los ítems desaparecen" al reordenar): startDrag()
+    propio, sin llamar a super().startDrag(), porque dragDropMode=
+    DragDrop (no InternalMove, hace falta para seguir aceptando
+    arrastres externos del Explorador) borraría la fila original
+    apenas termina un MoveAction aceptado."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+
+    def dragEnterEvent(self, event):
+        if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if event.source() is self:
+            self._reordenar_manual(event)
+            return
+        super().dropEvent(event)
+
+    def startDrag(self, supportedActions):
+        item = self.currentItem()
+        if item is None or item.parent() is None:
+            return  # solo se arrastran ítems (tandas/comandos), nunca bloques enteros
+        indices = self.selectedIndexes()
+        if not indices:
+            return
+        mime_data = self.model().mimeData(indices)
+        if mime_data is None:
+            return
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def _reordenar_manual(self, event):
+        """Mueve el ítem arrastrado a la posición soltada — DENTRO de
+        su propio bloque, o a OTRO bloque distinto, siempre como hijo
+        de nivel 1 (nunca lo anida más profundo, sin importar dónde
+        caiga exactamente el cursor)."""
+        if len(self.selectedItems()) > 1:
+            event.ignore()
+            return
+
+        item_arrastrado = self.currentItem()
+        if item_arrastrado is None or item_arrastrado.parent() is None:
+            event.ignore()
+            return
+
+        bloque_origen = item_arrastrado.parent()
+        indice_origen = bloque_origen.indexOfChild(item_arrastrado)
+        if indice_origen < 0:
+            event.ignore()
+            return
+
+        punto = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        item_destino = self.itemAt(punto)
+
+        if item_destino is None:
+            bloque_destino = self._item_de_nivel_superior_mas_cercano(punto)
+            if bloque_destino is None:
+                event.ignore()
+                return
+            indice_destino = bloque_destino.childCount()
+        elif item_destino.parent() is None:
+            # Soltado sobre el TÍTULO de un bloque -> al final de ESE bloque.
+            bloque_destino = item_destino
+            indice_destino = bloque_destino.childCount()
+        else:
+            bloque_destino = item_destino.parent()
+            indice_destino = bloque_destino.indexOfChild(item_destino)
+            if self.dropIndicatorPosition() == QAbstractItemView.DropIndicatorPosition.BelowItem:
+                indice_destino += 1
+
+        if bloque_destino is bloque_origen:
+            if indice_destino > indice_origen:
+                indice_destino -= 1  # se saca el origen antes de reinsertar
+            indice_destino = max(0, min(indice_destino, bloque_origen.childCount() - 1))
+            if indice_destino == indice_origen:
+                event.ignore()
+                return
+        else:
+            indice_destino = max(0, min(indice_destino, bloque_destino.childCount()))
+
+        item = bloque_origen.takeChild(indice_origen)
+        bloque_destino.insertChild(indice_destino, item)
+        bloque_destino.setExpanded(True)
+        self.setCurrentItem(item)
+        event.acceptProposedAction()
+
+
 class ArbolReproductorConDrop(QTreeWidget):
     """QTreeWidget de una lista de reproducción (Ventana 2 / Auxiliar):
     combina DOS comportamientos de Drag&Drop a la vez —

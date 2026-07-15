@@ -3247,6 +3247,129 @@ todo el resto.
     sin haber cargado nada nuevo (y que YA NO arranque si pasó a otro
     día), y (3) que el refill se sienta "más adelantado" (antes,
     incluso, de que termine de sonar nada) tal como pidió.
+35. ~~Ronda de 7 pedidos: barra de progreso, rojo/verde tras doble
+    click, silencio estricto + fade-out en V1, auditoría de fade-OUT,
+    reordenar en el Programador, Agregar/Reemplazar en V1, leyenda de
+    Automático abajo~~ — siete pedidos independientes en un solo
+    mensaje:
+    - **(1) La barra de progreso quedaba "pegada" en Stop/Fade/cambio
+      de ventana**: nuevo `resetear_reproduccion()` en
+      `PanelReproductor`/`VentanaPublicidad` (reinicia el slider Y los
+      contadores a 00:00:00) — llamado desde `detener()` (V1 y V2),
+      los finales de `_avanzar()` sin más ítems, `_finalizar_bloque_automatico()`,
+      y `SchedulerAutomatico._pausar_emision_tras_fade()` (el caso
+      "cambio de ventana": Emisión pausada porque un bloque de
+      Publicidad tomó el aire). La Pausa NORMAL nunca lo toca — sigue
+      conservando la posición para reanudar, a propósito. **Bug real
+      de delegación atrapado por el test antes de llegar a Santiago**
+      (mismo patrón ya documentado varias veces): `GestorPlaylist.panel`
+      es el wrapper (`VentanaEmision`/`VentanaAuxiliar`), no
+      `PanelReproductor` directo — hubo que agregar la delegación de
+      `resetear_reproduccion()` en los dos wrappers.
+    - **(2) Rojo/verde: doble click en silencio no recalculaba el
+      verde**: "por debajo del ítem que entra en rojo, el de abajo
+      pasa a verde... si está en stop, elijo uno con doble clic para
+      ponerse en rojo, pero el verde quedó en otro ítem diferente".
+      `_asegurar_rojo_y_verde()` no alcanzaba porque respeta un verde
+      YA VÁLIDO sin importar dónde apunte — nuevo
+      `_recalcular_verde_tras_nuevo_rojo()` (en los dos gestores) que
+      SIEMPRE sobrescribe el verde al de abajo del rojo recién armado
+      a mano, llamado desde la rama "en silencio" de `_on_doble_click`
+      en Ventana 1 y 2 (la rama "encolar mientras suena" no se tocó —
+      esa sigue permitiendo elegir un verde arbitrario a propósito).
+    - **(3) V1: corte de silencio estricto para Publicidad/Separadores
+      + fade-out automático configurable en milisegundos**: nueva
+      config `reproduccion.tolerancia_silencio_v1_segundos` (0.0 por
+      defecto, sin margen — a diferencia de `tolerancia_silencio_segundos`
+      general, que sigue dejando un colchón para Música) aplicada
+      automáticamente por género al analizar un archivo
+      (`config/settings.py:tolerancia_silencio_para_genero()`, gatea
+      por `GENEROS_CORTE_ESTRICTO = ("Publicidad", "Separador")`) en
+      los 3 puntos de `ventana_explorador.py` que llaman a
+      `analizar_audio()`. Además, nueva config
+      `reproduccion.duracion_fade_out_v1_ms` (500 por defecto, EN
+      MILISEGUNDOS — a diferencia de `duracion_fade_segundos` de
+      Fade/Transiciones, que es en segundos y es para Ventana 2) que
+      dispara un fade-out corto y automático sobre CUALQUIER
+      transición natural entre tandas de Publicidad
+      (`GestorPublicidad._chequear_fade_out_automatico()`, colgado de
+      `restante_ms_cambio` igual que el resto de los disparos "con
+      anticipación" del proyecto) — antes el encadenado entre tandas
+      de un mismo bloque era un corte directo (pendiente documentado
+      desde el roadmap 16). Ambos campos nuevos, editables en
+      Configuración → Reproducción y Automatización.
+    - **(4) Auditoría "el fade es siempre OUT, nunca IN"**: revisados
+      todos los `fade_volumen_a()` del proyecto — el fade-out nuevo
+      del punto (3) solo baja el ítem SALIENTE a 0, el ENTRANTE arranca
+      directo a su volumen final (sin rampa), igual que el resto del
+      motor desde la ronda que sacó el fade-in de los temas. **Dos
+      excepciones preexistentes, deliberadamente NO tocadas** porque
+      pertenecen a un pedido explícito distinto de una ronda anterior:
+      el fundido de ENTRADA de Emisión al volver de un bloque
+      automático (`SchedulerAutomatico._reanudar_o_arrancar_emision`
+      — "fundido de entrada y salida" en el handoff V1↔V2, pedido a
+      propósito así) y la restauración de volumen del Pisador al
+      terminar (`_on_pisador_finalizado`/`_cancelar_pisador_en_curso`
+      — es un "des-ducking", no la entrada de un tema nuevo). Si
+      Santiago quiere que estas dos también se acoten a config, avisar
+      para una ronda dedicada.
+    - **(5) Programador: reordenar por arrastre + Agregar Ítem/Pegar
+      en la posición seleccionada**: nueva `ArbolProgramadorConDrop`
+      (`gui/common_widgets.py`), subclase de `ArbolConDrop` con
+      reordenado jerárquico (mismo patrón de `startDrag()` propio sin
+      `super().startDrag()` que ya usa `ArbolReproductorConDrop`, para
+      no pisar el bug real ya documentado de "los ítems desaparecen")
+      — un ítem se puede mover DENTRO de su bloque o a OTRO bloque
+      distinto, nunca los bloques en sí. `_agregar_registro_a_bloque`/
+      `_agregar_comando_a_bloque` ganaron un parámetro `indice`
+      opcional; nuevo `_indice_insercion_actual()` calcula "justo
+      después del ítem seleccionado" (si hay uno dentro del bloque
+      destino) en vez de siempre `None` (al final) — usado por "Añadir
+      Ítem..." y "Pegar en este bloque" por igual.
+    - **(6) V1: Agregar/Reemplazar Item habilitadas en el menú
+      contextual**: las dos acciones que quedaban visibles pero
+      deshabilitadas desde la ronda 13 ("andá agregando funciones ya
+      creadas, las demás las vamos a ir creando") ahora usan el MISMO
+      buscador de biblioteca del Programador
+      (`gui/dialogo_seleccionar_biblioteca.py`) directo sobre Ventana
+      1, sin abrir el Programador — `VentanaPublicidad` ganó
+      `set_ventana_explorador()` (seteado por `MainWindow` justo
+      después de construir el Explorador, que se crea DESPUÉS de
+      Ventana 1) y los handlers `_agregar_item_v1()`/`_reemplazar_item_v1()`.
+      Reemplazar respeta el mismo bloqueo de rojo/verde que ya tenía
+      "Sacar Item" (`_bloqueado_por_reproduccion`) y rechaza tocar un
+      Comando FMT (se saca y se agrega uno nuevo, igual que en el
+      Programador).
+    - **(7) Leyenda de Automático simplificada, movida abajo**: la
+      barra de estado inferior de `MainWindow` mostraba una leyenda
+      DUPLICADA y con otra redacción ("Modo: AUTOMÁTICO"/"Modo:
+      MANUAL", `lbl_status_modo`) además de la que ya tenía Ventana 1
+      arriba de sus contadores ("Modo Manual"/"Automático Activo" en
+      rojo, `lbl_estado`). Unificado: `lbl_status_modo` ahora reusa el
+      mismo objectName/QSS que `lbl_estado`
+      (`lblEstadoAutomatico[activo="true"/"false"]`, rojo cuando está
+      activo — gratis, sin QSS nuevo) y el texto simple "Automático
+      Activo"/"Modo Manual"; la fila de arriba en Ventana 1
+      (`barra_superior`) se sacó de la UI visible por completo —
+      `lbl_estado` sigue existiendo como atributo interno (se sigue
+      actualizando en `_toggle_automatico()`) para no romper código
+      que lo consulte, pero ya no se agrega a ningún layout visible.
+    Probado con un test nuevo dedicado (`test_ronda_7pedidos.py`, 39
+    verificaciones cubriendo los 7 puntos) + actualización de un test
+    preexistente que codificaba el estado VIEJO de Agregar/Reemplazar
+    deshabilitadas (`test_silencio_v2_y_menu.py`) + suite de regresión
+    completa sin fallos nuevos (mismos 3 fallos preexistentes de
+    siempre: `test_confirmaciones.py`, `test_log_git.py`,
+    `test_ventana3.py`). **Sigue sin poder probarse con audio/VLC
+    real**: falta que Santiago confirme (1) que la barra de progreso
+    ya no queda "pegada", (2) que el verde siempre se recalcula bien
+    al elegir un rojo nuevo con doble click, (3) que el corte de
+    silencio estricto + el fade-out de 500ms dejan las tandas de
+    Publicidad "bien pegadas" como pidió — y si el valor por defecto
+    le sirve o prefiere ajustarlo, (4) que el reordenar por arrastre
+    en el Programador se sienta natural, y (5) que Agregar/Reemplazar
+    Item en Ventana 1 cumple lo que esperaba sin tener que abrir el
+    Programador.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

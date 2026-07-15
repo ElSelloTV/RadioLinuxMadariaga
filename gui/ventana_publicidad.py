@@ -74,7 +74,16 @@ class VentanaPublicidad(QWidget):
         self._item_reproduciendo = None
         self._item_siguiente = None
         self._arrastrando_slider = False
+        # Referencia al Explorador (pedido explícito: habilitar Agregar/
+        # Reemplazar Item con el mismo buscador de biblioteca del
+        # Programador, directo acá, sin abrirlo) — se setea después de
+        # construir las dos ventanas (ver MainWindow._construir_paneles_centrales,
+        # VentanaExplorador se crea DESPUÉS de esta).
+        self._ventana_explorador = None
         self._construir_ui()
+
+    def set_ventana_explorador(self, ventana_explorador):
+        self._ventana_explorador = ventana_explorador
 
     # ------------------------------------------------------------------
     def _construir_ui(self):
@@ -85,12 +94,18 @@ class VentanaPublicidad(QWidget):
         grupo = QGroupBox("PROGRAMACIÓN / ROTATIVA")
         layout_grupo = QVBoxLayout(grupo)
 
-        # --- Barra superior: solo la leyenda de estado. El botón
-        # AUTOMÁTICO en sí se movió a la grilla de transporte (pedido
+        # --- Botón AUTOMÁTICO vive en la grilla de transporte (pedido
         # explícito, paridad con Dinesat: "la ventana 1 tiene un 4to
         # botón abajo, que es el automático") — acá queda su
-        # construcción, pero se agrega a la UI más abajo. ---
-        barra_superior = QHBoxLayout()
+        # construcción, pero se agrega a la UI más abajo.
+        # `lbl_estado` ("Modo Manual"/"Automático Activo") ya NO se
+        # muestra ACÁ (pedido explícito, ronda posterior: "ponelo
+        # abajo, reemplazando la misma leyenda que sale abajo" —
+        # queda solo como estado interno, la leyenda visible única
+        # vive en la barra de estado de MainWindow, ver
+        # `MainWindow._on_automatico_cambiado`. Se sigue actualizando
+        # en `_toggle_automatico()` para no romper código que lo
+        # consulte. ---
         self.lbl_estado = QLabel("Modo Manual")
         self.lbl_estado.setObjectName("lblEstadoAutomatico")
         self.lbl_estado.setProperty("activo", "false")
@@ -101,9 +116,6 @@ class VentanaPublicidad(QWidget):
         self.btn_automatico.setProperty("activo", "false")
         self.btn_automatico.setToolTip("AUTOMÁTICO: dispara los bloques horarios por hora y gobierna la vuelta a Emisión.")
         self.btn_automatico.clicked.connect(self._toggle_automatico)
-        barra_superior.addWidget(self.lbl_estado)
-        barra_superior.addStretch()
-        layout_grupo.addLayout(barra_superior)
 
         # --- 1) Fila combinada relojes + Ahora/Luego (pedido explícito,
         # "aprovechar más el espacio", igual criterio que Ventana 2):
@@ -468,6 +480,13 @@ class VentanaPublicidad(QWidget):
             return
         self.slider_progreso.setValue(max(0, min(1000, permille)))
 
+    def resetear_reproduccion(self):
+        """Ver PanelReproductor.resetear_reproduccion — mismo criterio
+        acá: Stop/Fade-Stop/cambio de ventana reinician la barra y los
+        contadores, la Pausa normal nunca los toca."""
+        self.slider_progreso.setValue(0)
+        self.actualizar_contadores("00:00:00", "00:00:00")
+
     # ------------------------------------------------------------------
     # Máquina de estados de selección — doble click/Enter (misma que
     # Ventana 2, ver core/playlist_manager.py:GestorPublicidad).
@@ -481,11 +500,13 @@ class VentanaPublicidad(QWidget):
     # Menú contextual (pedido explícito, estructura completa):
     #   Crear/Modificar/Eliminar Programación -> abren el Programador
     #   Cargar Programación -> abre el Programador
-    #   Sacar Item (funcional) / Agregar Item / Reemplazar Item (por
-    #   ahora deshabilitadas, se van a implementar más adelante)
+    #   Sacar Item / Agregar Item / Reemplazar Item (los 3 funcionales
+    #   — Agregar/Reemplazar usan el mismo buscador de biblioteca del
+    #   Programador, directo acá, sin necesidad de abrirlo)
     #   Crear Bloque Nuevo (funcional)
     # Todo pide confirmación y nunca corta una reproducción en curso
-    # (los ítems rojo/verde no se pueden sacar — ver quitar_item).
+    # (los ítems rojo/verde no se pueden sacar/reemplazar — ver
+    # quitar_item / _bloqueado_por_reproduccion).
     # ------------------------------------------------------------------
     def _mostrar_menu_contextual(self, posicion):
         item_bajo_cursor = self.tree.itemAt(posicion)
@@ -507,9 +528,7 @@ class VentanaPublicidad(QWidget):
         accion_sacar.setEnabled(bool(seleccionados))
 
         accion_agregar = menu.addAction("Agregar Item")
-        accion_agregar.setEnabled(False)  # todavía no implementado (pedido explícito: dejar visible, deshabilitado)
         accion_reemplazar = menu.addAction("Reemplazar Item")
-        accion_reemplazar.setEnabled(False)
 
         menu.addSeparator()
         accion_crear_bloque = menu.addAction("Crear Bloque Nuevo")
@@ -528,6 +547,13 @@ class VentanaPublicidad(QWidget):
             self.solicitud_cargar_programacion_hoy.emit()
         elif elegida == accion_sacar:
             self._sacar_items(seleccionados)
+        elif elegida == accion_agregar:
+            self._agregar_item_v1(seleccionados[0] if seleccionados else None)
+        elif elegida == accion_reemplazar:
+            if len(seleccionados) != 1:
+                QMessageBox.information(self, "Reemplazar Item", "Seleccioná un solo ítem para reemplazar.")
+            else:
+                self._reemplazar_item_v1(seleccionados[0])
         elif elegida == accion_crear_bloque:
             self._confirmar_y_crear_bloque()
         elif elegida == accion_insertar_fmt:
@@ -555,6 +581,83 @@ class VentanaPublicidad(QWidget):
         formato = dialogo.formato_elegido()
         if formato:
             self.agregar_comando(bloque, "FMT", formato)
+
+    def _agregar_item_v1(self, item_referencia):
+        """Pedido explícito: habilitar "Agregar Item" del menú
+        contextual — mismo buscador de biblioteca a dos columnas que
+        ya usa el Programador (gui/dialogo_seleccionar_biblioteca.py),
+        directo acá, sin necesidad de abrir el Programador."""
+        bloque = self._bloque_destino_para_insertar(item_referencia)
+        if bloque is None:
+            QMessageBox.information(self, "Agregar Item", "Primero creá un bloque horario.")
+            return
+        if self._ventana_explorador is None:
+            QMessageBox.warning(self, "Agregar Item", "No hay acceso al Explorador (Ventana 3) en esta sesión.")
+            return
+        from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
+        dialogo = DialogoSeleccionarBiblioteca(
+            self._ventana_explorador.tree_categorias, permitir_multiple=True,
+            titulo="Agregar Ítem a Publicidad", parent=self,
+        )
+        if dialogo.exec() != DialogoSeleccionarBiblioteca.DialogCode.Accepted:
+            return
+        for registro in dialogo.registros_elegidos():
+            self.agregar_tanda(
+                bloque, registro.get("titulo", ""), registro.get("duracion", ""),
+                registro.get("codigo", "—"), registro.get("ruta", ""),
+                registro.get("punto_inicio_ms") or 0, registro.get("punto_fin_ms"),
+                registro.get("ganancia_db") or 0.0,
+                registro.get("fecha_inicio"), registro.get("fecha_fin"),
+            )
+
+    def _reemplazar_item_v1(self, item):
+        """Pedido explícito: habilitar "Reemplazar Item" del menú
+        contextual — cambia el archivo de una tanda sin moverla de
+        lugar, mismo buscador y mismo criterio que "Reemplazar" en el
+        Programador."""
+        if item is None or item.parent() is None:
+            QMessageBox.information(self, "Reemplazar Item", "Seleccioná una tanda (no un bloque) para reemplazar.")
+            return
+        if self.es_comando(item):
+            QMessageBox.information(
+                self, "Reemplazar Item",
+                "Un Comando FMT no se \"reemplaza\" — sacalo (Sacar Item) y agregá\n"
+                "uno nuevo con \"▶ Insertar Comando FMT...\" si querés cambiar el formato.",
+            )
+            return
+        if self._bloqueado_por_reproduccion(item):
+            QMessageBox.information(
+                self, "Reemplazar Item",
+                "Este ítem está marcado para reproducción (rojo/verde) y no se\n"
+                "puede reemplazar hasta que se libere (se elige otro, o termina\n"
+                "su reproducción).",
+            )
+            return
+        if self._ventana_explorador is None:
+            QMessageBox.warning(self, "Reemplazar Item", "No hay acceso al Explorador (Ventana 3) en esta sesión.")
+            return
+        from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
+        dialogo = DialogoSeleccionarBiblioteca(
+            self._ventana_explorador.tree_categorias, permitir_multiple=False,
+            titulo="Reemplazar ítem de Publicidad", parent=self,
+        )
+        if dialogo.exec() != DialogoSeleccionarBiblioteca.DialogCode.Accepted:
+            return
+        registro = dialogo.registro_elegido()
+        if not registro:
+            return
+        item.setText(0, registro.get("titulo") or "Sin título")
+        item.setText(1, registro.get("duracion", ""))
+        item.setText(2, registro.get("codigo", "—"))
+        item.setData(0, Qt.ItemDataRole.UserRole, registro.get("ruta", ""))
+        item.setData(0, ROL_ANALISIS_AUDIO, {
+            "punto_inicio_ms": registro.get("punto_inicio_ms") or 0,
+            "punto_fin_ms": registro.get("punto_fin_ms"),
+            "ganancia_db": registro.get("ganancia_db") or 0.0,
+        })
+        item.setData(0, ROL_VIGENCIA, {
+            "fecha_inicio": registro.get("fecha_inicio"), "fecha_fin": registro.get("fecha_fin"),
+        })
 
     def _sacar_items(self, items: list):
         bloqueados = [item.text(0) for item in items if self._bloqueado_por_reproduccion(item)]
