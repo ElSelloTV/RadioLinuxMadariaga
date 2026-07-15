@@ -117,6 +117,14 @@ class GestorPublicidad:
         # ítem-comando FMT en un bloque (ver _ejecutar_comando).
         self.al_comando_fmt = None
 
+        # Pedido explícito: "cuando pase de la ventana 2 a la 1,
+        # haciendo play, cortará en fade la reproducción de la ventana
+        # 2, incluso si está en automático" — MainWindow lo conecta a
+        # SchedulerAutomatico.cortar_emision_por_play_manual(). A
+        # diferencia del botón STOP (bloqueado con el Automático
+        # activo), el Play manual de Ventana 1 SIEMPRE corta Emisión.
+        self.al_arrancar_manual = None
+
         self.motor.posicion_cambiada.connect(self.ventana.actualizar_contadores)
         self.motor.posicion_cambiada.connect(self._actualizar_indicador)
         # Bug real corregido — "la ventana 1 no reproduce el ítem
@@ -349,6 +357,14 @@ class GestorPublicidad:
         self._avanzar()
 
     def _reproducir_seleccion_o_actual(self):
+        # Pedido explícito: el Play manual de Ventana 1 SIEMPRE corta
+        # Emisión con fundido, aunque esté sonando y aunque el
+        # Automático esté activo — "pasar de la ventana 2 a la 1
+        # haciendo play" es una acción explícita del operador, no algo
+        # que el botón STOP (bloqueado con Automático) deba impedir.
+        if self.al_arrancar_manual is not None:
+            self.al_arrancar_manual()
+
         # Prioridad: si ya hay algo marcado como "en reproducción"
         # (armado en rojo), reanuda/dispara ese; si no, usa la
         # selección del árbol; si tampoco hay selección, arranca por
@@ -367,6 +383,7 @@ class GestorPublicidad:
 
         registrar_evento(f"Publicidad: Play (ítem objetivo: {item.text(0) if item else 'ninguno'})")
         self._reproducir_item(item)
+        self._asegurar_rojo_y_verde()
 
     def _reproducir_primero_del_bloque(self, item_bloque):
         primero = None
@@ -378,6 +395,7 @@ class GestorPublicidad:
         if primero is None:
             return
         self._reproducir_item(primero)
+        self._asegurar_rojo_y_verde()
 
     # ------------------------------------------------------------------
     # Modo AUTOMÁTICO: disparar un bloque completo por horario
@@ -405,6 +423,7 @@ class GestorPublicidad:
             return
 
         self._reproducir_item(primero)
+        self._asegurar_rojo_y_verde()
 
     def _finalizar_bloque_automatico(self):
         registrar_evento("Publicidad: bloque automático finalizado")
@@ -501,6 +520,29 @@ class GestorPublicidad:
                 self._notificar_fin_reproduccion()
             return
         self._avanzar()
+
+    def _asegurar_rojo_y_verde(self):
+        """Pedido explícito: "siempre tendrá uno cargado en rojo para
+        reproducir, y el verde siempre. Si hay 1 solo item, entonces
+        será ese en rojo. Sino no [verde]" — nunca deja un hueco donde
+        exista un ítem armado (rojo) y un segundo ítem reproducible
+        disponible sin marcar "en cola" (verde). No pisa un verde ya
+        puesto por el operador."""
+        rojo = self.ventana.item_reproduciendo()
+        if rojo is None:
+            rojo = self.ventana.primer_item_reproducible()
+            if rojo is None:
+                return
+            self.ventana.marcar_reproduciendo_item(rojo)
+
+        verde = self.ventana.item_siguiente()
+        if verde is not None and verde is not rojo and self._item_valido(verde):
+            return
+
+        candidato = self.ventana.tree.itemBelow(rojo)
+        while candidato is not None and not self._item_valido(candidato):
+            candidato = self.ventana.tree.itemBelow(candidato)
+        self.ventana.marcar_siguiente_item(candidato)
 
     def _avanzar(self):
         if self._stop_diferido_armado:
@@ -676,6 +718,11 @@ class GestorPublicidad:
             item_siguiente = self._item_en_indice(indice_siguiente)
             if item_siguiente is not None and item_siguiente is not item_armado:
                 self.ventana.marcar_siguiente_item(item_siguiente)
+            else:
+                # Pedido explícito: si no había un "siguiente" guardado
+                # (o quedó inválido), igual debe quedar un verde
+                # marcado en cuanto haya un segundo ítem reproducible.
+                self._asegurar_rojo_y_verde()
 
             if bloques:
                 registrar_evento(f"Playlist de Publicidad restaurada: {len(bloques)} bloque(s)")
@@ -882,25 +929,43 @@ class SchedulerAutomatico:
     # Transiciones con fundido Ventana 2 <-> bloque de Publicidad
     # ------------------------------------------------------------------
     def _disparar_bloque(self, bloque):
+        self._fade_pausar_emision()
+        self.gestor_publicidad.disparar_bloque(bloque, al_finalizar=self._al_terminar_publicidad)
+
+    def _fade_pausar_emision(self):
+        """Corta (con fundido superpuesto, nunca un bache de silencio)
+        lo que esté sonando en Emisión — extraído de `_disparar_bloque`
+        para reusarlo también desde `cortar_emision_por_play_manual()`
+        (pedido explícito: el Play manual de Ventana 1 corta Emisión
+        con fundido SIEMPRE, incluso con el Automático activo)."""
         motor_emision = self.gestor_emision.motor
         sonando_ahora = motor_emision.esta_reproduciendo()
-        # "or": si dos bloques se encadenan (el segundo dispara antes
+        # "or": si dos disparos se encadenan (el segundo llega antes
         # de que Emisión llegara a reanudarse), no se pierde el dato de
         # que Emisión debía volver al final.
         self._emision_estaba_sonando = sonando_ahora or self._emision_estaba_sonando
-        if sonando_ahora:
-            self._volumen_emision_previo = motor_emision.obtener_volumen()
-            duracion = self._duracion_fade()
-            self._generacion_pausa_emision += 1
-            generacion = self._generacion_pausa_emision
-            # Fundido de salida SUPERPUESTO: el bloque arranca ya
-            # mientras Emisión baja — nunca hay un bache de silencio.
-            motor_emision.fade_volumen_a(0, duracion)
-            QTimer.singleShot(
-                int(duracion * 1000) + 150,
-                lambda: self._pausar_emision_tras_fade(motor_emision, generacion),
-            )
-        self.gestor_publicidad.disparar_bloque(bloque, al_finalizar=self._al_terminar_publicidad)
+        if not sonando_ahora:
+            return
+        self._volumen_emision_previo = motor_emision.obtener_volumen()
+        duracion = self._duracion_fade()
+        self._generacion_pausa_emision += 1
+        generacion = self._generacion_pausa_emision
+        # Fundido de salida SUPERPUESTO: lo nuevo arranca ya mientras
+        # Emisión baja — nunca hay un bache de silencio.
+        motor_emision.fade_volumen_a(0, duracion)
+        QTimer.singleShot(
+            int(duracion * 1000) + 150,
+            lambda: self._pausar_emision_tras_fade(motor_emision, generacion),
+        )
+
+    def cortar_emision_por_play_manual(self):
+        """Pedido explícito: "cuando pase de la ventana 2 a la 1,
+        haciendo play, cortará en fade la reproducción de la ventana
+        2, incluso si está en automático" — conectado a
+        `GestorPublicidad.al_arrancar_manual` por MainWindow. A
+        diferencia del botón STOP (bloqueado con el Automático
+        activo), el Play manual de Ventana 1 SIEMPRE corta Emisión."""
+        self._fade_pausar_emision()
 
     def _pausar_emision_tras_fade(self, motor_emision, generacion: int):
         # Solo pausa si esta pausa sigue vigente: si Emisión ya volvió
@@ -975,6 +1040,7 @@ class SchedulerAutomatico:
         if not contenido:
             return
         self.ventana.cargar_bloques(contenido.get("bloques", []))
+        self.gestor_publicidad._asegurar_rojo_y_verde()
         registrar_evento(f"Publicidad: programación de hoy cargada automáticamente ('{contenido.get('nombre', '')}')")
 
 

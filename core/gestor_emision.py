@@ -256,11 +256,34 @@ class GestorPlaylist:
         if not self._pisador_activo:
             self.motor.set_volumen(volumen)
 
+    def _asegurar_rojo_y_verde(self):
+        """Pedido explícito: "siempre tendrá uno cargado en rojo para
+        reproducir, y el verde siempre. Si hay 1 solo item, entonces
+        será ese en rojo. Sino no [verde]" — nunca deja un hueco donde
+        exista un ítem armado (rojo) y un segundo ítem disponible sin
+        marcar "en cola" (verde). No pisa un verde ya puesto por el
+        operador."""
+        total = self.panel.cantidad_items()
+        if total == 0:
+            return
+        fila_roja = self.panel.fila_reproduciendo()
+        if fila_roja < 0:
+            fila_roja = 0
+            self.panel.marcar_reproduciendo(0)
+        if 0 <= self.panel.fila_siguiente() < total and self.panel.fila_siguiente() != fila_roja:
+            return
+        candidata = fila_roja + 1
+        if candidata >= total:
+            candidata = 0 if self.repetir_al_finalizar else -1
+        if candidata >= 0 and candidata != fila_roja:
+            self.panel.marcar_siguiente(candidata)
+
     def reproducir_actual(self):
         fila = self.panel.fila_reproduciendo()
         if fila < 0 and self.panel.cantidad_items() > 0:
             fila = 0
             self.panel.marcar_reproduciendo(0)
+        self._asegurar_rojo_y_verde()
         registrar_evento(f"Play (Emisión persistir={self.persistir}) fila={fila}")
         self._reproducir_fila(fila)
 
@@ -754,10 +777,7 @@ class GestorPlaylist:
         # recién generado queda mudo sin un Play manual — igual que el
         # resto de la app, nunca arranca a sonar solo salvo que ya
         # hubiera algo en curso (ver GestorPlaylist con persistir=True).
-        if self.panel.fila_reproduciendo() < 0 and self.panel.cantidad_items() > 0:
-            self.panel.marcar_reproduciendo(0)
-            if self.panel.cantidad_items() > 1:
-                self.panel.marcar_siguiente(1)
+        self._asegurar_rojo_y_verde()
 
     # ------------------------------------------------------------------
     # Persistencia (solo si persistir=True — Ventana 2, no Auxiliar).
@@ -846,6 +866,11 @@ class GestorPlaylist:
             fila_siguiente = datos.get("fila_siguiente", -1)
             if 0 <= fila_siguiente < total and fila_siguiente != fila_armada:
                 self.panel.marcar_siguiente(fila_siguiente)
+            else:
+                # Pedido explícito: si no había un "siguiente" guardado
+                # (o quedó inválido), igual debe quedar un verde
+                # marcado en cuanto haya un segundo ítem disponible.
+                self._asegurar_rojo_y_verde()
 
             if total > 0:
                 registrar_evento(f"Playlist de Emisión restaurada: {total} ítem(s)")
