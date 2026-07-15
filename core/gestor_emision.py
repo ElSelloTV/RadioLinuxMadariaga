@@ -181,6 +181,15 @@ class GestorPlaylist:
         self._ceder_control_armado = False
         self._callback_ceder_control = None
 
+        # Pedido explícito: Auxiliar y Emisión (o cualquier otro par
+        # de ventanas que MainWindow decida coordinar) nunca deben
+        # sonar a la vez — cada vez que ESTE gestor arranca a sonar
+        # desde silencio (Play manual o reanudación automática), este
+        # callback (si MainWindow lo conectó) corta a la otra ventana
+        # con un fundido corto. Ninguna lógica de "cuál corta a cuál"
+        # vive acá — GestorPlaylist no conoce a sus pares, solo avisa.
+        self.al_arrancar_reproduccion = None
+
         self._conectar_motor(self.motor)
 
         self.motor_pisador.finalizo_item.connect(self._on_pisador_finalizado)
@@ -290,6 +299,12 @@ class GestorPlaylist:
             self._marcar_siguiente_con_refill(candidata)
 
     def reproducir_actual(self):
+        # Pedido explícito: arrancar a sonar desde silencio corta a la
+        # ventana "hermana" (Auxiliar <-> Emisión) — ANTES de tocar
+        # nada acá, para que el corte y el arranque queden lo más
+        # superpuestos posible.
+        if self.al_arrancar_reproduccion is not None:
+            self.al_arrancar_reproduccion()
         self._activar_fmt_recordado_si_corresponde()
         fila = self.panel.fila_reproduciendo()
         if fila < 0 and self.panel.cantidad_items() > 0:

@@ -661,6 +661,37 @@ class MainWindow(QMainWindow):
         )
 
     # ------------------------------------------------------------------
+    # Exclusión mutua Auxiliar <-> Emisión (pedido explícito: "ninguna
+    # ventana debe reproducirse al mismo tiempo junto con otra")
+    # ------------------------------------------------------------------
+    def _cortar_reproduccion_de(self, gestor):
+        """Fundido corto + detener() REAL (nunca pausa — misma regla
+        de fondo que SchedulerAutomatico.cortar_emision_por_play_manual/
+        _reanudar_o_arrancar_emision, ver CLAUDE.md "Cosas ya
+        resueltas") sobre `gestor`, si tenía algo sonando. Helper
+        genérico: no sabe si `gestor` es Emisión o Auxiliar, solo
+        corta lo que le pasen — así cualquier par de ventanas que
+        MainWindow decida coordinar más adelante reusa lo mismo."""
+        if gestor is None:
+            return
+        motor = gestor.motor
+        if not motor.esta_reproduciendo():
+            return
+        try:
+            duracion = float(gestor.duracion_fade_segundos or 0)
+        except (TypeError, ValueError):
+            duracion = 0.0
+        duracion = max(0.8, duracion)
+        motor.fade_volumen_a(0, duracion)
+        QTimer.singleShot(int(duracion * 1000) + 150, gestor.detener)
+
+    def _cortar_auxiliar_por_emision(self):
+        self._cortar_reproduccion_de(self._gestor_auxiliar)
+
+    def _cortar_emision_por_auxiliar(self):
+        self._cortar_reproduccion_de(self.gestor_emision)
+
+    # ------------------------------------------------------------------
     # Motor de audio real (core/)
     # ------------------------------------------------------------------
     def _inicializar_motores_audio(self):
@@ -719,6 +750,14 @@ class MainWindow(QMainWindow):
         # Pedido explícito: Play manual en Ventana 1 corta Emisión con
         # fundido SIEMPRE (incluso con el Automático activo).
         self.gestor_publicidad.al_arrancar_manual = self.scheduler_automatico.cortar_emision_por_play_manual
+
+        # Pedido explícito: "en rigor de verdad, ninguna ventana debe
+        # reproducirse al mismo tiempo junto con otra" — Emisión y
+        # Auxiliar nunca suenan a la vez. Arrancar Emisión desde
+        # silencio corta al Auxiliar si estaba sonando (ver también
+        # abrir_ventana_auxiliar(), que conecta la wiring inversa
+        # recién cuando el Auxiliar se crea).
+        self.gestor_emision.al_arrancar_reproduccion = self._cortar_auxiliar_por_emision
 
         if not self.gestor_emision.motor.esta_disponible():
             self.statusBar().showMessage(
@@ -804,6 +843,10 @@ class MainWindow(QMainWindow):
                 duracion_fade_segundos=fade["duracion_fade_segundos"],
             )
             self._gestor_auxiliar.set_volumen_base(audio["volumen_master"])
+            # Pedido explícito: mismo criterio que arriba, en el
+            # sentido inverso — arrancar el Auxiliar desde silencio
+            # corta a Emisión.
+            self._gestor_auxiliar.al_arrancar_reproduccion = self._cortar_emision_por_auxiliar
             self._ventana_auxiliar.archivo_soltado.connect(self._on_archivo_soltado_auxiliar)
             self._ventana_auxiliar.solicitud_agregar_pisador.connect(
                 lambda fila: self._abrir_dialogo_pisador(self._ventana_auxiliar, fila)
