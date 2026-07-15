@@ -431,6 +431,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Pisador agregado a: {item_destino.text(0)}", 3000)
             return
 
+        # Pedido explícito: agregar un ítem a mano (arrastrando) es la
+        # ÚNICA excepción a "Ventana 2 siempre reproduce el FMT en
+        # memoria" — corta el modo Musicalizador para que no compita
+        # con lo que el operador acaba de poner.
+        self.gestor_emision.detener_musicalizador()
+
         titulo = os.path.splitext(os.path.basename(ruta))[0]
         duracion = obtener_duracion_formateada(ruta)
         self.ventana_emision.agregar_item(

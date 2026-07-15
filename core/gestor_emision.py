@@ -106,7 +106,10 @@ from PySide6.QtCore import Qt, QTimer
 from core.audio_engine import MotorAudio
 from core.analizador_audio import volumen_ajustado_por_ganancia
 from core.musicalizador import generar_serie
-from config.settings import cargar_playlist_emision, guardar_playlist_emision, registrar_error, registrar_evento
+from config.settings import (
+    cargar_playlist_emision, guardar_playlist_emision, registrar_error, registrar_evento,
+    guardar_ultimo_fmt, obtener_ultimo_fmt,
+)
 
 DURACION_FADE_PISADOR_SEGUNDOS = 0.8
 # Pisador en el Outro (pedido explícito, paridad con Dinesat): cuánto
@@ -276,9 +279,10 @@ class GestorPlaylist:
         if candidata >= total:
             candidata = 0 if self.repetir_al_finalizar else -1
         if candidata >= 0 and candidata != fila_roja:
-            self.panel.marcar_siguiente(candidata)
+            self._marcar_siguiente_con_refill(candidata)
 
     def reproducir_actual(self):
+        self._activar_fmt_recordado_si_corresponde()
         fila = self.panel.fila_reproduciendo()
         if fila < 0 and self.panel.cantidad_items() > 0:
             fila = 0
@@ -286,6 +290,27 @@ class GestorPlaylist:
         self._asegurar_rojo_y_verde()
         registrar_evento(f"Play (Emisión persistir={self.persistir}) fila={fila}")
         self._reproducir_fila(fila)
+
+    def _activar_fmt_recordado_si_corresponde(self):
+        """Pedido explícito: "cuando actives la ventana 2, siempre y
+        siempre... vas a reproducir la serie del FMT en memoria" — la
+        única excepción es que el operador ya haya agregado contenido
+        a mano (arrastrando o agregando, ver
+        `MainWindow._on_archivo_soltado_emision`, que llama a
+        `detener_musicalizador()` apenas eso pasa). Si Emisión está
+        VACÍA y no hay ya un formato activo, carga el último FMT
+        recordado (memoria que sobrevive al día, no a la sesión — ver
+        config/settings.py:obtener_ultimo_fmt)."""
+        if self._formato_musicalizador_activo is not None:
+            return
+        if self.panel.cantidad_items() > 0:
+            return  # ya hay contenido (manual o restaurado) — no lo pisa
+        if self._ventana_explorador is None:
+            return
+        nombre = obtener_ultimo_fmt()
+        if not nombre:
+            return
+        self.iniciar_musicalizador(nombre)
 
     def _on_click_play(self):
         """Botón verde grande (pedido explícito, paridad con Dinesat):
@@ -430,21 +455,6 @@ class GestorPlaylist:
         if fila_siguiente < 0 or fila_siguiente == fila_actual:
             fila_siguiente = fila_actual + 1
 
-        # Musicalizador Avanzado: mismo refill "al entrar en previo"
-        # que ya tiene _avanzar() — pedido explícito, y hace falta ACÁ
-        # TAMBIÉN porque con crossfade activado (cómo usa la radio
-        # Santiago en producción) la transición NATURAL entre temas
-        # pasa por ACÁ, no por _avanzar() (que solo se dispara si el
-        # crossfade no llega a iniciarse, ej. cuando no hay ítem
-        # siguiente todavía). Sin este chequeo acá, el refill recién
-        # ocurría cuando el ÚLTIMO ítem de la serie llegaba a su fin
-        # NATURAL sin crossfade — exactamente el bug reportado: "carga
-        # cuando termina de reproducirse el último item", no al
-        # entrar en verde.
-        if self._formato_musicalizador_activo is not None and fila_siguiente >= total - 1:
-            self._generar_serie_musicalizador()
-            total = self.panel.cantidad_items()
-
         if fila_siguiente >= total:
             fila_siguiente = 0 if self.repetir_al_finalizar else -1
         if fila_siguiente < 0:
@@ -482,7 +492,7 @@ class GestorPlaylist:
         if candidata_siguiente >= total:
             candidata_siguiente = 0 if self.repetir_al_finalizar else -1
         if candidata_siguiente >= 0:
-            self.panel.marcar_siguiente(candidata_siguiente)
+            self._marcar_siguiente_con_refill(candidata_siguiente)
 
         registrar_evento(f"Crossfade: iniciado hacia fila {fila_siguiente} ('{ruta_siguiente}')")
 
@@ -665,26 +675,22 @@ class GestorPlaylist:
         if fila_siguiente < 0 or fila_siguiente == fila_actual:
             fila_siguiente = fila_actual + 1
 
-        # Musicalizador Avanzado (pedido explícito, ronda posterior:
-        # "que la nueva serie se cargue no cuando termina de
-        # reproducirse el último item, sino cuando entra en previo
-        # (verde), directamente ahí que cargue la nueva serie") — en
-        # cuanto el próximo ítem a reproducir ES (o ya pasó) el ÚLTIMO
-        # disponible, se genera la serie siguiente ACÁ, ANTES de
-        # intentar marcarlo/reproducirlo — así el ítem que un paso más
-        # abajo se marca "en cola" (verde) ya pertenece a la serie
-        # nueva, sin esperar nunca a que termine de sonar nada. Único
-        # mecanismo (reemplaza los dos que había antes: precarga al
-        # marcar verde + red de emergencia al terminar) — cubre por
-        # igual series largas y series cortas/de 1 solo ítem (que no
-        # tienen "ante-último" desde donde precargar de otra forma).
-        if self._formato_musicalizador_activo is not None and fila_siguiente >= total - 1:
-            self._generar_serie_musicalizador()
-            total = self.panel.cantidad_items()
-
         if fila_siguiente >= total:
             if self.repetir_al_finalizar:
                 fila_siguiente = 0
+            elif self._formato_musicalizador_activo is not None:
+                # Red de emergencia — SOLO para el caso límite de una
+                # serie de 1 solo ítem (o cualquier otro donde nunca
+                # hubo "ante-último" desde donde marcar verde): el
+                # mecanismo normal es `_marcar_siguiente_con_refill()`
+                # (ver más abajo), pero acá no hay nada que marcar en
+                # verde todavía, así que se genera la serie siguiente
+                # directamente antes de rendirse.
+                self._generar_serie_musicalizador()
+                total = self.panel.cantidad_items()
+                if fila_siguiente >= total:
+                    self.motor.detener()
+                    return
             else:
                 self.motor.detener()
                 return
@@ -695,9 +701,33 @@ class GestorPlaylist:
         if candidata_siguiente >= total:
             candidata_siguiente = 0 if self.repetir_al_finalizar else -1
         if candidata_siguiente >= 0:
-            self.panel.marcar_siguiente(candidata_siguiente)
+            self._marcar_siguiente_con_refill(candidata_siguiente)
 
         self._reproducir_fila(fila_siguiente)
+
+    def _marcar_siguiente_con_refill(self, fila: int):
+        """Envoltorio ÚNICO sobre `panel.marcar_siguiente()` para
+        Emisión — pedido explícito: "cuando el último item cargado en
+        la ventana se pinte de verde (sin tomar en cuenta el rojo) vas
+        a cargar un nuevo ciclo". El refill del Musicalizador se
+        dispara EXACTAMENTE acá, en el mismo instante en que algo se
+        pinta de verde por ser el último ítem disponible — sin
+        importar qué esté en rojo en ese momento (puede ser el
+        ante-último, o cualquier otro, da igual). TODO lugar de este
+        archivo que marca "siguiente" en Emisión pasa por acá
+        (`_avanzar()`, `_iniciar_crossfade()`, `_asegurar_rojo_y_verde()`)
+        — evita el bug ya conocido de que `_avanzar()` e
+        `_iniciar_crossfade()` son caminos paralelos que no comparten
+        código: centralizando el chequeo en el ÚNICO lugar que de
+        verdad pinta de verde, un camino nuevo no puede volver a
+        olvidarlo."""
+        self.panel.marcar_siguiente(fila)
+        if (
+            self._formato_musicalizador_activo is not None
+            and fila >= 0
+            and fila == self.panel.cantidad_items() - 1
+        ):
+            self._generar_serie_musicalizador()
 
     # ------------------------------------------------------------------
     # Musicalizador Avanzado + Comandos FMT (pedido explícito,
@@ -717,6 +747,7 @@ class GestorPlaylist:
             registrar_error("Musicalizador: no hay acceso al Explorador, no se puede generar música.")
             return
         self._formato_musicalizador_activo = nombre_formato
+        guardar_ultimo_fmt(nombre_formato)
         registrar_evento(f"Musicalizador: activado formato '{nombre_formato}' (persistir={self.persistir})")
         # Pedido explícito (punto c): un Comando FMT REEMPLAZA el
         # contenido de Emisión, nunca lo acumula arriba de lo que

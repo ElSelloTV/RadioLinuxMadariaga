@@ -3142,6 +3142,111 @@ todo el resto.
     lugares. Probado con un test dedicado que simula el crossfade real
     (motor entrante real sin VLC) + suite de regresión completa sin
     fallos nuevos.
+34. ~~Memoria de "último FMT" (sobrevive al día) + Ventana 2 siempre
+    activa el FMT recordado + refill centralizado, disparado
+    ESTRICTAMENTE por el verde~~ — pedido explícito, 3 partes en un
+    solo mensaje: "El último FMT cargado lo guardarás en memoria
+    temporal (sobrevive al día no a la sesión). Cuando actives la
+    ventana 2, siempre y siempre (solo admitiendo la excepción de que
+    yo agregue manualmente item arrastrando o agregando) vas a
+    reproducir la serie del FMT en memoria. Cuando el último item
+    cargado en la ventana se pinte de verde (sin tomar en cuenta el
+    rojo) vas a cargar un nuevo ciclo."
+    - **(a) Memoria del último FMT, con vencimiento diario**:
+      `config/settings.py` — `guardar_ultimo_fmt(nombre)` /
+      `obtener_ultimo_fmt()`, nuevo archivo
+      `config/data/ultimo_fmt.json` (`{"nombre": ..., "fecha":
+      "YYYY-MM-DD"}`, escritura atómica de siempre). `obtener_ultimo_fmt()`
+      compara la fecha guardada contra `date.today()`: si no coincide,
+      devuelve `None` como si no hubiera nada — el archivo NO se
+      borra, simplemente deja de aplicar solo en cuanto cambia el día
+      (fail-open también ante JSON corrupto o archivo ausente). Se
+      graba cada vez que se activa un formato,
+      `GestorPlaylist.iniciar_musicalizador()`, sin importar si el
+      disparo fue un Comando FMT real de Ventana 1 o el auto-arranque
+      nuevo del punto (b) — así la memoria siempre refleja el ÚLTIMO
+      FMT usado en el día, venga de donde venga.
+    - **(b) Ventana 2 arranca sola el FMT recordado al "activarse"**:
+      nuevo método `GestorPlaylist._activar_fmt_recordado_si_corresponde()`,
+      llamado como primera línea de `reproducir_actual()` (el Play
+      manual desde silencio, y también el punto de entrada común que
+      ya usan tanto el arranque de la app como la vuelta automática de
+      `SchedulerAutomatico` tras un bloque — cubre los tres casos con
+      un solo gancho). Si Emisión está VACÍA y no hay ya un
+      Musicalizador activo, busca el FMT recordado de HOY y lo carga
+      con `iniciar_musicalizador()`; si ya hay contenido (restaurado
+      de sesión anterior, o agregado a mano) NO lo pisa. La ÚNICA
+      excepción real al "siempre" es agregar un ítem a mano
+      arrastrando desde el Explorador — `MainWindow.
+      _on_archivo_soltado_emision()` ahora llama a
+      `gestor_emision.detener_musicalizador()` apenas el operador
+      suelta un archivo (antes de agregarlo), así el auto-arranque no
+      compite con lo que el operador acaba de elegir; si más tarde
+      vacía la lista de nuevo, el SIGUIENTE Play retoma el FMT
+      recordado con normalidad (no hace falta un flag de "suprimido
+      permanentemente" — la propia condición de "lista vacía" alcanza).
+      **Dos decisiones de diseño tomadas sin poder consultarlas con
+      Santiago** (una falla de herramienta impidió preguntarle antes
+      de programar, documentado para que las corrija si no es lo que
+      tenía en mente): qué cuenta como "activar la ventana 2" (acá:
+      cualquier Play que encuentra la lista vacía — cubre manual,
+      automático y arranque) y cuánto dura la excepción del agregado
+      manual (acá: hasta que la lista vuelva a quedar vacía, no una
+      sesión entera ni un flag separado).
+    - **(c) Refill centralizado, disparado por el VERDE, no por el
+      rojo**: cambio de fondo pedido explícitamente ("no toma en
+      cuenta el color rojo, sino el verde") — antes (ronda 33) el
+      refill se chequeaba en `_avanzar()` e `_iniciar_crossfade()` por
+      separado, mirando si el PRÓXIMO ROJO iba a ser el último. Ahora
+      un solo método nuevo, `GestorPlaylist._marcar_siguiente_con_refill()`,
+      envuelve TODA marca de verde de Emisión — `panel.marcar_siguiente()`
+      ya no se llama nunca directo, siempre a través de este
+      envoltorio, desde `_avanzar()`, `_iniciar_crossfade()` Y
+      `_asegurar_rojo_y_verde()` (los tres lugares del archivo que
+      pueden pintar algo de verde). El refill se dispara ADENTRO de
+      este método, en el mismo instante en que la fila que se acaba
+      de marcar verde resulta ser la última disponible —
+      completamente desacoplado de qué esté en rojo en ese momento.
+      Consecuencia real y esperada (no un bug): con series MUY cortas
+      (2 ítems), el segundo y último ítem queda en verde ya en la
+      CARGA INICIAL (es el único candidato posible), así que la
+      cascada a una 2da serie arranca de inmediato, antes de que
+      suene una sola nota — coherente con la letra del pedido de
+      Santiago, que no distingue "carga inicial" de "avance normal".
+      Centralizar en un único método, en vez de agregar el chequeo
+      suelto en cada lugar (como se hizo, y se rompió, en la ronda
+      33), cierra la clase entera de bug de "caminos paralelos que se
+      olvidan de compartir una regla" para cualquier código futuro que
+      marque verde en Emisión.
+      El caso límite de una serie de 1 solo ítem (nunca hay
+      "ante-último" desde donde marcar un verde distinto) sigue
+      cubierto por la red de emergencia ya existente dentro de
+      `_avanzar()`, en la rama `fila_siguiente >= total` — restaurada
+      en esta ronda tras haber sido reemplazada por el chequeo suelto
+      de la ronda 33.
+    Probado con un test nuevo dedicado
+    (`test_fmt_memoria_y_refill_verde.py`: round-trip y vencimiento
+    diario de la memoria del FMT, Play con Emisión vacía auto-carga el
+    FMT recordado sin pisar contenido existente, sin `ventana_explorador`
+    no hace nada, agregar a mano corta el Musicalizador y vaciar la
+    lista lo retoma, refill exacto al marcar verde el último ítem vía
+    `_avanzar()` Y vía `_iniciar_crossfade()`, caso límite de 1 solo
+    ítem) + actualización de 3 tests preexistentes que asumían el
+    punto de disparo VIEJO del refill (`test_musicalizador_refill_crossfade.py`,
+    `test_ronda_afinado_musicalizador.py`,
+    `test_ronda_rojo_verde_y_corte_v1.py` — sus fallos NO eran
+    regresiones, sino aserciones que codificaban el timing anterior)
+    + suite de regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py`). **Sigue sin poder probarse
+    con audio/VLC real**: falta que Santiago confirme (1) si "activar
+    la ventana 2" y la duración de la excepción manual son lo que
+    tenía en mente (ver los dos judgment calls documentados arriba en
+    (b) — puede pedir que se ajusten), (2) que el FMT recordado
+    efectivamente arranque solo al otro día si vuelve a abrir la app
+    sin haber cargado nada nuevo (y que YA NO arranque si pasó a otro
+    día), y (3) que el refill se sienta "más adelantado" (antes,
+    incluso, de que termine de sonar nada) tal como pidió.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
@@ -3160,10 +3265,19 @@ todo el resto.
   cuando un ítem termina sin crossfade; `_iniciar_crossfade()` corre
   en la transición NATURAL cuando `crossfade_activado=True` (el modo
   real de producción de Santiago). Cualquier lógica nueva sobre "qué
-  ítem sigue" (freno por hora, refill del Musicalizador, etc.) que
-  solo se agregue a `_avanzar()` NUNCA se ejecuta en producción si el
-  crossfade está prendido — hay que agregarla a los DOS lugares. Ya
-  mordió una vez (el refill del FMT, ver roadmap).
+  ítem sigue" (freno por hora, etc.) que solo se agregue a
+  `_avanzar()` NUNCA se ejecuta en producción si el crossfade está
+  prendido — hay que agregarla a los DOS lugares. Ya mordió una vez
+  (el refill del FMT, ver roadmap ronda 33). **Para el refill del
+  Musicalizador puntualmente, esto ya no aplica** desde la ronda 34:
+  se centralizó en `GestorPlaylist._marcar_siguiente_con_refill()`,
+  un envoltorio ÚNICO sobre `panel.marcar_siguiente()` que
+  `_avanzar()`, `_iniciar_crossfade()` y `_asegurar_rojo_y_verde()`
+  llaman por igual — un código nuevo que marca verde en Emisión ya no
+  puede "olvidarse" del refill porque no hay forma de marcar verde sin
+  pasar por ahí. Sigue siendo cierto que CUALQUIER OTRA lógica nueva
+  sobre "qué ítem sigue" (no relacionada a marcar verde) todavía tiene
+  que agregarse a mano en los dos lugares.
 - `externally-managed-environment` de pip → usar venv siempre.
 - `QProcess` está en `QtCore`, no en `QtWidgets` (error real que
   apareció durante el desarrollo).

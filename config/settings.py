@@ -19,6 +19,7 @@ ARCHIVO_BIBLIOTECA = os.path.join(DIRECTORIO_CONFIG, "biblioteca.json")
 ARCHIVO_PLAYLIST_EMISION = os.path.join(DIRECTORIO_CONFIG, "playlist_emision.json")
 ARCHIVO_PLAYLIST_PUBLICIDAD = os.path.join(DIRECTORIO_CONFIG, "playlist_publicidad.json")
 ARCHIVO_MUSICALIZADOR = os.path.join(DIRECTORIO_CONFIG, "musicalizador.json")
+ARCHIVO_ULTIMO_FMT = os.path.join(DIRECTORIO_CONFIG, "ultimo_fmt.json")
 ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
 ARCHIVO_HISTORIAL_REPRODUCCION = os.path.join(DIRECTORIO_CONFIG, "historial_reproduccion.txt")
 TAMAÑO_MAXIMO_LOG_BYTES = 2 * 1024 * 1024  # 2 MB — más allá de esto, rota a .anterior.txt
@@ -523,6 +524,33 @@ def renombrar_formato(nombre_viejo: str, nombre_nuevo: str) -> bool:
     datos["formatos"][nombre_nuevo] = datos["formatos"].pop(nombre_viejo)
     guardar_musicalizador(datos)
     return True
+
+
+# ----------------------------------------------------------------------
+# "Último FMT cargado" (pedido explícito: "lo guardarás en memoria
+# temporal, sobrevive al día no a la sesión") — a diferencia de
+# _formato_musicalizador_activo (puramente en memoria de
+# GestorPlaylist), esto persiste en disco para sobrevivir un reinicio
+# de la app DENTRO del mismo día, pero se ignora solo (no se borra el
+# archivo, simplemente deja de aplicar) apenas cambia el día — así una
+# instalación que se reinicia de madrugada no arrastra el FMT de ayer.
+# ----------------------------------------------------------------------
+def guardar_ultimo_fmt(nombre_formato: str):
+    _guardar_json_atomico(ARCHIVO_ULTIMO_FMT, {"nombre": nombre_formato, "fecha": date.today().isoformat()})
+
+
+def obtener_ultimo_fmt() -> str | None:
+    if not os.path.exists(ARCHIVO_ULTIMO_FMT):
+        return None
+    try:
+        with open(ARCHIVO_ULTIMO_FMT, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+    except (json.JSONDecodeError, OSError) as error:
+        registrar_error(f"Error leyendo último FMT: {error}")
+        return None
+    if datos.get("fecha") != date.today().isoformat():
+        return None  # de otro día — "sobrevive al día, no más que eso"
+    return datos.get("nombre") or None
 
 
 def rutas_recientes_en_historial(rutas_candidatas: set, cantidad_a_excluir: int) -> set:
