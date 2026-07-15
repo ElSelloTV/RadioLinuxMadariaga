@@ -2517,6 +2517,13 @@ fallback).
 sudo apt install vlc libvlc-dev ffmpeg
 ```
 
+Opcional — control de EasyEffects (procesamiento de audio de la FM,
+ver roadmap ronda 37):
+
+```bash
+sudo apt install easyeffects
+```
+
 `requirements.txt` (Python): PySide6, python-vlc, mutagen, pydub.
 
 ## Convención de entorno
@@ -3468,6 +3475,116 @@ todo el resto.
     arranca fresca al volver (nunca el tema viejo a mitad), y que un
     Comando FMT del mismo formato genera contenido realmente nuevo
     cada vez.
+37. ~~Integración con EasyEffects (procesamiento de audio de la FM:
+    compresor, ecualizador, limitador — Santiago ya lo usa a mano)~~ —
+    pedido explícito, en dos partes: primero una consulta exploratoria
+    ("¿hay manera de integrarlo al programa?"), después el pedido
+    concreto ("dejar EasyEffects andando en ícono junto al reloj y no
+    como pestaña abajo minimizado... que se ejecute oculto, y que
+    solo lo controle cuando aprieto ese botón"). Decisión de diseño
+    explicada y acordada con Santiago ANTES de programar: EasyEffects
+    es un host de plugins LV2 sobre PipeWire que intercepta el audio
+    de la app a nivel del SISTEMA (no es un plugin embebible) —
+    reimplementar sus controles adentro de esta app significaría
+    construir un host LV2 propio en Python, un proyecto en sí mismo.
+    En cambio: Santiago arma y afina las cadenas de efectos con la
+    propia interfaz de EasyEffects (agregando los plugins que quiera)
+    y las guarda como PRESETS; esta app solo cambia de preset desde
+    afuera, por línea de comandos, sobre una instancia de EasyEffects
+    corriendo OCULTA en segundo plano.
+
+    **Comandos confirmados por Santiago en su instalación real**
+    (EasyEffects 7.2.3, vía `easyeffects --help`) — no existe
+    `--gapplication-service` en esta versión, pero `-w/--hide-window`
+    cumple la misma función (arranca/activa la instancia única sin
+    mostrar su ventana): `-w/--hide-window`, `-l/--load-preset NAME`,
+    `-p/--presets`, `-b/--bypass N` (1/2/3 = habilitar/deshabilitar/
+    estado), `-s/--active-preset CAT` (el ejemplo de la ayuda usa el
+    valor en inglés "input"/"output", aunque la descripción esté
+    traducida — se usa "output" tal cual el ejemplo, sin traducir).
+
+    **`core/easyeffects_control.py`** (nuevo, deliberadamente sin Qt
+    salvo `QProcess.startDetached` — mismo patrón que
+    `core/actualizador.py`: `subprocess.run` con timeout,
+    try/except `(TimeoutExpired, OSError)`, devuelve `(éxito: bool,
+    mensaje: str)`): los flags de la CLI viven como CONSTANTES al
+    principio del archivo — pedido explícito de Santiago ("debe ser
+    tolerante a actualizaciones, sino con la primera actualización
+    perdería el acceso"): si una versión futura de EasyEffects
+    renombra un flag, arreglarlo es un edit de una línea, y mientras
+    tanto cualquier comando que falle degrada limpio (mensaje claro
+    en la UI) en vez de romper la app — mismo espíritu que
+    `MotorAudio`/`analizar_audio()` ante dependencias faltantes.
+    - **Por qué el arranque tiene que ser DESACOPLADO y sondeado, no
+      un `subprocess.run` directo**: EasyEffects es una GApplication
+      de instancia única — si TODAVÍA no está corriendo, la primera
+      invocación de `easyeffects` se convierte en la instancia
+      "primaria" y se queda corriendo indefinidamente (nunca vuelve
+      la terminal); un `subprocess.run()` directo ahí colgaría para
+      siempre. `asegurar_en_ejecucion()` lanza el proceso con
+      `QProcess.startDetached()` (no bloquea) y sondea con `pgrep`
+      (no depende de ningún flag propio de EasyEffects — más
+      tolerante a cambios de versión que parsear su salida) hasta
+      confirmar que la instancia ya quedó arriba, recién ahí permite
+      que otros comandos (que sí esperan una respuesta rápida de la
+      instancia ya activa) se envíen con `subprocess.run` normal.
+    - Funciones expuestas: `esta_instalado()`, `asegurar_en_ejecucion()`,
+      `listar_presets()`, `cargar_preset(nombre)`, `preset_activo()`,
+      `set_bypass(activar)`, `esta_en_bypass()`, `abrir_ventana()`
+      (para la afinación fina de los plugins — sin un flag "mostrar
+      ventana" documentado en esta versión, invocar el binario SIN
+      `--hide-window` activa la instancia existente y GApplication
+      presenta su ventana por defecto al recibir esa activación; a
+      confirmar con Santiago si de verdad la destapa).
+
+    **GUI (`gui/main_window.py`)**: botón "🎚 FM" (`QToolButton`,
+    `ToolButtonPopupMode.InstantPopup` — un solo click despliega el
+    menú, sin flecha aparte) junto al reloj del toolbar. El menú se
+    puebla de nuevo cada vez que se abre (`aboutToShow`), mostrando
+    cursor de espera (`_mostrar_preload`, mismo patrón que el resto de
+    la app) mientras confirma que la instancia está arriba — así el
+    primer uso de la sesión (o si el operador cerró EasyEffects a
+    mano) puede tardar un instante, pero los usos siguientes son
+    instantáneos. Contenido del menú: la lista de presets (marcado el
+    activo, `QActionGroup` exclusivo), separador, "Bypass (sin
+    efectos)" (checkeable), separador, "Abrir EasyEffects (edición
+    avanzada)...". Si EasyEffects no está instalado, un único ítem
+    deshabilitado avisa con claridad en vez de un menú vacío o roto.
+    `MainWindow.__init__` llama a `_iniciar_easyeffects_en_segundo_plano()`
+    apenas arranca — pedido explícito ("que se ejecute oculto") — pero
+    a propósito es puro *fire-and-forget* (`QProcess.startDetached`
+    directo, SIN el sondeo de `asegurar_en_ejecucion()`) para no
+    demorar el arranque de la radio ni un segundo; para cuando el
+    operador realmente abre el menú, ya tuvo tiempo de terminar de
+    levantar solo.
+
+    Probado con `test_easyeffects_control.py` (nuevo, 27
+    verificaciones): sin EasyEffects instalado (el caso real del
+    sandbox) TODAS las funciones degradan limpio sin excepción; con un
+    binario FALSO que simula EasyEffects instalado y corriendo (un
+    script Python ejecutable en el PATH, más un `pgrep` falso que
+    "ve" el proceso recién después de recibir `--hide-window`) se
+    prueban los flujos reales de arranque/sondeo, listar presets,
+    cambiar de preset (éxito y error con un nombre inexistente),
+    consultar/cambiar bypass y abrir ventana — confirmando que se usan
+    EXACTAMENTE los flags que Santiago pegó de su `--help` real, no
+    otros inventados; y la parte GUI confirma que el botón existe, que
+    el menú se puebla con los 3 presets del binario falso (el activo
+    marcado) más Bypass/Abrir, y que sin el binario en el PATH el menú
+    cae al aviso de "no instalado" deshabilitado — + suite de
+    regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py`). **Nunca se probó contra el
+    EasyEffects REAL** (el sandbox no lo tiene instalado, todo lo de
+    arriba se probó contra un binario falso que imita su CLI): falta
+    que Santiago confirme en su notebook real (1) que el ícono "🎚 FM"
+    aparece y el menú lista sus presets reales de verdad, (2) que
+    cambiar de preset desde el menú se escucha en el aire, (3) que
+    EasyEffects arranca oculto de verdad al abrir la radio (nunca ve
+    su ventana ni la ve minimizada en la barra de tareas), y (4) que
+    "Abrir EasyEffects" efectivamente destapa la ventana para la
+    afinación fina — es el punto más incierto de esta ronda, al no
+    haber un flag "mostrar ventana" documentado explícitamente.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
