@@ -533,6 +533,7 @@ class VentanaPublicidad(QWidget):
         menu.addSeparator()
         accion_crear_bloque = menu.addAction("Crear Bloque Nuevo")
         accion_insertar_fmt = menu.addAction("▶ Insertar Comando FMT...")
+        accion_insertar_hth = menu.addAction("▶ Insertar Comando HTH...")
 
         elegida = menu.exec(self.tree.viewport().mapToGlobal(posicion))
         if elegida in (accion_crear_prog, accion_modificar_prog, accion_eliminar_prog):
@@ -558,6 +559,8 @@ class VentanaPublicidad(QWidget):
             self._confirmar_y_crear_bloque()
         elif elegida == accion_insertar_fmt:
             self._insertar_comando_fmt(seleccionados[0] if seleccionados else None)
+        elif elegida == accion_insertar_hth:
+            self._insertar_comando_hth(seleccionados[0] if seleccionados else None)
 
     def _bloque_destino_para_insertar(self, item_referencia):
         """Mismo criterio que el Programador (_bloque_destino_actual):
@@ -581,6 +584,19 @@ class VentanaPublicidad(QWidget):
         formato = dialogo.formato_elegido()
         if formato:
             self.agregar_comando(bloque, "FMT", formato)
+
+    def _insertar_comando_hth(self, item_referencia):
+        bloque = self._bloque_destino_para_insertar(item_referencia)
+        if bloque is None:
+            QMessageBox.information(self, "Insertar Comando HTH", "Primero creá un bloque horario.")
+            return
+        from gui.dialogo_insertar_comando_hth import DialogoInsertarComandoHTH
+        dialogo = DialogoInsertarComandoHTH(parent=self)
+        if dialogo.exec() != DialogoInsertarComandoHTH.DialogCode.Accepted:
+            return
+        parametro = dialogo.parametro_elegido()
+        if parametro:
+            self.agregar_comando(bloque, "HTH", parametro)
 
     def _agregar_item_v1(self, item_referencia):
         """Pedido explícito: habilitar "Agregar Item" del menú
@@ -621,8 +637,9 @@ class VentanaPublicidad(QWidget):
         if self.es_comando(item):
             QMessageBox.information(
                 self, "Reemplazar Item",
-                "Un Comando FMT no se \"reemplaza\" — sacalo (Sacar Item) y agregá\n"
-                "uno nuevo con \"▶ Insertar Comando FMT...\" si querés cambiar el formato.",
+                "Un Comando (FMT/HTH) no se \"reemplaza\" — sacalo (Sacar Item)\n"
+                "y agregá uno nuevo con \"▶ Insertar Comando FMT...\" o\n"
+                "\"▶ Insertar Comando HTH...\" si querés cambiar el comando.",
             )
             return
         if self._bloqueado_por_reproduccion(item):
