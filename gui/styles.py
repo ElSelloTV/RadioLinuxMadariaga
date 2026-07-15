@@ -398,6 +398,7 @@ GENERO_COLORES = {
     "Separador": "#e65100",    # naranja
     "Pisador": "#6a1b9a",      # violeta
     "Artistica": "#1565c0",    # azul
+    "HTH": "#00838f",          # cian oscuro — clips de voz de Hora/Clima
 }
 
 # Con fondo amarillo el texto blanco no contrasta: estos géneros
@@ -410,9 +411,18 @@ GENERO_PREFIJOS_CODIGO = {
     "Separador": "SEP",
     "Pisador": "PIS",
     "Artistica": "ART",
+    "HTH": "HTH",
 }
 
-LISTA_GENEROS = ["Musica", "Publicidad", "Separador", "Pisador", "Artistica"]
+# Pedido explícito ("Comando HTH", ver docs/manual_dinesat_visual.md
+# 5.3.5.1): un género MÁS, no una categoría — así los clips de voz
+# (HORA 00, MINUTOS 00, TEMPERATURA GRADOS 20, HUMEDAD 045, etc.) se
+# importan con el mismo flujo de siempre ("＋ Agregar" del Explorador,
+# eligiendo género HTH y escribiendo la nomenclatura exacta como
+# título) y quedan buscables globalmente con
+# VentanaExplorador.listar_registros_por_genero("HTH") — mismo patrón
+# ya usado por "Pisador", sin inventar un tipo de categoría nuevo.
+LISTA_GENEROS = ["Musica", "Publicidad", "Separador", "Pisador", "Artistica", "HTH"]
 
 
 def color_texto_legible(color_hex: str) -> str:

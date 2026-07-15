@@ -85,7 +85,16 @@ CONFIG_POR_DEFECTO = {
             "Separador": "#e65100",
             "Pisador": "#6a1b9a",
             "Artistica": "#1565c0",
+            "HTH": "#00838f",
         },
+    },
+    # Comando HTH (Hora-Temperatura-Humedad) — coordenadas para la
+    # consulta de clima en vivo (ver core/clima_meteo.py). Default:
+    # General Juan Madariaga, Buenos Aires, Argentina. Editable en
+    # Configuración → General.
+    "clima": {
+        "latitud": -37.0167,
+        "longitud": -57.1167,
     },
 }
 
@@ -143,8 +152,12 @@ def guardar_configuracion(config: dict):
 
 # Géneros del material típico de Ventana 1 (pedido explícito: "hay
 # spot publicitarios y separadores que tienen algunos segundos o
-# milisegundos de silencio... sacalos absolutamente").
-GENEROS_CORTE_ESTRICTO = ("Publicidad", "Separador")
+# milisegundos de silencio... sacalos absolutamente"). "HTH" (clips de
+# voz del Comando HTH, ver core/hth.py) se agrega acá también — un
+# corte de silencio flojo entre "HORA 14" y "MINUTOS 30" sonaría como
+# un bache raro en medio del anuncio, así que conviene el mismo
+# recorte estricto sin colchón.
+GENEROS_CORTE_ESTRICTO = ("Publicidad", "Separador", "HTH")
 
 
 def tolerancia_silencio_para_genero(config: dict, genero: str) -> float:

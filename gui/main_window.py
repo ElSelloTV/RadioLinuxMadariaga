@@ -720,6 +720,7 @@ class MainWindow(QMainWindow):
             reintentos_maximos=reproduccion["reintentos_antes_de_detener"],
             persistir=True,
             duracion_fade_out_v1_ms=reproduccion["duracion_fade_out_v1_ms"],
+            ventana_explorador=self.ventana_explorador,
         )
         # Comando FMT (pedido explícito, encadenado con el
         # Musicalizador Avanzado): al pasar por un ítem-comando FMT en

@@ -56,6 +56,7 @@ from gui.dialogo_editar_bloque import DialogoEditarBloque
 from gui.dialogo_programaciones_guardadas import DialogoProgramacionesGuardadas
 from gui.dialogo_duplicar_programacion import DialogoDuplicarProgramacion
 from gui.dialogo_insertar_comando_fmt import DialogoInsertarComandoFMT
+from gui.dialogo_insertar_comando_hth import DialogoInsertarComandoHTH
 from gui import estado_ui
 from core.audio_engine import obtener_duracion_formateada
 from config.settings import (
@@ -192,7 +193,16 @@ class VentanaProgramador(QDialog):
             "continua de música en Emisión según un formato del Musicalizador Avanzado."
         )
         self.btn_insertar_fmt.clicked.connect(self._insertar_comando_fmt)
-        for boton in (self.btn_agregar_item, self.btn_reemplazar, self.btn_quitar, self.btn_insertar_fmt):
+        self.btn_insertar_hth = QPushButton("▶ Comando HTH...")
+        self.btn_insertar_hth.setToolTip(
+            "Al pasar la reproducción por este ítem, anuncia hora/temperatura/\n"
+            "humedad concatenando los clips de voz del género \"HTH\"."
+        )
+        self.btn_insertar_hth.clicked.connect(self._insertar_comando_hth)
+        for boton in (
+            self.btn_agregar_item, self.btn_reemplazar, self.btn_quitar,
+            self.btn_insertar_fmt, self.btn_insertar_hth,
+        ):
             fila_items.addWidget(boton, 1)
         layout_grupo.addLayout(fila_items)
 
@@ -355,6 +365,18 @@ class VentanaProgramador(QDialog):
         if formato:
             self._agregar_comando_a_bloque(bloque, "FMT", formato, self._indice_insercion_actual(bloque))
 
+    def _insertar_comando_hth(self):
+        bloque = self._bloque_destino_actual()
+        if bloque is None:
+            QMessageBox.information(self, "Insertar Comando HTH", "Primero creá un bloque horario.")
+            return
+        dialogo = DialogoInsertarComandoHTH(parent=self)
+        if dialogo.exec() != DialogoInsertarComandoHTH.DialogCode.Accepted:
+            return
+        parametro = dialogo.parametro_elegido()
+        if parametro:
+            self._agregar_comando_a_bloque(bloque, "HTH", parametro, self._indice_insercion_actual(bloque))
+
     # ==================================================================
     # Copiar / Pegar (pedido explícito, menú contextual): en la
     # selección múltiple ya existente, copiar uno o más ítems y
@@ -498,8 +520,9 @@ class VentanaProgramador(QDialog):
         if item.data(0, ROL_ES_COMANDO):
             QMessageBox.information(
                 self, "Reemplazar",
-                "Un Comando FMT no se \"reemplaza\" — quitalo (botón ✕ Quitar) y\n"
-                "agregá uno nuevo con \"▶ Comando FMT...\" si querés cambiar el formato.",
+                "Un Comando (FMT/HTH) no se \"reemplaza\" — quitalo (botón ✕ Quitar)\n"
+                "y agregá uno nuevo con \"▶ Comando FMT...\" o \"▶ Comando HTH...\"\n"
+                "si querés cambiar el comando.",
             )
             return
 

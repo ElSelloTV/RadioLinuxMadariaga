@@ -278,6 +278,18 @@ class VentanaConfiguracion(QDialog):
         form.addRow(self.chk_mostrar_segundos)
         form.addRow("Tema visual:", self.combo_tema)
 
+        # Comando HTH — Clima (pedido explícito): coordenadas para
+        # consultar la temperatura/humedad en vivo (ver
+        # core/clima_meteo.py). Default: General Juan Madariaga.
+        self.spin_latitud = QDoubleSpinBox()
+        self.spin_latitud.setRange(-90.0, 90.0)
+        self.spin_latitud.setDecimals(4)
+        self.spin_longitud = QDoubleSpinBox()
+        self.spin_longitud.setRange(-180.0, 180.0)
+        self.spin_longitud.setDecimals(4)
+        form.addRow("Clima — Latitud:", self.spin_latitud)
+        form.addRow("Clima — Longitud:", self.spin_longitud)
+
         return widget
 
     # ------------------------------------------------------------------
@@ -563,6 +575,10 @@ class VentanaConfiguracion(QDialog):
         if indice_tema >= 0:
             self.combo_tema.setCurrentIndex(indice_tema)
 
+        clima = self._config["clima"]
+        self.spin_latitud.setValue(clima["latitud"])
+        self.spin_longitud.setValue(clima["longitud"])
+
         colores_genero = self._config["apariencia"]["colores_genero"]
         for genero in LISTA_GENEROS:
             color_hex = colores_genero.get(genero)
@@ -603,6 +619,9 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["umbral_silencio_dbfs"] = self.spin_umbral_silencio.value()
         self._config["reproduccion"]["pisador_bajada_db"] = self.spin_bajada_pisador.value()
         self._config["reproduccion"]["duracion_fade_out_v1_ms"] = self.spin_fade_out_v1.value()
+
+        self._config["clima"]["latitud"] = self.spin_latitud.value()
+        self._config["clima"]["longitud"] = self.spin_longitud.value()
 
         self._config["general"]["nombre_emisora"] = self.txt_nombre_emisora.text().strip()
         self._config["general"]["confirmar_antes_de_eliminar"] = self.chk_confirmar_eliminar.isChecked()

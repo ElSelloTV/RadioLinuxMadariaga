@@ -41,6 +41,7 @@ from datetime import date
 from PySide6.QtCore import Qt, QTimer, QTime, QDate
 
 from core.audio_engine import MotorAudio
+from core.hth import resolver_comando_hth, TIPO_COMANDO_HTH
 from config.settings import (
     cargar_playlist_publicidad, guardar_playlist_publicidad, registrar_error, registrar_evento,
     titulo_bloque_sin_prefijo_hora, vigencia_activa,
@@ -86,12 +87,25 @@ class GestorPublicidad:
         reintentos_maximos: int = 3,
         persistir: bool = False,
         duracion_fade_out_v1_ms: int = 500,
+        ventana_explorador=None,
     ):
         self.ventana = ventana_publicidad
         self.motor = MotorAudio(id_dispositivo)
         self.avanzar_en_error = avanzar_en_error
         self.reintentos_maximos = max(1, reintentos_maximos)
         self.persistir = persistir
+        # Comando HTH (Hora-Temperatura-Humedad, pedido explícito):
+        # necesita el Explorador para resolver los clips de voz por
+        # género "HTH" (ver core/hth.py). Sin él, el comando se
+        # saltea solo, sin sonar nada — mismo criterio que el
+        # Musicalizador cuando falta ventana_explorador.
+        self._ventana_explorador = ventana_explorador
+        # Cola de reproducción INTERNA de un Comando HTH en curso —
+        # varios clips concatenados (ej. "INTRO HORA" + "HORA 14" +
+        # "MINUTOS 30") que suenan uno atrás del otro con el MISMO
+        # MotorAudio, sin pasar por _avanzar() hasta que se agota.
+        self._reproduciendo_hth = False
+        self._cola_hth = []
         # Fade OUT automático y corto entre tandas (pedido explícito,
         # "bien pegados uno a otro, incluso 500 milisegundos de
         # fade... el fade OUT de la ventana 1") — configurable en ms,
@@ -224,6 +238,12 @@ class GestorPublicidad:
         registrar_evento("Publicidad: Stop")
         self.motor.detener()
         self._fallos_consecutivos = 0
+        # Defensivo (mismo espíritu que el resto del motor de audio de
+        # esta app ante libVLC): si el Stop llega a mitad de un
+        # Comando HTH, se aborta la cola de clips pendiente — nunca
+        # debería sonar un clip más después de un Stop manual.
+        self._reproduciendo_hth = False
+        self._cola_hth = []
         self.ventana.set_indicador_en_vivo(False)
         # Pedido explícito: la barra de progreso no debe quedar
         # "pegada" en la posición donde se detuvo — Stop la reinicia.
@@ -305,7 +325,18 @@ class GestorPublicidad:
     def _reproducir_item(self, item):
         if not self._item_valido(item):
             return
+        # Cualquier arranque "fresco" (ítem normal o un comando nuevo)
+        # invalida una secuencia de Comando HTH que hubiera quedado a
+        # medias — seguir la cola vieja acá sería un bug (audio de un
+        # comando viejo pisando al nuevo). Continuar la MISMA
+        # secuencia nunca pasa por acá, ver _reproducir_siguiente_clip_hth().
+        self._reproduciendo_hth = False
+        self._cola_hth = []
         if self.ventana.es_comando(item):
+            tipo_comando = self.ventana.tipo_comando_de_item(item)
+            if tipo_comando == TIPO_COMANDO_HTH:
+                self._reproducir_comando_hth(item)
+                return
             # Bug real corregido: antes esto llamaba a self._avanzar()
             # sin actualizar item_reproduciendo()/item_siguiente() —
             # la próxima vuelta de _avanzar() volvía a resolver este
@@ -349,6 +380,47 @@ class GestorPublicidad:
         )
         self.ventana.set_indicador_en_vivo(True)
         registrar_evento(f"Publicidad: reproduciendo '{item.text(0)}'")
+
+    # ------------------------------------------------------------------
+    # Comando HTH (Hora-Temperatura-Humedad) — pedido explícito,
+    # terminología real de Dinesat (ver core/hth.py y
+    # docs/manual_dinesat_visual.md). A diferencia del Comando FMT (no
+    # ocupa tiempo de aire, dispara un callback y sigue directo), un
+    # Comando HTH SÍ suena: concatena 2-3 clips de voz cortos con el
+    # MISMO MotorAudio, uno atrás del otro, y recién cuando termina el
+    # último vuelve al flujo normal (_avanzar()).
+    # ------------------------------------------------------------------
+    def _reproducir_comando_hth(self, item):
+        parametro = self.ventana.parametro_comando_de_item(item)
+        clips = resolver_comando_hth(self._ventana_explorador, parametro)
+
+        self.ventana.marcar_reproduciendo_item(item)
+        self._item_fade_out_v1_disparado = None
+        siguiente = self.ventana.tree.itemBelow(item)
+        while siguiente is not None and not self._item_valido(siguiente):
+            siguiente = self.ventana.tree.itemBelow(siguiente)
+        self.ventana.marcar_siguiente_item(siguiente)
+
+        if not clips:
+            # Pedido explícito ("Saltea todo el comando, sin sonar
+            # nada"): falta un clip de voz, o no se pudo obtener el
+            # dato de clima — nunca un anuncio a medias/incoherente.
+            registrar_evento(
+                f"Publicidad: comando HTH {parametro} salteado "
+                "(falta un clip de voz o no se pudo obtener el clima)"
+            )
+            self._avanzar()
+            return
+
+        registrar_evento(f"Publicidad: comando HTH {parametro} -> {len(clips)} clip(s)")
+        self._reproduciendo_hth = True
+        self._cola_hth = list(clips)
+        self._reproducir_siguiente_clip_hth()
+
+    def _reproducir_siguiente_clip_hth(self):
+        ruta = self._cola_hth.pop(0)
+        self.motor.reproducir(ruta, volumen_base=self._volumen_base)
+        self.ventana.set_indicador_en_vivo(True)
 
     def _on_click_play(self):
         """Botón verde grande (pedido explícito, paridad con Dinesat):
@@ -549,8 +621,22 @@ class GestorPublicidad:
 
     def _on_fin_de_item(self):
         """Fin NATURAL de una tanda (señal finalizo_item del motor):
-        continúa solo con la siguiente hasta agotar el bloque."""
+        continúa solo con la siguiente hasta agotar el bloque.
+
+        Si en este momento hay un Comando HTH reproduciendo su cola de
+        clips concatenados (ver _reproducir_comando_hth), este MISMO
+        evento es el que avisa que un clip terminó — se sigue con el
+        próximo clip de la cola en vez de tratarlo como el fin de una
+        tanda real, y recién cuando la cola se agota se vuelve al
+        flujo normal (_avanzar())."""
         self._fallos_consecutivos = 0
+        if self._reproduciendo_hth:
+            if self._cola_hth:
+                self._reproducir_siguiente_clip_hth()
+            else:
+                self._reproduciendo_hth = False
+                self._avanzar()
+            return
         self._avanzar()
 
     def _notificar_fin_reproduccion(self):
@@ -563,6 +649,17 @@ class GestorPublicidad:
 
     def _on_error(self, mensaje: str):
         registrar_error(f"[Publicidad] {mensaje}")
+        if self._reproduciendo_hth:
+            # Un clip roto/corrupto a mitad de un Comando HTH: no vale
+            # la pena reintentar la cascada de errores normal (pensada
+            # para tandas reales) — se aborta el resto del anuncio y
+            # se sigue directo con el próximo ítem real, ya calculado
+            # y marcado en verde por _reproducir_comando_hth().
+            registrar_evento("Publicidad: comando HTH interrumpido por error de reproducción, salteando el resto")
+            self._reproduciendo_hth = False
+            self._cola_hth = []
+            self._avanzar()
+            return
         if not self.avanzar_en_error:
             if self._bloque_automatico_actual is not None:
                 self._finalizar_bloque_automatico()

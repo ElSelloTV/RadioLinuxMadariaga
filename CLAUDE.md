@@ -29,6 +29,33 @@ Usuario: Santiago Martín Escobar — abogado, músico, operador de medios
 modesto (Celeron N2820, 4GB RAM). Este programa es para su propia
 radio, uso diario en producción.
 
+## Manual de Dinesat Visual (referencia de diseño completa)
+
+Santiago pasó el manual de usuario completo de Dinesat Visual (Hardata,
+v4.0.4.17) — es la referencia de diseño de toda esta app, guardado a
+pedido explícito ("Guardalo en la memoria de este proyecto") en
+[`docs/manual_dinesat_visual.md`](docs/manual_dinesat_visual.md). Ese
+archivo tiene el manual completo en Markdown más anotaciones de Claude
+Code marcando qué partes ya se implementaron, cuáles quedaron
+explícitamente descartadas (video/NDI, satélite/RS232, RDS, SIP,
+VNC, multi-emisora, sistema de usuarios — ver "Estudio del manual de
+Hardata" más abajo) y qué ambigüedades quedan pendientes de preguntar.
+Consultarlo ahí antes de tocar cualquier función que diga inspirarse
+en Dinesat, en vez de redescubrir la tabla de comandos o la
+nomenclatura de materiales de memoria.
+
+**Nota de nomenclatura importante** (puede generar confusión si no se
+tiene en cuenta): en Dinesat real, el prefijo de comando **`FMT`** es
+EXCLUSIVO de la selección de formato musical del Musicalizador
+Avanzado (`FMT ROCK`, `FMT SALSA`, etc. — ya implementado en esta app,
+ver roadmap ronda 28). Los anuncios de hora/temperatura/humedad que
+Santiago pidió (llamándolos informalmente "FMT HORA"/"FMT CLIMA") son
+en realidad los comandos **`HTH`** de Dinesat (Hora-Temperatura-
+Humedad — comandos `HORA`, `TEMPERATURA`, `HUMEDAD`, `TERMICA`,
+sección 5.2.7.3/5.3.5/5.3.5.2 del manual) — un tipo de comando
+SEPARADO del FMT. Pendiente confirmar con Santiago cómo prefiere que
+se llame la función nueva en esta app.
+
 ## Cómo prefiere trabajar Santiago (aplica también en Code)
 
 - Directo, sin vueltas. Código **completo**, listo para copiar/pegar,
@@ -3665,6 +3692,158 @@ todo el resto.
     igual que Ventana 2 (barra de progreso incluida), y que abrir
     cualquiera de las dos ventanas mientras la otra está sonando corta
     con un fundido corto en vez de superponerse o quedar en pausa.
+39. ~~Comando HTH (Hora-Temperatura-Humedad) — el segundo tema grande
+    pendiente, junto con FMT/Musicalizador~~ — Santiago pasó el manual
+    completo de Dinesat Visual (guardado en
+    [`docs/manual_dinesat_visual.md`](docs/manual_dinesat_visual.md),
+    ver también la sección "Manual de Dinesat Visual" al principio de
+    este archivo) y pidió los comandos que él llamaba informalmente
+    "FMT HORA"/"FMT CLIMA" — el manual reveló que en Dinesat real son
+    los comandos **HTH** (sección 5.2.7.3/5.3.5/5.3.5.1/5.3.5.2), un
+    tipo separado del FMT del Musicalizador. Se confirmaron 8
+    decisiones de arquitectura por `AskUserQuestion` antes de programar
+    (pedido explícito de Santiago, "Preguntame todo"):
+    1. Terminología: **"Comando HTH"** (nombre real de Dinesat), no
+       "FMT HORA/CLIMA".
+    2. **3 comandos independientes** — HORA, TEMPERATURA, HUMEDAD —
+       cada uno se inserta por separado en un bloque, igual que
+       Dinesat real (no un comando "CLIMA" combinado).
+    3. Los clips de voz viven en una **categoría dedicada del
+       Explorador** — resuelto como un género MÁS (`"HTH"`), no un
+       tipo de categoría nuevo (ver abajo).
+    4. Si falta un clip o falla la consulta de clima: **saltea TODO el
+       comando, sin sonar nada** (nunca un anuncio a medias).
+    5. Clip de intro de la hora (el manual no lo documenta): un clip
+       fijo nuevo, **"INTRO HORA"**.
+    6. Temperatura: **redondeada a grados enteros**, sin décimas (no
+       hace falta grabar `TEMPERATURA DECIMA XX`).
+    7. Bajo cero: **prefijo fijo "TEMPERATURA BAJO CERO" + reutiliza**
+       el clip de `TEMPERATURA GRADOS XX` del valor absoluto (no hay
+       que grabar un clip por cada valor negativo).
+    8. Clima: **caché de ~20 minutos** contra Open-Meteo (confirmado en
+       una ronda anterior como fuente, ver roadmap de esa ronda) —
+       no golpea la API en cada disparo del comando.
+
+    **Género "HTH", no una categoría de tipo especial (decisión de
+    diseño, máxima reutilización de lo que ya existe)**: en vez de
+    inventar un concepto nuevo de "tipo de categoría" (que esta app
+    nunca tuvo — las categorías del Explorador son contenedores
+    género-agnósticos), los clips de voz se agregan como un género MÁS
+    (`gui/styles.py`: `LISTA_GENEROS`/`GENERO_COLORES`/
+    `GENERO_PREFIJOS_CODIGO` ganaron `"HTH"`, color cian oscuro
+    `#00838f`) — Santiago los importa con el flujo de siempre ("＋
+    Agregar" del Explorador, género "HTH", el "nombre editorial" es la
+    nomenclatura exacta como título: `HORA 14`, `MINUTOS 30`,
+    `TEMPERATURA GRADOS 20`, `TEMPERATURA BAJO CERO`, `HUMEDAD 045`,
+    `INTRO HORA`) y quedan buscables GLOBALMENTE (sin importar en qué
+    categoría/subcategoría estén archivados) con
+    `VentanaExplorador.listar_registros_por_genero("HTH")` — el MISMO
+    mecanismo que ya usa "Pisador". También se agregó `"HTH"` a
+    `GENEROS_CORTE_ESTRICTO` (`config/settings.py`) — un corte de
+    silencio flojo entre "HORA 14" y "MINUTOS 30" sonaría como un
+    bache raro a mitad del anuncio, igual razón que ya aplicaba a
+    Publicidad/Separador.
+
+    **Motor puro (`core/hth.py`, sin Qt — mismo espíritu que
+    `core/musicalizador.py`)**: `resolver_clips_hora/temperatura/
+    humedad()` arman la lista ORDENADA de rutas a concatenar buscando
+    por título EXACTO (normalizado a mayúsculas/espacios) entre TODOS
+    los registros de género HTH; si falta cualquiera, devuelven `None`
+    — todo o nada. `resolver_comando_hth(explorador, parametro, ahora=,
+    clima=)` es el punto de entrada único que usa `GestorPublicidad` —
+    `ahora`/`clima` son inyectables (para tests deterministas sin
+    tocar la hora real ni la red), en producción se resuelven solos
+    (`datetime.now()` / `core.clima_meteo.obtener_clima()` con las
+    coordenadas de Configuración).
+
+    **`core/clima_meteo.py` (primera y única llamada de red de toda la
+    app)**: `obtener_clima(latitud, longitud)` consulta Open-Meteo
+    (`api.open-meteo.com/v1/forecast`, `current=temperature_2m,
+    relative_humidity_2m`) con `urllib` de la librería estándar (no
+    hizo falta sumar la dependencia `requests` solo para esto) y
+    cachea el resultado en memoria por `DURACION_CACHE_SEGUNDOS` (20
+    min). Si la consulta falla y no hay caché vigente, devuelve `None`
+    — `core/hth.py` lo trata exactamente igual que un clip de voz
+    faltante (salteo silencioso del comando completo, decisión 4 de
+    arriba). Coordenadas configurables en Configuración → General
+    (`clima.latitud`/`clima.longitud`, default General Juan Madariaga,
+    Buenos Aires).
+
+    **Motor de reproducción en `GestorPublicidad`
+    (`core/playlist_manager.py`)**: a diferencia del Comando FMT (no
+    ocupa tiempo de aire — dispara un callback y sigue directo), un
+    Comando HTH SÍ suena: concatena 2-3 clips cortos con el MISMO
+    `MotorAudio`, uno atrás del otro, y recién cuando termina el
+    último vuelve al flujo normal. Nueva cola interna
+    (`self._reproduciendo_hth`/`self._cola_hth`), poblada por
+    `_reproducir_comando_hth()` (marca el comando como reproduciendo,
+    calcula y marca el ítem real SIGUIENTE — mismo patrón anti-
+    recursión que ya usa el Comando FMT desde la ronda 29 — y arranca
+    el primer clip) y avanzada por `_reproducir_siguiente_clip_hth()`.
+    `_on_fin_de_item()` (la señal `finalizo_item` del motor) ahora
+    bifurca: si hay una secuencia HTH en curso, sigue con el próximo
+    clip de la cola o, si ya se agotó, sale del modo HTH y recién ahí
+    llama a `_avanzar()` para continuar con el ítem real. Un error de
+    reproducción (`_on_error`) a mitad de la secuencia aborta el resto
+    del anuncio en vez de disparar la cascada de reintentos normal
+    (pensada para tandas reales, no para clips de voz cortos) — sigue
+    directo con el ítem real ya calculado. `_detener()` (Stop) también
+    aborta la cola por las dudas (defensivo, mismo espíritu de
+    "nunca confiar en una sola capa de protección" ya establecido para
+    libVLC en este proyecto). `GestorPublicidad` ganó un parámetro
+    `ventana_explorador=None` en el constructor (wireado en
+    `MainWindow._inicializar_motores_audio()`), necesario para que
+    `core/hth.py` pueda resolver los clips por género.
+
+    **UI**: `gui/dialogo_insertar_comando_hth.py` (nuevo, lista fija
+    HORA/TEMPERATURA/HUMEDAD — a diferencia del diálogo de FMT, acá no
+    hace falta "crear" nada antes, los 3 tipos siempre existen).
+    Insertable desde el menú contextual de Ventana 1 ("▶ Insertar
+    Comando HTH...", junto al de FMT) y desde un botón nuevo del
+    Programador ("▶ Comando HTH...", junto al de FMT). El comando se
+    guarda con `agregar_comando(bloque, "HTH", parametro)` — MISMA
+    función genérica que ya usaba FMT (`tipo_comando="HTH"`,
+    `parametro_comando="HORA"/"TEMPERATURA"/"HUMEDAD"`), así que TODA
+    la persistencia/carga/serialización (`cargar_bloques()`,
+    `_guardar_estado_ahora()`/`_restaurar_desde_disco()`,
+    `_serializar_bloques()`/`_cargar_programacion_existente()` del
+    Programador) ya lo soportaba sin cambios — confirmado con un test
+    de round-trip. Se muestra como "▶ HTH: HORA" en el árbol (mismo
+    azul `COLOR_COMANDO` que FMT). El mensaje de "Reemplazar" de
+    Ventana 1 y del Programador se generalizó para mencionar "Comando
+    (FMT/HTH)" en vez de sólo FMT.
+
+    Probado con `test_hth_motor.py` (nuevo, 15 verificaciones del
+    motor puro: orden intro→hora→minutos, falta un clip → `None`,
+    normalización de título, positiva vs. negativa con reuso del clip
+    de grados, formato de 3 dígitos de humedad con clamp 0-100,
+    despacho de `resolver_comando_hth` con `ahora`/`clima` inyectados,
+    parámetro desconocido) + `test_hth_gui.py` (nuevo, 32
+    verificaciones de integración con la `MainWindow` real: género HTH
+    disponible, comando insertado y mostrado correctamente, secuencia
+    de 3 clips reproducidos EN ORDEN con un solo llamado a
+    `resolver_comando_hth` — sin recursión ni duplicados — terminando
+    en el ítem real de después, comando sin clips completos salteado
+    sin sonar nada, error a mitad de secuencia aborta sin disparar la
+    cascada normal, Stop aborta la cola, el MISMO flujo pero
+    DESCUBIERTO por `_avanzar()` de forma natural — fin de ítem, no un
+    llamado directo, mismo motivo que llevó a reescribir
+    `test_musicalizador_fixes.py` en su momento —, diálogo expone los
+    3 tipos fijos, y persistencia round-trip) + suite de regresión
+    completa sin fallos nuevos (mismos 3 fallos preexistentes de
+    siempre: `test_confirmaciones.py`, `test_log_git.py`,
+    `test_ventana3.py`). **Nunca probado con audio/VLC real ni contra
+    la API real de Open-Meteo** (el sandbox no tiene libVLC y el
+    fetch de clima se probó solo con datos inyectados, sin red real):
+    falta que Santiago (1) grabe los clips de voz reales con la
+    nomenclatura exacta documentada en `core/hth.py` y los importe con
+    género "HTH", (2) confirme que un `curl` manual a
+    `api.open-meteo.com` desde su notebook funciona (para descartar
+    cualquier bloqueo de red específico de su entorno), (3) inserte un
+    Comando HTH real en un bloque de Ventana 1 y confirme que se
+    escucha el anuncio completo sin baches ni recortes raros entre
+    clips, y (4) confirme las coordenadas de Configuración → General
+    (default General Juan Madariaga) o las ajuste si hace falta.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
