@@ -2180,6 +2180,101 @@ y que con su biblioteca real (categorías bastante más grandes que las
 de los tests) el aleatorio varía notoriamente entre una serie y la
 siguiente.
 
+**Ronda "siempre rojo+verde" + Play manual de Ventana 1 corta Emisión
+(pedido explícito, 3 puntos)**: Santiago probó la app y pidió tres
+ajustes más de robustez, encontrados mientras usaba el ciclo real de
+la estación:
+
+**a) "El previo en color verde aparece siempre en el ítem... si hay 1
+solo ítem, entonces será ese en rojo. Sino no [verde]"**: auditado
+todo punto de entrada de Ventana 1 y Ventana 2 que arma/carga una
+lista y encontrados varios huecos reales donde quedaba un ítem en
+rojo sin un segundo ítem marcado en verde, a pesar de haber uno
+disponible — el patrón correcto ("marcar el primero en rojo y el
+segundo en verde si existe") ya vivía en UN solo lugar
+(`_generar_lote_musicalizador`, ronda del Musicalizador) pero no se
+aplicaba en el resto de la app. Corregido con un helper nuevo,
+`_asegurar_rojo_y_verde()`, en cada gestor:
+- `GestorPublicidad._asegurar_rojo_y_verde()` (`core/playlist_manager.py`):
+  si no hay nada armado, arma el primer ítem reproducible; si el
+  verde no apunta a un ítem distinto y válido, lo recalcula con
+  `tree.itemBelow()` (mismo criterio que ya usa `_avanzar()` al
+  avanzar naturalmente — puede cruzar a otro bloque, igual que
+  `_marcar_proximo_bloque_en_espera` ya hacía). Llamado desde
+  `_reproducir_seleccion_o_actual()`/`_reproducir_primero_del_bloque()`
+  (Play manual — antes NO dejaba nada en verde), `disparar_bloque()`
+  (bloque automático — antes el verde recién aparecía al FINALIZAR el
+  bloque, nunca al empezarlo), `_restaurar_desde_disco()` (como
+  respaldo si no había un `indice_siguiente` guardado o quedó
+  inválido) y `SchedulerAutomatico._cargar_programacion_del_dia()`
+  (carga de medianoche/inicio, antes no marcaba nada en absoluto).
+- `GestorPlaylist._asegurar_rojo_y_verde()` (`core/gestor_emision.py`):
+  mismo criterio por índice de fila. Llamado desde `reproducir_actual()`
+  (Play manual en silencio — antes solo armaba el rojo) y como
+  respaldo en `_restaurar_desde_disco()` (el rojo YA tenía un
+  fallback documentado de una ronda anterior — "si no había nada
+  armado, el primer ítem queda en rojo por defecto" — pero el verde
+  no tenía ninguno, asimetría real). `_generar_lote_musicalizador()`
+  ahora también llama a este helper compartido en vez de tener su
+  propia lógica duplicada.
+- `MainWindow._aplicar_programacion_ahora()` y
+  `_cargar_programacion_de_hoy_manual()` (las otras dos rutas que
+  cargan bloques nuevos en Ventana 1) también llaman al helper
+  después de `cargar_bloques()`.
+El helper nunca pisa un rojo o un verde ya puesto por el operador —
+solo completa lo que falte.
+
+**b) "Cuando en la ventana 2 se cargue el último ítem como previo,
+cargará otro ciclo de FMT que se esté reproduciendo"**: esto ya
+estaba implementado en la ronda anterior (el refill se dispara
+exactamente al entrar en verde el último ítem disponible) — se
+reconfirmó con un test dedicado que sigue funcionando igual después
+del refactor del punto (a) (`_generar_lote_musicalizador()` ahora
+delega en `_asegurar_rojo_y_verde()` para el caso de arranque inicial,
+sin afectar el mecanismo de refill de `_avanzar()`, que es aparte).
+
+**c) "Cuando pase de la ventana 2 a la 1, haciendo play, cortará en
+fade la reproducción de la ventana 2, incluso si está en automático"**:
+bug real de diseño — `GestorPublicidad` no tenía NINGUNA referencia a
+Emisión ni forma de tocarla; solo `SchedulerAutomatico` (el disparo
+POR HORARIO de un bloque) pausaba Emisión con fundido. Si el operador
+apretaba Play a mano en Ventana 1 mientras Emisión sonaba, las dos
+sonaban superpuestas sin que nada las coordinara. Corregido:
+`SchedulerAutomatico._disparar_bloque()` se dividió en dos — la
+lógica de "bajar Emisión en fundido superpuesto y pausarla al
+terminar el fade" se extrajo a `_fade_pausar_emision()` (mismo
+mecanismo de siempre, con su generación anti-carrera si Emisión
+vuelve antes de que el fade termine), y se agregó un método público
+nuevo, `cortar_emision_por_play_manual()`, que llama a lo mismo.
+`GestorPublicidad` ganó un callback `self.al_arrancar_manual`
+(`core/playlist_manager.py`), llamado al INICIO de
+`_reproducir_seleccion_o_actual()` — el único punto de entrada real
+de "Ventana 1 arranca a sonar por una acción manual del operador"
+(doble click en silencio solo ARMA, nunca suena solo; ver máquina de
+estados ya documentada). `MainWindow._inicializar_motores_audio()`
+conecta `gestor_publicidad.al_arrancar_manual = scheduler_automatico.
+cortar_emision_por_play_manual`. A propósito, esto es una asimetría
+deliberada con el botón STOP (que SÍ queda bloqueado con el Automático
+activo): arrancar Ventana 1 a mano SIEMPRE tiene prioridad y corta
+Emisión, silenciar la estación a mano NO la tiene.
+
+Probado con `test_ronda_rojo_verde_y_corte_v1.py` (nuevo, 15
+verificaciones: Play sobre un bloque de 2+ tandas deja rojo+verde,
+un bloque de 1 sola tanda deja solo rojo, `disparar_bloque` automático
+también arma el verde de una, `_asegurar_rojo_y_verde` completa un
+verde faltante sin pisar el rojo, mismo comportamiento en V2 vía
+`reproducir_actual()`, el refill del FMT sigue funcionando tras el
+refactor, y Play manual en V1 dispara el fundido de Emisión con el
+Automático activo) + suite de regresión completa sin fallos nuevos
+(mismos 3 fallos preexistentes de siempre — confirmado con `git
+stash` que `test_play_bloque_y_hora.py` fallaba igual ANTES de esta
+ronda, por la hora real del sistema cerca de medianoche al correr los
+tests, no por este cambio). **Sigue sin poder probarse con audio/VLC
+real**: falta que Santiago confirme en su notebook que el verde
+siempre aparece cuando corresponde, y que el corte de Emisión al
+pasar a Ventana 1 con Play se escucha como un fundido, no como un
+corte seco ni como una superposición de las dos.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -2970,6 +3065,32 @@ todo el resto.
     baches, que el aleatorio varía notoriamente entre series con su
     biblioteca real, y que los temas "pegan" mejor a la entrada sin el
     fade-in.
+32. ~~Ronda "siempre rojo+verde" + Play manual de Ventana 1 corta
+    Emisión~~ — (a) auditados todos los puntos de entrada de Ventana 1
+    y 2 que arman/cargan una lista; corregidos varios huecos reales
+    donde quedaba un ítem en rojo sin un segundo marcado en verde
+    aunque hubiera uno disponible (Play manual, bloque disparado por
+    horario, restaurar desde disco sin `indice_siguiente` guardado,
+    cargar programación por medianoche/"Aplicar ahora"/"Cargar
+    Programación") — unificado en un helper `_asegurar_rojo_y_verde()`
+    por gestor, que nunca pisa una marca ya puesta por el operador;
+    (b) reconfirmado que el refill del FMT al entrar en verde el
+    último ítem sigue funcionando tras ese refactor; (c) bug real de
+    diseño corregido — `GestorPublicidad` no tenía forma de tocar
+    Emisión, así que un Play manual en Ventana 1 dejaba sonar las dos
+    ventanas superpuestas; ahora un Play manual SIEMPRE corta Emisión
+    con el mismo fundido superpuesto que ya usaba el disparo
+    automático por horario, incluso con el Automático activo (a
+    propósito, asimetría deliberada con el botón STOP, que sí sigue
+    bloqueado). Implementado y probado (15 verificaciones nuevas +
+    suite de regresión completa sin fallos nuevos — confirmado con
+    `git stash` que el único fallo adicional visto durante esta ronda,
+    `test_play_bloque_y_hora.py`, ya fallaba igual ANTES del cambio
+    por la hora real del sistema cerca de medianoche, no por esto).
+    Falta que Santiago confirme en su notebook que el verde siempre
+    aparece cuando corresponde y que el corte de Emisión al pasar a
+    Ventana 1 con Play se escucha como un fundido, nunca como una
+    superposición.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

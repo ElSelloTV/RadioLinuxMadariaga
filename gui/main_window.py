@@ -588,6 +588,9 @@ class MainWindow(QMainWindow):
             self.ventana_publicidad, self.gestor_publicidad, self.gestor_emision
         )
         self.scheduler_automatico.al_no_encontrar_bloque = self._avisar_sin_bloque_horario
+        # Pedido explícito: Play manual en Ventana 1 corta Emisión con
+        # fundido SIEMPRE (incluso con el Automático activo).
+        self.gestor_publicidad.al_arrancar_manual = self.scheduler_automatico.cortar_emision_por_play_manual
 
         if not self.gestor_emision.motor.esta_disponible():
             self.statusBar().showMessage(
@@ -717,6 +720,7 @@ class MainWindow(QMainWindow):
         cortar lo que está sonando ya la pidió VentanaProgramador antes
         de emitir esta señal; acá solo se aplica en vivo."""
         self.ventana_publicidad.cargar_bloques(bloques)
+        self.gestor_publicidad._asegurar_rojo_y_verde()
         registrar_evento("Publicidad: bloques aplicados en vivo desde el Programador")
         self.statusBar().showMessage("Programación aplicada ahora mismo en Ventana 1.", 4000)
 
@@ -751,6 +755,7 @@ class MainWindow(QMainWindow):
             return
 
         self.ventana_publicidad.cargar_bloques(contenido.get("bloques", []))
+        self.gestor_publicidad._asegurar_rojo_y_verde()
         self.statusBar().showMessage(f"Programación de hoy cargada: {contenido.get('nombre', '')}", 4000)
 
     # ------------------------------------------------------------------
