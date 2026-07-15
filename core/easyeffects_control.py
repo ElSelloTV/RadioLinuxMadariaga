@@ -54,6 +54,8 @@ import time
 
 from PySide6.QtCore import QProcess
 
+from config.settings import registrar_error, registrar_evento
+
 NOMBRE_BINARIO = "easyeffects"
 
 # Flags de la CLI — un solo lugar para actualizar si una versión
@@ -68,8 +70,18 @@ CATEGORIA_SALIDA = "output"   # el ejemplo de `--help` usa el valor en inglés
 CATEGORIA_ENTRADA = "input"
 
 TIMEOUT_COMANDO_SEGUNDOS = 5
-TIMEOUT_ARRANQUE_SEGUNDOS = 3.0
-INTERVALO_SONDEO_SEGUNDOS = 0.2
+# Bug real reportado: "se abre EasyEffects pero se cierra... 'no
+# respondió al cambiar de preset'" — pgrep detectaba el PROCESO vivo,
+# pero eso no garantiza que el servicio D-Bus/GApplication ya esté
+# registrado y listo para aceptar comandos remotos (--load-preset,
+# etc.). En hardware modesto (Celeron N2820) ese registro puede tardar
+# bastante más que los 3s que había antes. Se sube el techo de sondeo
+# de proceso Y se agrega una segunda fase que confirma con un comando
+# REAL (--presets, de solo lectura) antes de declarar éxito — ver
+# asegurar_en_ejecucion().
+TIMEOUT_ARRANQUE_SEGUNDOS = 8.0
+TIMEOUT_PROBE_CLI_SEGUNDOS = 6.0
+INTERVALO_SONDEO_SEGUNDOS = 0.3
 
 
 def esta_instalado() -> bool:
@@ -102,14 +114,40 @@ def _ejecutar_comando(*args, timeout: float = TIMEOUT_COMANDO_SEGUNDOS):
         return None
 
 
+def _cli_responde() -> bool:
+    """Round-trip REAL contra la instancia (no solo "el proceso
+    existe" como pgrep) — usa --presets, de solo lectura, como sondeo
+    inofensivo. Si esto tiene éxito, cualquier comando posterior
+    (cambiar de preset, bypass, etc.) debería funcionar igual."""
+    resultado = _ejecutar_comando(FLAG_LISTAR_PRESETS)
+    return resultado is not None and resultado.returncode == 0
+
+
+def _esperar_cli_responda(timeout_segundos: float) -> bool:
+    inicio = time.monotonic()
+    while time.monotonic() - inicio < timeout_segundos:
+        if _cli_responde():
+            return True
+        time.sleep(INTERVALO_SONDEO_SEGUNDOS)
+    return False
+
+
 def asegurar_en_ejecucion() -> tuple[bool, str]:
     """Arranca EasyEffects OCULTO si todavía no está corriendo, o lo
     oculta si ya estaba con la ventana abierta (el operador la abrió
     a mano) — el mismo flag `--hide-window` sirve para las dos cosas.
-    No bloquea el arranque en sí (proceso desacoplado); sondea con
-    `pgrep` hasta que la instancia queda realmente arriba, porque los
-    comandos posteriores (cambiar de preset, etc.) necesitan que ya
-    esté registrada."""
+    No bloquea el arranque en sí (proceso desacoplado); sondea en DOS
+    fases antes de declarar éxito:
+    1) `pgrep` hasta que el PROCESO esté vivo (arranque en sí).
+    2) Un comando REAL de solo lectura (--presets) hasta que la
+       instancia responda de verdad — bug real reportado ("se abre
+       EasyEffects pero se cierra... no respondió al cambiar de
+       preset"): el proceso puede existir un rato antes de que su
+       servicio D-Bus/GApplication esté listo para comandos remotos,
+       y los comandos posteriores (cambiar de preset, etc.) fallaban
+       en esa ventana. Ambas fases quedan en el log de la app para
+       poder diagnosticar sin acceso directo a la PC si vuelve a
+       fallar."""
     if not esta_instalado():
         return False, (
             "EasyEffects no está instalado en este sistema. "
@@ -117,18 +155,57 @@ def asegurar_en_ejecucion() -> tuple[bool, str]:
         )
 
     if _esta_corriendo():
-        _ejecutar_comando(FLAG_OCULTAR_VENTANA)
-        return True, "EasyEffects ya estaba en ejecución."
+        # Ya estaba corriendo — pero "el proceso existe" no es lo
+        # mismo que "responde": si estaba a mitad de arrancar o de
+        # cerrarse, --hide-window puede fallar en silencio. Se
+        # confirma con el mismo sondeo de CLI antes de dar por buena
+        # la instancia existente.
+        if _cli_responde():
+            _ejecutar_comando(FLAG_OCULTAR_VENTANA)
+            return True, "EasyEffects ya estaba en ejecución."
+        registrar_evento(
+            "EasyEffects: proceso detectado (pgrep) pero no respondió al sondeo — esperando..."
+        )
+        if _esperar_cli_responda(TIMEOUT_PROBE_CLI_SEGUNDOS):
+            _ejecutar_comando(FLAG_OCULTAR_VENTANA)
+            registrar_evento("EasyEffects: respondió tras esperar.")
+            return True, "EasyEffects ya estaba en ejecución."
+        registrar_error("EasyEffects: el proceso existe pero nunca respondió a los comandos.")
+        return False, "EasyEffects está abierto pero no responde. Probá cerrarlo y volver a intentar."
 
     if not QProcess.startDetached(NOMBRE_BINARIO, [FLAG_OCULTAR_VENTANA]):
+        registrar_error("EasyEffects: QProcess.startDetached() no pudo lanzar el proceso.")
         return False, "No se pudo lanzar EasyEffects."
 
+    if not _esperar_proceso_vivo(TIMEOUT_ARRANQUE_SEGUNDOS):
+        registrar_error(
+            f"EasyEffects: el proceso no apareció (pgrep) en {TIMEOUT_ARRANQUE_SEGUNDOS}s tras el arranque."
+        )
+        return False, "EasyEffects no respondió a tiempo al arrancar."
+
+    if not _esperar_cli_responda(TIMEOUT_PROBE_CLI_SEGUNDOS):
+        # El proceso llegó a existir (posiblemente se vio brevemente
+        # la ventana, "se abre y se cierra") pero nunca quedó listo
+        # para recibir comandos — puede haberse caído solo apenas
+        # arrancado. Reportarlo así, en vez del genérico "no
+        # respondió", para que quede claro en el log qué fase falló.
+        registrar_error(
+            "EasyEffects: el proceso arrancó pero nunca respondió a los comandos "
+            f"dentro de {TIMEOUT_PROBE_CLI_SEGUNDOS}s (¿se cerró solo justo después de abrir?)."
+        )
+        return False, "EasyEffects arrancó pero no llegó a responder. Reintentá desde el ícono FM."
+
+    registrar_evento("EasyEffects: arrancó oculto y respondió correctamente.")
+    return True, "EasyEffects arrancó oculto correctamente."
+
+
+def _esperar_proceso_vivo(timeout_segundos: float) -> bool:
     inicio = time.monotonic()
-    while time.monotonic() - inicio < TIMEOUT_ARRANQUE_SEGUNDOS:
+    while time.monotonic() - inicio < timeout_segundos:
         if _esta_corriendo():
-            return True, "EasyEffects arrancó oculto correctamente."
+            return True
         time.sleep(INTERVALO_SONDEO_SEGUNDOS)
-    return False, "EasyEffects no respondió a tiempo al arrancar."
+    return False
 
 
 def listar_presets() -> list[str]:
@@ -143,10 +220,22 @@ def listar_presets() -> list[str]:
 
 def cargar_preset(nombre: str) -> tuple[bool, str]:
     resultado = _ejecutar_comando(FLAG_CARGAR_PRESET, nombre)
+    if resultado is None or resultado.returncode != 0:
+        # Defensivo (mismo criterio ya usado para libVLC en este
+        # proyecto: "nunca confiar en una sola capa de protección"):
+        # un solo intento fallido — sea porque no respondió (None) o
+        # porque respondió con error (returncode != 0) — puede ser una
+        # race transitoria justo después del arranque; un reintento
+        # corto suele alcanzar.
+        registrar_evento(f"EasyEffects: '{FLAG_CARGAR_PRESET} {nombre}' falló, reintentando una vez...")
+        time.sleep(0.5)
+        resultado = _ejecutar_comando(FLAG_CARGAR_PRESET, nombre)
     if resultado is None:
+        registrar_error(f"EasyEffects: '{FLAG_CARGAR_PRESET} {nombre}' no respondió tras reintentar.")
         return False, "EasyEffects no respondió al cambiar de preset."
     if resultado.returncode != 0:
         detalle = (resultado.stderr or resultado.stdout or "").strip()
+        registrar_error(f"EasyEffects: no se pudo cargar el preset '{nombre}' tras reintentar: {detalle}")
         return False, f"No se pudo cargar el preset '{nombre}'" + (f": {detalle}" if detalle else ".")
     return True, f"Preset '{nombre}' aplicado."
 

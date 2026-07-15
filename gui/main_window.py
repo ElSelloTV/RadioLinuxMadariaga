@@ -935,7 +935,7 @@ class MainWindow(QMainWindow):
     # Configuración general
     # ------------------------------------------------------------------
     def abrir_configuracion(self, pestaña: int = 0):
-        dialogo = VentanaConfiguracion(self, pestaña_inicial=pestaña)
+        dialogo = VentanaConfiguracion(self, pestaña_inicial=pestaña, ventana_explorador=self.ventana_explorador)
         if dialogo.exec() == VentanaConfiguracion.DialogCode.Accepted:
             self._aplicar_configuracion_en_vivo()
             self.statusBar().showMessage("Configuración guardada y aplicada (sin cortar la reproducción).", 4000)

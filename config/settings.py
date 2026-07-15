@@ -441,6 +441,47 @@ def guardar_biblioteca(categorias: list):
     _guardar_json_atomico(ARCHIVO_BIBLIOTECA, categorias)
 
 
+def reanalizar_biblioteca(config: dict) -> int:
+    """Pedido explícito ("los temas siguen teniendo silencio al
+    final"): cambiar la tolerancia de silencio en Configuración NO es
+    retroactivo por sí solo — el recorte se calcula UNA sola vez, al
+    importar/reemplazar un archivo en Ventana 3 (ver
+    gui/ventana_explorador.py). Esta función vuelve a analizar TODOS
+    los materiales YA importados con la tolerancia/umbral ACTUALES —
+    es la forma de aplicar un valor nuevo a lo que ya estaba cargado,
+    sin tener que reemplazar archivo por archivo a mano. Devuelve la
+    cantidad de archivos reanalizados. Un archivo cuya ruta ya no
+    existe en disco se saltea sin romper el resto (ni el propio
+    recorrido, ni la reanudación de la app)."""
+    from core.analizador_audio import analizar_audio
+
+    categorias = cargar_biblioteca()
+    contador = 0
+
+    def _procesar_categoria(categoria: dict):
+        nonlocal contador
+        for registro in categoria.get("archivos", []):
+            ruta = registro.get("ruta")
+            if not ruta or not os.path.exists(ruta):
+                continue
+            tolerancia = tolerancia_silencio_para_genero(config, registro.get("genero"))
+            umbral = config.get("reproduccion", {}).get("umbral_silencio_dbfs", -40.0)
+            analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral)
+            registro["punto_inicio_ms"] = analisis["punto_inicio_ms"]
+            registro["punto_fin_ms"] = analisis["punto_fin_ms"] or None
+            registro["ganancia_db"] = analisis["ganancia_db"]
+            registro["analizado"] = analisis["analizado"]
+            contador += 1
+        for subcategoria in categoria.get("subcategorias", []):
+            _procesar_categoria(subcategoria)
+
+    for categoria in categorias:
+        _procesar_categoria(categoria)
+
+    guardar_biblioteca(categorias)
+    return contador
+
+
 # ----------------------------------------------------------------------
 # Playlist de Ventana 2 (Emisión): antes era efímera y se perdía al
 # cerrar o ante un corte de luz — pedido explícito de Santiago para

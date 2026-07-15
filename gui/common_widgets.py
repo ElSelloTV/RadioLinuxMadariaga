@@ -186,11 +186,25 @@ class ArbolPublicidadConDrop(ArbolConDrop):
     "robustez del sistema" ya usado en Ventana 2: Enter sobre una
     tanda seleccionada dispara la misma acción que el doble click
     (armar en rojo si está en silencio, encolar en verde si algo ya
-    suena). Los nodos de bloque (sin ruta propia) no reaccionan."""
+    suena). Los nodos de bloque (sin ruta propia) no reaccionan.
+
+    Pedido explícito ("arrastrar y soltar de la ventana 1 al
+    reproductor Auxiliar"): además de ACEPTAR arrastres (heredado de
+    ArbolConDrop), este árbol ahora también es ORIGEN de arrastre —
+    exporta la ruta del ítem seleccionado con el mismo protocolo
+    (QUrl) que ya usa ArbolOrigenArrastre del Explorador, así quien
+    reciba el drop (la Auxiliar) lo procesa exactamente igual que un
+    archivo arrastrado desde Ventana 3, sin código nuevo del lado
+    receptor. El alcance a "solo Auxiliar, nunca Ventana 2" se
+    resuelve del lado RECEPTOR — ver ArbolReproductorConDrop.
+    acepta_desde_publicidad más abajo — porque V2 y Auxiliar comparten
+    la MISMA clase de árbol."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setItemDelegate(DelegadoConservaColorEstado(self))
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -199,6 +213,30 @@ class ArbolPublicidadConDrop(ArbolConDrop):
                 self.itemDoubleClicked.emit(item, 0)
                 return
         super().keyPressEvent(event)
+
+    def dropEvent(self, event):
+        if event.source() is self:
+            # Nunca hubo reordenado interno pedido para Ventana 1 —
+            # un auto-drop (arrastrar un ítem sobre su propio árbol)
+            # no hace nada, en vez de duplicarlo vía el dropEvent
+            # heredado (pensado para arrastres EXTERNOS).
+            event.ignore()
+            return
+        super().dropEvent(event)
+
+    def startDrag(self, supportedActions):
+        item = self.currentItem()
+        if item is None or item.parent() is None:
+            return  # nodo de bloque, no se arrastra
+        ruta = item.data(0, Qt.ItemDataRole.UserRole)
+        if not ruta:
+            return  # Comando (FMT/HTH): sin archivo real, nada que exportar
+        mime_data = QMimeData()
+        mime_data.setUrls([QUrl.fromLocalFile(ruta)])
+        mime_data.setText(ruta)
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+        drag.exec(Qt.DropAction.CopyAction)
 
 
 class ArbolProgramadorConDrop(ArbolConDrop):
@@ -340,7 +378,7 @@ class ArbolReproductorConDrop(QTreeWidget):
 
     archivo_soltado = Signal(str, object)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, acepta_desde_publicidad: bool = False):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
@@ -348,20 +386,44 @@ class ArbolReproductorConDrop(QTreeWidget):
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.viewport().setAcceptDrops(True)
         self.setItemDelegate(DelegadoConservaColorEstado(self))
+        # Pedido explícito: arrastrar desde Ventana 1 (Publicidad) solo
+        # debe funcionar hacia la Auxiliar, NUNCA hacia Ventana 2 —
+        # pese a que las dos comparten esta MISMA clase de árbol
+        # (`ArbolReproductorConDrop`), así que la distinción no puede
+        # hacerse por tipo, solo por instancia. Ver
+        # gui/panel_reproductor.py / gui/ventana_auxiliar.py, que son
+        # los únicos que pasan True acá.
+        self._acepta_desde_publicidad = acepta_desde_publicidad
+
+    def _origen_publicidad_rechazado(self, event) -> bool:
+        origen = event.source()
+        return (
+            isinstance(origen, ArbolPublicidadConDrop)
+            and not self._acepta_desde_publicidad
+        )
 
     def dragEnterEvent(self, event):
+        if self._origen_publicidad_rechazado(event):
+            event.ignore()
+            return
         if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
+        if self._origen_publicidad_rechazado(event):
+            event.ignore()
+            return
         if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
+        if self._origen_publicidad_rechazado(event):
+            event.ignore()
+            return
         if event.source() is self:
             self._reordenar_manual(event)
             return

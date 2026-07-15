@@ -3844,6 +3844,131 @@ todo el resto.
     escucha el anuncio completo sin baches ni recortes raros entre
     clips, y (4) confirme las coordenadas de Configuración → General
     (default General Juan Madariaga) o las ajuste si hace falta.
+40. ~~4 pedidos tras la primera prueba real del Comando HTH y de
+    EasyEffects: robustez de EasyEffects, drag&drop V1→Auxiliar,
+    reanalizar biblioteca, instrucciones de importación HTH~~ —
+    Santiago probó ambas funciones nuevas con hardware/EasyEffects
+    reales y reportó 3 pedidos de código más una pregunta operativa:
+
+    **a) Bug real: "se abre EasyEffects pero se cierra... no respondió
+    al cambiar de preset"** — causa de fondo en `asegurar_en_ejecucion()`
+    (`core/easyeffects_control.py`): el sondeo previo solo confirmaba
+    que el PROCESO existía (`pgrep`), no que la instancia ya estuviera
+    lista para aceptar comandos remotos — el servicio D-Bus/GApplication
+    puede tardar bastante más en registrarse, sobre todo en hardware
+    modesto (Celeron N2820). `_poblar_menu_easyeffects()` llamaba
+    `listar_presets()`/`preset_activo()` inmediatamente después,
+    y el operador podía elegir un preset antes de que la instancia
+    respondiera de verdad — de ahí "se abre pero se cierra" (posible
+    caída temprana del proceso) seguido del error al cambiar de
+    preset. Corregido con un sondeo en DOS FASES: (1) `pgrep` hasta
+    que el proceso existe (`TIMEOUT_ARRANQUE_SEGUNDOS`, subido de 3 a
+    8s), (2) un comando REAL de solo lectura (`--presets`) reintentado
+    hasta que la instancia responda de verdad
+    (`TIMEOUT_PROBE_CLI_SEGUNDOS`, 6s) — recién ahí se declara éxito.
+    La rama "ya estaba corriendo" de `asegurar_en_ejecucion()` (la que
+    se ejecuta CADA VEZ que se abre el menú "FM") también se corrigió
+    para no confiar ciegamente en que el proceso exista — repite el
+    mismo sondeo de responsividad antes de dar por buena la instancia.
+    Además, `cargar_preset()` ahora reintenta UNA vez (con una pausa
+    corta) si el primer intento falla, sea por timeout/excepción o por
+    un returncode de error — mismo criterio de "nunca confiar en una
+    sola capa de protección" ya establecido para libVLC en este
+    proyecto. Todo el módulo ahora deja rastro en el log
+    (`registrar_evento`/`registrar_error`) de cada fase — antes no
+    dejaba ninguno, dificultando diagnosticar sin acceso a la PC.
+    **Nunca probado contra el EasyEffects real de Santiago** (el
+    sandbox no lo tiene instalado): falta que confirme que el ícono FM
+    ya no falla al elegir un preset la primera vez que se usa en la
+    sesión.
+
+    **b) Drag&drop de Ventana 1 al Auxiliar, NUNCA a Ventana 2**
+    (pedido explícito, con esa restricción textual) — `ArbolPublicidadConDrop`
+    (`gui/common_widgets.py`) pasó de `DropOnly` (solo podía RECIBIR
+    arrastres) a `DragDrop`, con un `startDrag()` nuevo que exporta la
+    ruta del ítem seleccionado (una tanda con archivo real — los
+    nodos de bloque y los Comandos, sin ruta, no se arrastran) con el
+    mismo protocolo `QUrl`/texto que ya usa `ArbolOrigenArrastre` del
+    Explorador — así el lado receptor no necesita código nuevo, procesa
+    el drop exactamente como si viniera de Ventana 3. El desafío real
+    fue el "nunca a Ventana 2": `ArbolReproductorConDrop` es la MISMA
+    clase que usan tanto Ventana 2 como la Auxiliar (ver roadmap ronda
+    38), así que la distinción no se puede hacer por tipo — se agregó
+    un parámetro de instancia, `acepta_desde_publicidad: bool = False`
+    (default `False`, así Ventana 2 queda excluida sin tocarla), que
+    gatea `dragEnterEvent`/`dragMoveEvent`/`dropEvent` chequeando
+    `isinstance(event.source(), ArbolPublicidadConDrop)` — si el
+    arrastre viene de Ventana 1 y esta instancia puntual no lo acepta,
+    se ignora. `PanelReproductor` (constructor y `_construir_ui`)
+    ganó el mismo parámetro para poder pasarlo hacia abajo, y
+    `gui/ventana_auxiliar.py` es el ÚNICO lugar que lo pasa en `True`.
+    El resto del flujo de recepción (`MainWindow._on_archivo_soltado_auxiliar`)
+    no necesitó ningún cambio — ya resolvía el registro completo por
+    ruta si el archivo estaba en la biblioteca, y degradaba a
+    metadata mínima si no.
+
+    **c) "Los temas siguen teniendo silencio al final" — reanalizar
+    biblioteca (no era un bug de que la config no se aplicara, sino
+    de retroactividad)**: investigado a fondo, el recorte de silencio
+    SÍ se aplica en la reproducción real de Ventana 1/2 (queda grabado
+    en `punto_inicio_ms`/`punto_fin_ms` de cada material al
+    importarlo, y `MotorAudio._emitir_posicion()` corta ahí de
+    verdad, ver `core/audio_engine.py`) — la etiqueta "(Ventana 3)"
+    del campo en Configuración era simplemente confusa (daba a
+    entender que el valor solo afectaba la vista previa), corregida a
+    "(Música/Artística/Pisador)" con un tooltip nuevo que aclara que
+    SÍ gobierna la reproducción real. El problema real de fondo:
+    **cambiar la tolerancia en Configuración nunca fue retroactivo**
+    — el análisis se calcula UNA sola vez, al importar/reemplazar un
+    archivo; un tema ya cargado con la tolerancia vieja se queda con
+    ese recorte para siempre hasta que se lo reemplace a mano. Nueva
+    función `config/settings.reanalizar_biblioteca(config)`: recorre
+    TODA la biblioteca (recursivo, con subcategorías) directamente
+    sobre `biblioteca.json` — sin necesitar la ventana Explorador
+    abierta ni su árbol en memoria —, vuelve a correr `analizar_audio()`
+    con la tolerancia/umbral ACTUALES (respetando la misma regla de
+    género estricto/general que ya usa el alta normal,
+    `tolerancia_silencio_para_genero()`), actualiza cada registro en
+    el lugar y persiste. Los archivos cuya ruta ya no existe en disco
+    se saltean sin romper el resto. Nuevo método público
+    `VentanaExplorador.recargar_biblioteca_desde_disco()` para
+    refrescar el árbol EN VIVO después (sin él, habría que cerrar y
+    reabrir la app para ver el resultado). Botón nuevo "🔄 Reanalizar
+    biblioteca (recorte de silencio)" en Configuración → Diagnóstico
+    — usa los valores de tolerancia/umbral YA TIPEADOS en esa misma
+    ventana (aunque no se haya guardado todavía), pide confirmación
+    (puede tardar y congela la UI mientras corre, avisado en el
+    diálogo), y muestra cuántos archivos se reanalizaron al terminar.
+    `VentanaConfiguracion` ganó un parámetro `ventana_explorador=None`
+    en el constructor para poder llamar al refresco — `MainWindow.
+    abrir_configuracion()` lo pasa siempre.
+
+    **d) Instrucciones de importación de HTH** — Santiago está
+    importando los HTH reales de Dinesat a esta app; se le contestó en
+    el chat con la receta exacta (género "HTH" + nomenclatura EXACTA
+    de `core/hth.py` como título) — no ameritó cambio de código,
+    la nomenclatura ya estaba completamente definida en la ronda 39.
+
+    Probado con `test_ronda_dnd_reanalisis_ee.py` (nuevo, 20
+    verificaciones): Ventana 1 exporta ítems por drag (bloques/
+    Comandos sin ruta no arrastran), Ventana 2 rechaza un drag
+    proveniente de Ventana 1 mientras la Auxiliar lo acepta (con un
+    `event.source()` simulado), un drag desde otro origen (Explorador)
+    sigue funcionando en ambas; `reanalizar_biblioteca()` recorre
+    categorías anidadas, aplica la tolerancia correcta por género,
+    persiste los cambios y saltea rutas inexistentes sin romper nada;
+    EasyEffects con un binario falso que simula "proceso vivo pero
+    `--presets` falla las primeras veces" confirma que
+    `asegurar_en_ejecucion()` espera la respuesta real antes de
+    declarar éxito, y que `cargar_preset()` reintenta exactamente una
+    vez — + suite de regresión completa sin fallos nuevos (mismos 3
+    fallos preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py`). **Sigue sin poder probarse
+    con audio/VLC/EasyEffects reales**: falta que Santiago confirme
+    que el ícono FM ya no falla al primer uso, que arrastrar una tanda
+    de Ventana 1 a la Auxiliar funciona y que intentarlo sobre Ventana
+    2 no hace nada, y que "Reanalizar biblioteca" deja los temas
+    musicales sin silencio al final con una tolerancia más baja.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

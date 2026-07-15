@@ -52,7 +52,11 @@ class VentanaAuxiliar(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.panel = PanelReproductor(
-            "REPRODUCTOR AUXILIAR", mostrar_boton_auxiliar=False, mostrar_barra_progreso=True
+            "REPRODUCTOR AUXILIAR", mostrar_boton_auxiliar=False, mostrar_barra_progreso=True,
+            # Pedido explícito: arrastrar y soltar de Ventana 1 a la
+            # Auxiliar (nunca a Ventana 2 — ver
+            # ArbolReproductorConDrop.acepta_desde_publicidad).
+            acepta_desde_publicidad=True,
         )
         layout.addWidget(self.panel)
 
