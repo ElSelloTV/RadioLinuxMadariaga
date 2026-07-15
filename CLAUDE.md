@@ -408,6 +408,16 @@ Botón "🎧 Auxiliar" en Emisión abre la ventana flotante — por decisión
 explícita de Santiago, el Auxiliar **comparte la salida de audio
 Master**, no es una salida física separada (aunque `MotorAudio` ya
 soporta múltiples dispositivos si en algún momento se quiere separar).
+**Paridad con Ventana 2 + exclusión mutua (implementado, ver roadmap
+ronda 38)**: la Auxiliar ahora tiene la misma barra de progreso/seek
+que Ventana 2 (antes le faltaba); el Musicalizador/FMT y el pase de
+Automático quedan naturalmente inertes ahí (su `GestorPlaylist` no
+recibe `ventana_explorador` ni `persistir=True` en
+`MainWindow.abrir_ventana_auxiliar()`). Auxiliar y Emisión NUNCA
+suenan a la vez: arrancar cualquiera de las dos desde silencio corta a
+la otra con un fundido corto (`GestorPlaylist.al_arrancar_reproduccion`
+→ `MainWindow._cortar_reproduccion_de()`) — el lado cortado queda en
+silencio de verdad, sin auto-resume.
 
 **Título en reproducción**: `gui/etiqueta_marquesina.py` —
 `EtiquetaMarquesina`, sticker de ancho fijo estilo Winamp
@@ -3585,6 +3595,76 @@ todo el resto.
     "Abrir EasyEffects" efectivamente destapa la ventana para la
     afinación fina — es el punto más incierto de esta ronda, al no
     haber un flag "mostrar ventana" documentado explícitamente.
+38. ~~Reproductor Auxiliar a la par de Ventana 2 + exclusión mutua
+    entre TODAS las ventanas de reproducción~~ — pedido explícito, dos
+    partes en el mismo mensaje: "la gráfica y funcionamiento debe ser
+    igual a la ventana de Emisión (ventana 2), sin la lógica de FMT ni
+    pase de Automático" y "no pueden funcionar a mismo tiempo, el
+    Auxiliar y la ventana de Emisión... en rigor de verdad, ninguna
+    ventana debe reproducirse al mismo tiempo junto con otra".
+    - **(a) Paridad con Ventana 2**: a la Auxiliar le faltaba la barra
+      de progreso/seek — `gui/ventana_auxiliar.py` ahora construye su
+      `PanelReproductor` con `mostrar_barra_progreso=True` (antes
+      `False` implícito), agrega la señal `solicitud_buscar_posicion`
+      (antes inexistente ahí) conectada igual que en `VentanaEmision`,
+      y delega `actualizar_progreso()` al panel — mismo patrón de
+      delegación completa ya documentado varias veces en este archivo.
+      El resto de la paridad (contadores, Play/Pausa/Cut/Fade-Stop/
+      Stop diferido, rojo/verde, Pisador Intro/Outro, ícono "ya
+      reproducido") YA era compartido de fábrica por reutilizar
+      `PanelReproductor` — no hacía falta tocar nada ahí. **FMT/
+      Musicalizador y el pase de Automático ya estaban naturalmente
+      excluidos de la Auxiliar sin necesitar ningún código nuevo**:
+      `MainWindow.abrir_ventana_auxiliar()` construye su
+      `GestorPlaylist` sin pasarle `ventana_explorador=` ni
+      `persistir=True` — sin `ventana_explorador`, un Comando FMT no
+      tiene de dónde resolver categorías/archivos (ver roadmap 28), y
+      el ciclo Automático (`SchedulerAutomatico`) nunca tuvo ninguna
+      referencia a la Auxiliar. Confirmado con un test que audita
+      ambos atributos directamente en vez de asumirlo.
+    - **(b) Exclusión mutua, diseño genérico**: nuevo campo
+      `GestorPlaylist.al_arrancar_reproduccion` (`core/gestor_emision.py`,
+      `None` por defecto), invocado como la PRIMERA línea de
+      `reproducir_actual()` — el único punto de entrada real de
+      "arrancar a sonar desde silencio" (cubre tanto el Play manual
+      del operador como la reanudación automática de
+      `SchedulerAutomatico._reanudar_o_arrancar_emision()`, que
+      también pasa por acá). A propósito, `GestorPlaylist` NO SABE
+      quién es su par — el campo es un callback genérico que
+      `MainWindow` conecta desde afuera, así el mismo mecanismo sirve
+      para cualquier otro par de ventanas de reproducción que se
+      decida coordinar en el futuro, no solo Auxiliar↔Emisión.
+      `MainWindow` (`gui/main_window.py`) agrega el helper genérico
+      `_cortar_reproduccion_de(gestor)` — mismo patrón EXACTO que
+      `SchedulerAutomatico.cortar_emision_por_play_manual()` (fundido
+      corto con piso de 0.8s + `QTimer.singleShot` que llama a
+      `gestor.detener()`, NUNCA `pausar()` — ver la regla de fondo ya
+      documentada en "Cosas ya resueltas" sobre pausa vs. stop para
+      handoffs) — y dos wrappers finitos,
+      `_cortar_auxiliar_por_emision()`/`_cortar_emision_por_auxiliar()`,
+      conectados en `_inicializar_motores_audio()` (Emisión existe
+      desde el arranque) y en `abrir_ventana_auxiliar()` (la Auxiliar
+      se crea recién la primera vez que el operador la abre — por eso
+      la wiring de ESE lado se conecta ahí, no antes). El lado
+      cortado queda en silencio de verdad, sin ningún auto-resume — el
+      operador tiene que volver a apretar Play a mano en esa ventana
+      cuando quiera retomarla.
+    Probado con `test_auxiliar_paridad_y_exclusion.py` (nuevo, 15
+    verificaciones: paridad estructural de la Auxiliar —
+    `solicitud_buscar_posicion`, `slider_progreso` real,
+    `actualizar_progreso()` delegado —, FMT/persistencia inertes por
+    construcción, arrancar el Auxiliar dispara YA un fundido a 0 sobre
+    Emisión y termina cortándola de verdad, arrancar Emisión hace lo
+    mismo sobre el Auxiliar, el lado cortado no vuelve a sonar solo, y
+    `_cortar_reproduccion_de()` tolera `None` y un gestor sin nada
+    sonando sin romperse) + suite de regresión completa sin fallos
+    nuevos (mismos 3 fallos preexistentes de siempre:
+    `test_confirmaciones.py`, `test_log_git.py`, `test_ventana3.py`).
+    **Sigue sin poder probarse con audio/VLC real**: falta que
+    Santiago confirme en su notebook que la Auxiliar se ve/comporta
+    igual que Ventana 2 (barra de progreso incluida), y que abrir
+    cualquiera de las dos ventanas mientras la otra está sonando corta
+    con un fundido corto en vez de superponerse o quedar en pausa.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

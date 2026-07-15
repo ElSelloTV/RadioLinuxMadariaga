@@ -6,8 +6,20 @@ Se abre con el botón "🎧 Auxiliar" de la Ventana 2. Por pedido
 del usuario, esta ventana comparte la MISMA salida de audio
 principal (no es una salida física separada): es simplemente un
 segundo reproductor independiente, con idéntica estructura que
-la Ventana 2 (contadores, controles, lista) reutilizando
-PanelReproductor.
+la Ventana 2 (contadores, controles, lista, barra de progreso)
+reutilizando PanelReproductor.
+
+Pedido explícito (ronda posterior): la gráfica y el funcionamiento
+deben ser IGUAL a Ventana 2 — de ahí la barra de progreso, que antes
+faltaba acá. Sin la lógica del Musicalizador/Comando FMT ni el pase
+de Automático: ninguna de las dos cosas se agregó a propósito
+(`GestorPlaylist` de esta ventana no recibe `ventana_explorador` ni
+`persistir=True` en MainWindow.abrir_ventana_auxiliar, así que el
+Musicalizador queda desactivado solo — ver core/gestor_emision.py —
+y el ciclo Automático nunca tocó esta ventana). Auxiliar y Emisión NO
+pueden sonar a la vez: al arrancar uno de los dos desde silencio, se
+corta el otro con un fundido corto — ver
+MainWindow._cortar_reproduccion_de().
 --------------------------------------------------------
 """
 
@@ -24,6 +36,7 @@ class VentanaAuxiliar(QDialog):
     solicitud_siguiente = Signal()   # "Cut" en la UI
     solicitud_fade_stop = Signal()
     solicitud_stop_diferido = Signal()
+    solicitud_buscar_posicion = Signal(int)     # 0-1000 (por mil)
     archivo_soltado = Signal(str, object)
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)
@@ -38,7 +51,9 @@ class VentanaAuxiliar(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.panel = PanelReproductor("REPRODUCTOR AUXILIAR", mostrar_boton_auxiliar=False)
+        self.panel = PanelReproductor(
+            "REPRODUCTOR AUXILIAR", mostrar_boton_auxiliar=False, mostrar_barra_progreso=True
+        )
         layout.addWidget(self.panel)
 
         self.panel.solicitud_play.connect(self.solicitud_play.emit)
@@ -47,6 +62,7 @@ class VentanaAuxiliar(QDialog):
         self.panel.solicitud_siguiente.connect(self.solicitud_siguiente.emit)
         self.panel.solicitud_fade_stop.connect(self.solicitud_fade_stop.emit)
         self.panel.solicitud_stop_diferido.connect(self.solicitud_stop_diferido.emit)
+        self.panel.solicitud_buscar_posicion.connect(self.solicitud_buscar_posicion.emit)
         self.panel.archivo_soltado.connect(self.archivo_soltado.emit)
         self.panel.item_doble_click.connect(self.item_doble_click.emit)
         self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
@@ -66,6 +82,9 @@ class VentanaAuxiliar(QDialog):
 
     def resetear_reproduccion(self):
         self.panel.resetear_reproduccion()
+
+    def actualizar_progreso(self, permille: int):
+        self.panel.actualizar_progreso(permille)
 
     def agregar_item(self, titulo, duracion, codigo, ruta="",
                       punto_inicio_ms=0, punto_fin_ms=None, ganancia_db=0.0):
