@@ -28,6 +28,16 @@ Dependencias del sistema (aparte, una sola vez):
 sudo apt install vlc libvlc-dev ffmpeg
 ```
 
+Opcional — si querés procesar el aire de la FM (compresor,
+ecualizador, limitador, etc.) desde el ícono "🎚 FM" del toolbar:
+
+```bash
+sudo apt install easyeffects
+```
+
+Sin EasyEffects instalado, ese botón simplemente avisa que no está
+disponible — el resto de la app funciona igual.
+
 ## Actualizar
 
 Dos formas, cualquiera de las dos hace lo mismo (`git pull`):
