@@ -172,6 +172,14 @@ class GestorPlaylist:
         # "Stop diferido" (Dinesat): armado, deja terminar el ítem
         # actual y recién ahí detiene TODO — no avanza al siguiente.
         self._stop_diferido_armado = False
+        # "Ceder control" (pedido explícito, Ciclo Automático): armado
+        # por SchedulerAutomatico (nunca por el operador) cuando llega
+        # la hora de un bloque de Publicidad — deja terminar el ítem
+        # actual y recién ahí DETIENE de verdad (nunca pausa) antes de
+        # avisarle al Scheduler que ya puede arrancar el bloque. Ver
+        # ceder_control_al_terminar_item().
+        self._ceder_control_armado = False
+        self._callback_ceder_control = None
 
         self._conectar_motor(self.motor)
 
@@ -399,6 +407,29 @@ class GestorPlaylist:
             self.panel.set_stop_diferido_armado(False)
         registrar_evento(f"Stop diferido: desarmado (Emisión persistir={self.persistir})")
 
+    def ceder_control_al_terminar_item(self, callback):
+        """Pedido explícito (bug real reportado con audio real):
+        "llegado el momento de reproducir el bloque horario de la
+        ventana 1, deje terminar el ítem de la ventana 2... una vez
+        que vaya a la ventana 1, el archivo y la reproducción de la
+        ventana 2 debe liberarse". A diferencia del mecanismo VIEJO
+        (fundido + PAUSA, resumible — la causa real del bug: al
+        volver resonaba el tema viejo a mitad, y un Comando FMT nuevo
+        no limpiaba esa pausa porque `esta_reproduciendo()` da False
+        con el motor en pausa), esto NUNCA corta el ítem en curso: lo
+        deja terminar solo, y RECIÉN AHÍ hace un `detener()` de
+        verdad (nunca pausa) antes de avisar. Arma un "ceder" de una
+        sola vez — mismo patrón que "Stop diferido", pero invisible
+        al operador (lo arma el Scheduler, nunca el botón). Si no hay
+        nada sonando ahora mismo, no hay nada que esperar: cede el
+        control ya mismo."""
+        if not self.motor.esta_reproduciendo():
+            self.detener()
+            callback()
+            return
+        self._ceder_control_armado = True
+        self._callback_ceder_control = callback
+
     def _reproducir_fila(self, fila: int):
         ruta = self.panel.ruta_en_fila(fila)
         if not ruta:
@@ -434,9 +465,10 @@ class GestorPlaylist:
     def _chequear_crossfade(self, restante_ms: int):
         if not self.crossfade_activado or self._crossfade_en_curso or self._pisador_activo:
             return
-        if self._stop_diferido_armado:
+        if self._stop_diferido_armado or self._ceder_control_armado:
             # No arrancar una transición nueva: dejar que el ítem
-            # actual llegue a su fin tal cual, _avanzar() frena ahí.
+            # actual llegue a su fin tal cual, _avanzar() frena ahí
+            # (o cede el control a Publicidad, si corresponde).
             return
         duracion_ms = int(self.duracion_fade_segundos * 1000)
         if duracion_ms <= 0:
@@ -684,6 +716,20 @@ class GestorPlaylist:
         self._avanzar(es_reintento=True)
 
     def _avanzar(self, es_reintento: bool):
+        if self._ceder_control_armado:
+            # Pedido explícito: el ítem que estaba sonando llegó a su
+            # fin NATURAL — recién ACÁ se libera Emisión de verdad
+            # (detener, nunca pausar) y se avisa al Scheduler que ya
+            # puede arrancar el bloque de Publicidad. Aplica sin
+            # importar si el disparo fue por fin natural o Cut manual
+            # (_chequear_crossfade ya bloqueó una transición nueva).
+            self._ceder_control_armado = False
+            callback = self._callback_ceder_control
+            self._callback_ceder_control = None
+            self.detener()
+            if callback is not None:
+                callback()
+            return
         if self._stop_diferido_armado:
             # Pedido explícito (Dinesat, "Stop diferido"): dejar
             # terminar el ítem en reproducción y detener TODO en vez
