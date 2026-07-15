@@ -40,4 +40,4 @@ class DialogoEditarBloque(QDialog):
         return self.time_hora.time().toString("HH:mm:ss")
 
     def titulo(self) -> str:
-        return self.txt_titulo.text().strip() or "Bloque sin título"
+        return self.txt_titulo.text().strip() or "TANDA - Rotativa"

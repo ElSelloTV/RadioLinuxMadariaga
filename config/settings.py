@@ -543,6 +543,64 @@ def guardar_playlist_publicidad(datos: dict):
 
 
 # ----------------------------------------------------------------------
+# Listas guardadas del Auxiliar (pedido explícito): el operador puede
+# guardar el contenido actual del Auxiliar bajo un NOMBRE elegido a
+# mano, y más tarde cargarlo de nuevo (reemplazando lo que hubiera) o
+# borrarlo — todo con confirmación en la UI, acá solo la persistencia.
+# Mismo formato de ítem que ya usa playlist_emision.json (incluido el
+# Pisador anidado), para poder reusar exactamente el mismo camino de
+# guardado/restauración ya probado.
+# ----------------------------------------------------------------------
+# Estructura de config/data/listas_auxiliar.json:
+#   {"Nombre de la lista": {"items": [{...}, ...]}, ...}
+
+ARCHIVO_LISTAS_AUXILIAR = os.path.join(DIRECTORIO_CONFIG, "listas_auxiliar.json")
+
+
+def cargar_listas_auxiliares() -> dict:
+    _asegurar_directorio()
+    if not os.path.exists(ARCHIVO_LISTAS_AUXILIAR):
+        return {}
+    try:
+        with open(ARCHIVO_LISTAS_AUXILIAR, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+            return datos if isinstance(datos, dict) else {}
+    except (json.JSONDecodeError, OSError) as error:
+        registrar_error(f"Error leyendo listas guardadas del Auxiliar: {error}")
+        return {}
+
+
+def guardar_lista_auxiliar(nombre: str, items: list):
+    """Guarda (o sobrescribe, si ya existía ese nombre) una lista con
+    el contenido actual del Auxiliar."""
+    datos = cargar_listas_auxiliares()
+    datos[nombre] = {"items": items}
+    _guardar_json_atomico(ARCHIVO_LISTAS_AUXILIAR, datos)
+
+
+def listar_listas_auxiliares() -> list:
+    """Nombres de las listas guardadas, orden alfabético."""
+    return sorted(cargar_listas_auxiliares().keys())
+
+
+def obtener_lista_auxiliar(nombre: str) -> list | None:
+    datos = cargar_listas_auxiliares()
+    entrada = datos.get(nombre)
+    if entrada is None:
+        return None
+    return entrada.get("items", [])
+
+
+def eliminar_lista_auxiliar(nombre: str) -> bool:
+    datos = cargar_listas_auxiliares()
+    if nombre not in datos:
+        return False
+    del datos[nombre]
+    _guardar_json_atomico(ARCHIVO_LISTAS_AUXILIAR, datos)
+    return True
+
+
+# ----------------------------------------------------------------------
 # Musicalizador Avanzado + Comandos FMT (pedido explícito, inspirado en
 # Hardata Dinesat 9 — "los últimos 2 [temas] que más usa"). Ver
 # core/musicalizador.py para el motor de generación.

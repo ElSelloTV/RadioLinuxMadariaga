@@ -23,7 +23,7 @@ MainWindow._cortar_reproduccion_de().
 --------------------------------------------------------
 """
 
-from PySide6.QtWidgets import QDialog, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton
 from PySide6.QtCore import Qt, Signal
 
 from gui.panel_reproductor import PanelReproductor
@@ -41,6 +41,8 @@ class VentanaAuxiliar(QDialog):
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)
     solicitud_eliminar_definitivo = Signal(str)
+    solicitud_guardar_lista = Signal()
+    solicitud_cargar_lista = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,6 +61,21 @@ class VentanaAuxiliar(QDialog):
             acepta_desde_publicidad=True,
         )
         layout.addWidget(self.panel)
+
+        # Pedido explícito: guardar/cargar la lista actual del
+        # Auxiliar bajo un nombre — exclusivo de esta ventana, por eso
+        # los botones viven acá y no en PanelReproductor (compartido
+        # con Ventana 2, que no tiene esta función).
+        fila_listas = QHBoxLayout()
+        self.btn_guardar_lista = QPushButton("💾 Guardar lista...")
+        self.btn_guardar_lista.setToolTip("Guardar el contenido actual del Auxiliar bajo un nombre")
+        self.btn_guardar_lista.clicked.connect(self.solicitud_guardar_lista.emit)
+        self.btn_cargar_lista = QPushButton("📂 Cargar lista...")
+        self.btn_cargar_lista.setToolTip("Cargar una lista guardada (reemplaza lo que esté cargado)")
+        self.btn_cargar_lista.clicked.connect(self.solicitud_cargar_lista.emit)
+        fila_listas.addWidget(self.btn_guardar_lista)
+        fila_listas.addWidget(self.btn_cargar_lista)
+        layout.addLayout(fila_listas)
 
         self.panel.solicitud_play.connect(self.solicitud_play.emit)
         self.panel.solicitud_pausa.connect(self.solicitud_pausa.emit)

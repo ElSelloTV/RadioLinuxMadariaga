@@ -4068,6 +4068,156 @@ todo el resto.
     que el preload se nota en una importación grande de verdad, y que
     "Editar información" cambia lo esperado sin romper nada de lo ya
     cargado.
+42. ~~5 pedidos: ordenar columnas del Explorador, bloque de V1 gateado
+    por Automático, drag&drop multi-selección V1->Auxiliar, listas
+    guardadas del Auxiliar, renombrar "Bloque" a "TANDA - Rotativa"~~
+    — cinco pedidos independientes en un solo mensaje:
+
+    **a) Ordenar la lista de archivos del Explorador por columna
+    (pedido explícito, "A-Z y si aprieto otra vez Z-A")**: click en
+    cualquier encabezado de `tree_archivos` (Duración/Título/Artista/
+    Categoría/Código) ordena ascendente; un segundo click en la MISMA
+    columna invierte a descendente (`VentanaExplorador.
+    _ordenar_por_columna()`, colgado de `header().sectionClicked`).
+    Orden MANUAL, no `QTreeWidget.setSortingEnabled()` — se ordena por
+    el campo REAL del registro (`_CAMPO_POR_COLUMNA`, ej. "Categoría"
+    ordena por `genero`, no por el texto de la celda), releyendo
+    `ROL_REGISTRO` de cada fila y re-renderizando con el mismo
+    `_agregar_fila_archivo()` que ya usan la selección de categoría y
+    la búsqueda — sin lógica de pintado duplicada. La Duración ya
+    viene formateada "HH:MM:SS" con ceros a la izquierda, así que el
+    orden lexicográfico de esa cadena coincide con el cronológico real
+    sin necesitar parsear a segundos.
+
+    **b) Bug real de diseño revertido: el bloque de Ventana 1 se
+    disparaba por horario SIN importar el botón AUTOMÁTICO (pedido
+    explícito: "solo se dispara si el botón Automático está activo")**
+    — una ronda anterior había fijado a propósito la regla opuesta
+    ("los bloques se disparan por horario SIEMPRE, no depende del
+    botón"); Santiago pidió ahora invertirla. Corregido en los DOS
+    puntos de disparo de `SchedulerAutomatico`
+    (`core/playlist_manager.py`) — `_arrancar_al_iniciar()` (bloque
+    vigente al abrir la app) y `_tick()` (disparo por transición de
+    hora, cada segundo): ambos chequean
+    `self.ventana.esta_en_automatico()` ANTES de llamar a
+    `_disparar_bloque()`, y si está apagado, no disparan nada (con un
+    evento en el log para poder diagnosticarlo sin audio real). La
+    vuelta a Emisión al terminar Publicidad ya estaba gateada por el
+    mismo botón desde antes — no hizo falta tocar nada ahí, la
+    asimetría (disparo SÍ gateado ahora, vuelta YA gateada) queda
+    resuelta con un único botón gobernando el ciclo completo, tal como
+    pidió Santiago. Regresión confirmada contra la suite existente del
+    ciclo automático (`test_ciclo_automatico.py`): los 10 tests ya
+    existentes siguen pasando sin cambios porque todos arrancan con el
+    Automático prendido (default de fábrica) o lo prenden a mano antes
+    de disparar — la rama nueva ("apagado no dispara") es
+    estrictamente aditiva.
+
+    **c) Drag&drop de Ventana 1 al Auxiliar con selección múltiple
+    (pedido explícito, extiende la ronda 40)**: `ArbolPublicidadConDrop.
+    startDrag()` (`gui/common_widgets.py`) pasó de exportar solo
+    `self.currentItem()` a exportar TODAS las tandas seleccionadas
+    (`self.selectedItems()`, mismo patrón Ctrl/Shift ya soportado por
+    el árbol) como una lista de `QUrl` — los nodos de bloque y los
+    Comandos (sin ruta real) se descartan de la selección en silencio
+    en vez de cancelar todo el arrastre, así seleccionar varias tandas
+    Y de paso un bloque/comando no rompe nada. El lado RECEPTOR
+    (`ArbolReproductorConDrop.dropEvent()`, compartido por Ventana 2 y
+    la Auxiliar) ya iteraba `event.mimeData().urls()` en un loop desde
+    antes — no hizo falta tocar nada ahí, confirmado con un test
+    dedicado que arrastra 3 tandas de una y verifica que la Auxiliar
+    recibe las 3, mientras Ventana 2 (`acepta_desde_publicidad=False`)
+    sigue rechazando el arrastre completo igual que antes.
+
+    **d) Listas guardadas del Auxiliar — guardar con nombre, cargar
+    (reemplaza lo que haya) o borrar, todo con confirmación siempre
+    (pedido explícito)**: nuevo archivo `config/data/listas_auxiliar.json`
+    (`{"Nombre": {"items": [...]}, ...}`, escritura atómica de
+    siempre) con las funciones nuevas en `config/settings.py`
+    (`guardar_lista_auxiliar`/`listar_listas_auxiliares`/
+    `obtener_lista_auxiliar`/`eliminar_lista_auxiliar`). Refactor
+    aprovechado de paso en `core/gestor_emision.py`: la lógica de
+    volcar el panel a una lista de dicts (ítems + Pisador anidado +
+    análisis de audio) y de restaurarla, que antes vivía SOLO adentro
+    de `_guardar_estado_ahora()`/`_restaurar_desde_disco()` (la
+    persistencia automática de Ventana 2), se extrajo a dos métodos
+    públicos reutilizables — `GestorPlaylist.serializar_items()` /
+    `cargar_items()` — así el guardado/carga de listas con nombre del
+    Auxiliar usa EXACTAMENTE el mismo camino ya probado, sin duplicar
+    la lógica de armar/leer el dict de cada ítem. Dos botones nuevos,
+    exclusivos de la Auxiliar (`gui/ventana_auxiliar.py`, no
+    compartidos con Ventana 2 vía `PanelReproductor` porque esta
+    función no aplica ahí): "💾 Guardar lista..." (pide nombre con
+    `QInputDialog`, confirma sobreescritura si el nombre ya existía,
+    confirma el guardado en cualquier caso) y "📂 Cargar lista..."
+    (abre `gui/dialogo_listas_auxiliar.py`, diálogo NUEVO que lista
+    las guardadas y tiene un botón "🗑 Borrar" en el MISMO diálogo —
+    pedido explícito de Santiago de no separar cargar y borrar en
+    lugares distintos — con su propia confirmación antes de borrar de
+    verdad; cargar confirma siempre, con un texto más fuerte si ya
+    había algo cargado que se va a REEMPLAZAR). `MainWindow` conecta
+    las nuevas señales `solicitud_guardar_lista`/`solicitud_cargar_lista`
+    recién cuando la Auxiliar se crea (mismo punto donde ya se conecta
+    el resto de su wiring). Probado con un test dedicado: round-trip
+    completo de guardar/listar/obtener/sobrescribir/eliminar contra el
+    archivo JSON aislado, más integración contra un panel REAL de la
+    Auxiliar (`serializar_items()` vuelca ítems+Pisador reales,
+    `cargar_items()` reemplaza el contenido de un panel con "basura"
+    previa cargada y arma rojo/verde por defecto sin reproducir nada
+    solo).
+
+    **e) "Bloque" reemplazado por "TANDA - Rotativa" en Ventana 1 y el
+    Programador (pedido explícito, solo texto visible — mismo criterio
+    ya usado para el retitulado de Ventana 1/2 de una ronda anterior,
+    sin tocar `ROL_HORA_BLOQUE`/`bloques()`/`crear_bloque_nuevo()` ni
+    ningún otro identificador interno)**: el TÍTULO por defecto de una
+    tanda horaria nueva —lo que el operador realmente lee como "el
+    nombre de esto" en el árbol— ya no dice "Bloque" en ningún lado:
+    `VentanaPublicidad.crear_bloque_nuevo()` (antes `"Bloque: {hora}"`,
+    ahora `"TANDA - Rotativa"` — la hora ya queda como prefijo del
+    texto mostrado, así no se duplica), su diálogo de confirmación
+    (`_confirmar_y_crear_bloque()`, refleja el nuevo título en el
+    mensaje), `VentanaProgramador._agregar_bloque()` (default cuando
+    el campo de título queda vacío, antes `"Bloque sin título"`),
+    `VentanaProgramador._cargar_plantilla_basica()` (los 24 bloques de
+    la plantilla "Nueva", antes `"Bloque {:02d}hs"`) y
+    `DialogoEditarBloque.titulo()` (mismo default vacío que el
+    Programador). Los mensajes/tooltips que usan "bloque horario" como
+    término GENÉRICO del concepto (ej. "＋ Añadir Bloque Horario",
+    "Primero creá un bloque horario", el aviso fijo "No se encontró
+    Bloque Horario..." pedido textualmente en una ronda anterior) NO
+    se tocaron a propósito — la distinción es la misma que ya rige
+    todo el proyecto: renombrar el NOMBRE VISIBLE de la entidad, nunca
+    barrer cada ocurrencia genérica de la palabra. Probado con un test
+    dedicado (`crear_bloque_nuevo()`, `_agregar_bloque()` sin título,
+    los 24 de la plantilla básica, y `DialogoEditarBloque.titulo()`
+    vacío — ninguno contiene ya la palabra "Bloque").
+
+    Probado con 4 tests nuevos dedicados (ordenar columnas, drag&drop
+    multi-selección V1→Auxiliar con verificación de que Ventana 2
+    sigue rechazando, listas guardadas del Auxiliar con integración de
+    panel real, renombre TANDA - Rotativa) + actualización de 2
+    aserciones preexistentes que codificaban el título viejo
+    ("Bloque 00hs"/"Bloque 23hs" en la plantilla de 24, dentro de
+    `test_pisador_crossfade_stop_programador.py`) + regresión de
+    `_ciclo_automatico.py` (10/10 sin cambios) + suite de regresión
+    completa sin fallos nuevos (mismos 3 fallos preexistentes de
+    siempre: `test_confirmaciones.py`, `test_log_git.py`,
+    `test_ventana3.py` — confirmado corriendo la MISMA batería contra
+    el código sin modificar vía `git stash`, que dos fallas
+    adicionales vistas en una corrida de la batería completa
+    —`test_ventana1.py`/`test_ventana1_persistencia.py`— ya aparecían
+    igual en el código original: son contaminación de estado entre
+    scripts que comparten `config/data/` al correr 50+ tests seguidos
+    sin limpiar entre uno y otro, no una regresión de esta ronda).
+    **Sigue sin poder probarse con audio/VLC real**: falta que
+    Santiago confirme que ordenar por columna en el Explorador se
+    siente natural con su biblioteca real, que un bloque de Ventana 1
+    ya NO se dispara solo con el Automático apagado, que arrastrar
+    varias tandas seleccionadas de Ventana 1 al Auxiliar las trae
+    todas de una, que guardar/cargar/borrar listas del Auxiliar
+    funciona como espera en el uso diario, y que "TANDA - Rotativa" es
+    el texto que quería ver en vez de "Bloque".
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

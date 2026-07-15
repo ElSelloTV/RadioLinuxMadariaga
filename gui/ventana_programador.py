@@ -259,7 +259,9 @@ class VentanaProgramador(QDialog):
     # Nivel 2a: BLOQUES horarios — Añadir / Reemplazar (editar) / Quitar
     # ==================================================================
     def _agregar_bloque(self):
-        titulo = self.txt_titulo_bloque.text().strip() or "Bloque sin título"
+        # Pedido explícito: si el operador no tipea un título, el
+        # default ya no dice "Bloque" — dice "TANDA - Rotativa".
+        titulo = self.txt_titulo_bloque.text().strip() or "TANDA - Rotativa"
         hora = self.time_nuevo_bloque.time().toString("HH:mm:ss")
         nodo = QTreeWidgetItem([f"{hora} - {titulo}", "", ""])
         fuente = nodo.font(0)
@@ -699,7 +701,9 @@ class VentanaProgramador(QDialog):
         ítems en vez de crear los 24 bloques a mano."""
         for hora_num in range(24):
             hora = f"{hora_num:02d}:00:00"
-            titulo = f"Bloque {hora_num:02d}hs"
+            # Pedido explícito: ya no dice "Bloque" — dice "TANDA -
+            # Rotativa" (la hora ya queda como prefijo del texto).
+            titulo = "TANDA - Rotativa"
             nodo = QTreeWidgetItem([f"{hora} - {titulo}", "", ""])
             fuente = nodo.font(0)
             fuente.setBold(True)
