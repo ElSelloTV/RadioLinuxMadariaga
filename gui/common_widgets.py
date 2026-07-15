@@ -225,15 +225,22 @@ class ArbolPublicidadConDrop(ArbolConDrop):
         super().dropEvent(event)
 
     def startDrag(self, supportedActions):
-        item = self.currentItem()
-        if item is None or item.parent() is None:
-            return  # nodo de bloque, no se arrastra
-        ruta = item.data(0, Qt.ItemDataRole.UserRole)
-        if not ruta:
-            return  # Comando (FMT/HTH): sin archivo real, nada que exportar
+        """Pedido explícito: la selección múltiple (Ctrl/Shift) también
+        se arrastra completa de una — mismo patrón que
+        ArbolOrigenArrastre del Explorador. Los nodos de bloque y los
+        Comandos (sin ruta real) se descartan de la selección en vez
+        de cancelar todo el arrastre, así seleccionar varias tandas Y
+        de paso un bloque/comando no rompe nada."""
+        rutas = [
+            item.data(0, Qt.ItemDataRole.UserRole)
+            for item in self.selectedItems()
+            if item.parent() is not None and item.data(0, Qt.ItemDataRole.UserRole)
+        ]
+        if not rutas:
+            return
         mime_data = QMimeData()
-        mime_data.setUrls([QUrl.fromLocalFile(ruta)])
-        mime_data.setText(ruta)
+        mime_data.setUrls([QUrl.fromLocalFile(ruta) for ruta in rutas])
+        mime_data.setText(rutas[0])
         drag = QDrag(self)
         drag.setMimeData(mime_data)
         drag.exec(Qt.DropAction.CopyAction)

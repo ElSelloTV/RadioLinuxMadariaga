@@ -372,11 +372,12 @@ class VentanaPublicidad(QWidget):
         return item.data(0, ROL_VIGENCIA) or {"fecha_inicio": None, "fecha_fin": None}
 
     def crear_bloque_nuevo(self):
-        """Bloque vacío, título por defecto "Bloque: HH:MM:SS" con la
-        hora actual — pedido explícito. Queda colapsable como los
-        demás (setExpanded controla eso, ya viene expandido vacío)."""
+        """Bloque vacío, título por defecto "TANDA - Rotativa" con la
+        hora actual como prefijo — pedido explícito (antes decía
+        "Bloque"). Queda colapsable como los demás (setExpanded
+        controla eso, ya viene expandido vacío)."""
         hora = datetime.now().strftime("%H:%M:%S")
-        titulo = f"Bloque: {hora}"
+        titulo = "TANDA - Rotativa"
         nodo_bloque = QTreeWidgetItem([f"{hora} - {titulo}", "", ""])
         fuente = nodo_bloque.font(0)
         fuente.setBold(True)
@@ -707,7 +708,7 @@ class VentanaPublicidad(QWidget):
         hora = datetime.now().strftime("%H:%M:%S")
         respuesta = QMessageBox.question(
             self, "Crear Bloque Nuevo",
-            f"¿Crear un nuevo bloque horario \"Bloque: {hora}\"?",
+            f"¿Crear una nueva \"{hora} - TANDA - Rotativa\"?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if respuesta == QMessageBox.StandardButton.Yes:

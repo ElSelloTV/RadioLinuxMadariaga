@@ -1033,6 +1033,15 @@ class SchedulerAutomatico:
     def _arrancar_al_iniciar(self):
         bloque = self._bloque_vigente()
         if bloque is not None:
+            # Pedido explícito: un bloque horario SOLO se dispara con
+            # el botón AUTOMÁTICO activo — antes se disparaba siempre
+            # por horario, sin importar el estado del botón.
+            if not self.ventana.esta_en_automatico():
+                registrar_evento(
+                    f"Inicio: hay un bloque horario vigente ('{bloque.text(0)}') pero "
+                    "el Automático está apagado — no se dispara."
+                )
+                return
             registrar_evento(
                 f"Inicio: reproduciendo el bloque horario vigente '{bloque.text(0)}'"
             )
@@ -1083,6 +1092,15 @@ class SchedulerAutomatico:
                     if not self._bloque_tiene_items(bloque):
                         continue  # un bloque vacío no corta nada
                     self._horas_disparadas_hoy.add(hora_str)
+                    # Pedido explícito: "solo se dispara si el botón
+                    # Automático está activo, si no, no se debe
+                    # disparar" — antes disparaba SIEMPRE por horario,
+                    # sin importar el estado del botón.
+                    if not self.ventana.esta_en_automatico():
+                        registrar_evento(
+                            f"Publicidad: bloque de las {hora_str} no se disparó — Automático apagado"
+                        )
+                        continue
                     self._disparar_bloque(bloque)
                     break  # un bloque por chequeo alcanza y sobra
         self._ultima_hora_tick = ahora

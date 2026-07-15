@@ -103,6 +103,11 @@ class VentanaExplorador(QWidget):
         self._en_busqueda = False
         self._arrastrando_slider_preview = False
         self._colores_genero = dict(GENERO_COLORES)
+        # Ordenar por columna (pedido explícito): click en el
+        # encabezado ordena A-Z, un segundo click en la MISMA columna
+        # invierte a Z-A.
+        self._columna_orden_actual = None
+        self._orden_ascendente = True
         self._construir_ui()
         self._cargar_biblioteca_inicial()
 
@@ -185,6 +190,14 @@ class VentanaExplorador(QWidget):
         configurar_columnas_ajustables(self.tree_archivos, [70, 170, 110, 90])
         self.tree_archivos.header().setSectionsMovable(True)
         self.tree_archivos.header().setMinimumSectionSize(40)
+        # Pedido explícito: ordenar por columna al hacer click en su
+        # encabezado — A-Z, y un segundo click en la MISMA columna
+        # invierte a Z-A. Orden MANUAL (no QTreeWidget.setSortingEnabled)
+        # para ordenar por el campo real del registro, no por el texto
+        # visible de la celda (ej. Categoría muestra el género).
+        self.tree_archivos.header().setSectionsClickable(True)
+        self.tree_archivos.header().setSortIndicatorShown(True)
+        self.tree_archivos.header().sectionClicked.connect(self._ordenar_por_columna)
 
         self.tree_archivos.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_archivos.customContextMenuRequested.connect(self._mostrar_menu_contextual)
@@ -410,6 +423,49 @@ class VentanaExplorador(QWidget):
         self._pintar_por_genero(item, registro.get("genero", ""))
         self.tree_archivos.addTopLevelItem(item)
         return item
+
+    # ------------------------------------------------------------------
+    # Ordenar por columna (pedido explícito): click en el encabezado.
+    # ------------------------------------------------------------------
+    _CAMPO_POR_COLUMNA = {
+        COL_DURACION: "duracion",
+        COL_TITULO: "titulo",
+        COL_ARTISTA: "artista",
+        COL_CATEGORIA: "genero",
+        COL_CODIGO: "codigo",
+    }
+
+    def _ordenar_por_columna(self, columna: int):
+        campo = self._CAMPO_POR_COLUMNA.get(columna)
+        if campo is None:
+            return
+
+        if columna == self._columna_orden_actual:
+            self._orden_ascendente = not self._orden_ascendente
+        else:
+            self._columna_orden_actual = columna
+            self._orden_ascendente = True
+
+        registros = [
+            self.tree_archivos.topLevelItem(i).data(0, ROL_REGISTRO)
+            for i in range(self.tree_archivos.topLevelItemCount())
+        ]
+        registros = [r for r in registros if r is not None]
+        # Duración ya viene en formato "HH:MM:SS" con ceros a la
+        # izquierda (obtener_duracion_formateada) — el orden lexicográfico
+        # de esa cadena coincide con el orden cronológico real, no hace
+        # falta parsear a segundos.
+        registros.sort(
+            key=lambda r: (r.get(campo) or "").lower() if isinstance(r.get(campo), str) else (r.get(campo) or ""),
+            reverse=not self._orden_ascendente,
+        )
+
+        self.tree_archivos.clear()
+        for registro in registros:
+            self._agregar_fila_archivo(registro)
+
+        orden_qt = Qt.SortOrder.AscendingOrder if self._orden_ascendente else Qt.SortOrder.DescendingOrder
+        self.tree_archivos.header().setSortIndicator(columna, orden_qt)
 
     def _pintar_por_genero(self, item: QTreeWidgetItem, genero: str):
         color_hex = self._colores_genero.get(genero)

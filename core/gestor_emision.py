@@ -937,7 +937,12 @@ class GestorPlaylist:
             return
         self._timer_guardado.start(DEBOUNCE_GUARDADO_MS)
 
-    def _guardar_estado_ahora(self):
+    def serializar_items(self) -> list:
+        """Vuelca TODO el contenido actual del panel (ítems + Pisador
+        anidado + análisis de audio) a una lista de dicts — mismo
+        formato que ya usa la persistencia automática de Emisión.
+        Reutilizado también por el guardado de listas con nombre del
+        Auxiliar (gui/main_window.py), para no duplicar esta lógica."""
         items = []
         tree = self.panel.tree
         for i in range(tree.topLevelItemCount()):
@@ -961,9 +966,38 @@ class GestorPlaylist:
                     "ruta": hijo.data(0, Qt.ItemDataRole.UserRole) or "",
                 }
             items.append(registro)
+        return items
 
+    def cargar_items(self, items: list):
+        """Reemplaza TODO el contenido actual del panel por `items`
+        (mismo formato que serializar_items) — limpia primero, arma
+        rojo/verde con el mismo criterio de siempre. Usado por la
+        carga de listas con nombre del Auxiliar; nunca reproduce nada
+        solo."""
+        self._restaurando = True
+        try:
+            self.panel.limpiar_items()
+            for registro in items:
+                fila = self.panel.cantidad_items()
+                self.panel.agregar_item(
+                    registro.get("titulo", ""), registro.get("duracion", ""),
+                    registro.get("codigo", ""), registro.get("ruta", ""),
+                    registro.get("punto_inicio_ms") or 0, registro.get("punto_fin_ms"),
+                    registro.get("ganancia_db") or 0.0,
+                )
+                pisador = registro.get("pisador")
+                if pisador:
+                    self.panel.agregar_pisador(
+                        fila, pisador.get("titulo", ""), pisador.get("duracion", ""),
+                        pisador.get("codigo", ""), pisador.get("ruta", ""),
+                    )
+            self._asegurar_rojo_y_verde()
+        finally:
+            self._restaurando = False
+
+    def _guardar_estado_ahora(self):
         guardar_playlist_emision({
-            "items": items,
+            "items": self.serializar_items(),
             "fila_armada": self.panel.fila_reproduciendo(),
             "fila_siguiente": self.panel.fila_siguiente(),
         })

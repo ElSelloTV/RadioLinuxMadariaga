@@ -18,7 +18,7 @@ import os
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QWidget, QVBoxLayout, QLabel,
     QToolBar, QStatusBar, QMenuBar, QSizePolicy,
-    QMessageBox, QApplication, QToolButton, QMenu
+    QMessageBox, QApplication, QToolButton, QMenu, QInputDialog
 )
 from PySide6.QtCore import Qt, QTimer, QDateTime
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
@@ -31,6 +31,7 @@ from gui.ventana_programador import VentanaProgramador
 from gui.ventana_musicalizador import VentanaMusicalizador
 from gui.ventana_configuracion import VentanaConfiguracion
 from gui.dialogo_elegir_pisador import DialogoElegirPisador
+from gui.dialogo_listas_auxiliar import DialogoListasAuxiliar
 from gui.common_widgets import configurar_columnas_ajustables
 from gui import estado_ui
 
@@ -39,7 +40,11 @@ from core.gestor_emision import GestorPlaylist
 from core.audio_engine import obtener_duracion_formateada
 from core import easyeffects_control
 from core import actualizador
-from config.settings import cargar_configuracion, registrar_evento
+from config.settings import (
+    cargar_configuracion, registrar_evento,
+    guardar_lista_auxiliar, listar_listas_auxiliares,
+    obtener_lista_auxiliar, eliminar_lista_auxiliar,
+)
 
 
 class MainWindow(QMainWindow):
@@ -914,10 +919,109 @@ class MainWindow(QMainWindow):
                 lambda fila: self._abrir_dialogo_pisador(self._ventana_auxiliar, fila)
             )
             self._ventana_auxiliar.solicitud_eliminar_definitivo.connect(self._eliminar_definitivo_de_biblioteca)
+            self._ventana_auxiliar.solicitud_guardar_lista.connect(self._guardar_lista_auxiliar)
+            self._ventana_auxiliar.solicitud_cargar_lista.connect(self._cargar_lista_auxiliar)
 
         self._ventana_auxiliar.show()
         self._ventana_auxiliar.raise_()
         self._ventana_auxiliar.activateWindow()
+
+    # ------------------------------------------------------------------
+    # Listas guardadas del Auxiliar (pedido explícito: guardar el
+    # contenido actual bajo un nombre, cargarlo después reemplazando lo
+    # que hubiera, o borrarlo — todo con confirmación siempre).
+    # ------------------------------------------------------------------
+    def _guardar_lista_auxiliar(self):
+        if self._gestor_auxiliar is None or self._ventana_auxiliar.cantidad_items() == 0:
+            QMessageBox.information(
+                self, "Guardar lista", "El Auxiliar está vacío — no hay nada para guardar."
+            )
+            return
+
+        nombre, ok = QInputDialog.getText(
+            self, "Guardar lista del Auxiliar", "Nombre de la lista:"
+        )
+        nombre = nombre.strip()
+        if not ok or not nombre:
+            return
+
+        ya_existe = nombre in listar_listas_auxiliares()
+        texto_confirmacion = (
+            f"¿Confirmás que querés SOBRESCRIBIR la lista guardada '{nombre}'\n"
+            "con el contenido actual del Auxiliar?"
+            if ya_existe else
+            f"¿Confirmás que querés guardar la lista actual del Auxiliar como '{nombre}'?"
+        )
+        respuesta = QMessageBox.question(
+            self, "Guardar lista", texto_confirmacion,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+
+        items = self._gestor_auxiliar.serializar_items()
+        guardar_lista_auxiliar(nombre, items)
+        registrar_evento(f"Auxiliar: lista '{nombre}' guardada ({len(items)} ítem(s))")
+        self.statusBar().showMessage(f"Lista '{nombre}' guardada.", 4000)
+
+    def _cargar_lista_auxiliar(self):
+        if self._gestor_auxiliar is None:
+            return
+        nombres = listar_listas_auxiliares()
+        if not nombres:
+            QMessageBox.information(
+                self, "Cargar lista", "Todavía no hay ninguna lista guardada en el Auxiliar."
+            )
+            return
+
+        dialogo = DialogoListasAuxiliar(nombres, self)
+        resultado = dialogo.exec()
+
+        nombre_borrar = dialogo.nombre_a_borrar()
+        if nombre_borrar is not None:
+            respuesta = QMessageBox.question(
+                self, "Borrar lista",
+                f"¿Confirmás que querés borrar la lista guardada '{nombre_borrar}'?\n"
+                "Esta acción no se puede deshacer.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if respuesta == QMessageBox.StandardButton.Yes:
+                if eliminar_lista_auxiliar(nombre_borrar):
+                    registrar_evento(f"Auxiliar: lista '{nombre_borrar}' borrada")
+                    self.statusBar().showMessage(f"Lista '{nombre_borrar}' borrada.", 4000)
+            return
+
+        if resultado != 1:  # QDialog.DialogCode.Accepted
+            return
+        nombre = dialogo.nombre_a_cargar()
+        if not nombre:
+            return
+
+        items = obtener_lista_auxiliar(nombre)
+        if items is None:
+            QMessageBox.warning(self, "Cargar lista", f"La lista '{nombre}' ya no existe.")
+            return
+
+        if self._ventana_auxiliar.cantidad_items() > 0:
+            respuesta = QMessageBox.question(
+                self, "Cargar lista",
+                f"Cargar '{nombre}' va a REEMPLAZAR el contenido actual del Auxiliar.\n"
+                "¿Confirmás?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if respuesta != QMessageBox.StandardButton.Yes:
+                return
+        else:
+            respuesta = QMessageBox.question(
+                self, "Cargar lista", f"¿Confirmás que querés cargar la lista '{nombre}'?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if respuesta != QMessageBox.StandardButton.Yes:
+                return
+
+        self._gestor_auxiliar.cargar_items(items)
+        registrar_evento(f"Auxiliar: lista '{nombre}' cargada ({len(items)} ítem(s))")
+        self.statusBar().showMessage(f"Lista '{nombre}' cargada.", 4000)
 
     # ------------------------------------------------------------------
     # Programador de emisión
