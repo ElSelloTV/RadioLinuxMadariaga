@@ -429,6 +429,22 @@ class GestorPlaylist:
         fila_siguiente = self.panel.fila_siguiente()
         if fila_siguiente < 0 or fila_siguiente == fila_actual:
             fila_siguiente = fila_actual + 1
+
+        # Musicalizador Avanzado: mismo refill "al entrar en previo"
+        # que ya tiene _avanzar() — pedido explícito, y hace falta ACÁ
+        # TAMBIÉN porque con crossfade activado (cómo usa la radio
+        # Santiago en producción) la transición NATURAL entre temas
+        # pasa por ACÁ, no por _avanzar() (que solo se dispara si el
+        # crossfade no llega a iniciarse, ej. cuando no hay ítem
+        # siguiente todavía). Sin este chequeo acá, el refill recién
+        # ocurría cuando el ÚLTIMO ítem de la serie llegaba a su fin
+        # NATURAL sin crossfade — exactamente el bug reportado: "carga
+        # cuando termina de reproducirse el último item", no al
+        # entrar en verde.
+        if self._formato_musicalizador_activo is not None and fila_siguiente >= total - 1:
+            self._generar_serie_musicalizador()
+            total = self.panel.cantidad_items()
+
         if fila_siguiente >= total:
             fila_siguiente = 0 if self.repetir_al_finalizar else -1
         if fila_siguiente < 0:

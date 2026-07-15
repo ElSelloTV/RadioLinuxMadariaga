@@ -2275,6 +2275,41 @@ siempre aparece cuando corresponde, y que el corte de Emisión al
 pasar a Ventana 1 con Play se escucha como un fundido, no como un
 corte seco ni como una superposición de las dos.
 
+**Bug real corregido — el refill del FMT seguía cargando recién al
+terminar el último ítem, pese al pedido explícito de la ronda
+anterior**: Santiago reportó que "el nuevo ciclo lo carga cuando
+termina de reproducirse el ultimo item cargado" — a pesar de que la
+ronda anterior había agregado el chequeo de refill "al entrar en
+previo" a `GestorPlaylist._avanzar()`. Causa real: ese chequeo se
+agregó SOLO a `_avanzar()`, pero `_avanzar()` únicamente se dispara
+por el fin NATURAL de un ítem sin crossfade (`motor.finalizo_item` →
+`_avanzar_al_siguiente`). Con `crossfade_activado=True` — que es
+cómo Santiago usa la radio en producción — la transición NATURAL
+entre temas pasa por un camino de código COMPLETAMENTE DISTINTO:
+`_chequear_crossfade()` → `_iniciar_crossfade()`, que tiene su PROPIA
+copia de la lógica "calcular fila_siguiente, marcar rojo/verde" y
+nunca tuvo el chequeo de refill. En la práctica, el refill solo
+terminaba disparando en el caso residual de que el crossfade no
+llegara a iniciarse (ej. sin ítem siguiente todavía) y el tema
+llegara a su fin real — exactamente "cuando termina de reproducirse
+el último ítem", tal como describió Santiago. Corregido agregando el
+MISMO chequeo (`if self._formato_musicalizador_activo is not None
+and fila_siguiente >= total - 1: self._generar_serie_musicalizador()`)
+también en `_iniciar_crossfade()`, en el mismo punto donde ya
+calculaba `fila_siguiente` — así el refill se dispara ahí apenas se
+resuelve que el próximo ítem a cruzar (por crossfade) es el último
+disponible, sin esperar a que nada termine de sonar. Probado con
+`test_musicalizador_refill_crossfade.py` (nuevo, simula el motor
+"entrante" que arma `crossfade_a()` con una instancia real de
+`MotorAudio` sin VLC — mismo patrón que el resto de los tests de
+crossfade — y confirma que el refill se dispara EXACTAMENTE al cruzar
+al último ítem vía crossfade, no antes ni al terminar) + suite de
+regresión completa sin fallos nuevos. **Regla para el futuro**:
+`_avanzar()` y `_iniciar_crossfade()` mantienen lógicas de avance
+PARALELAS y NO comparten código — cualquier chequeo nuevo que dependa
+de "qué ítem viene después" (como este refill, o el freno por hora de
+bloque) tiene que agregarse a AMBOS lugares, nunca solo a uno.
+
 ### Configuración (`gui/ventana_configuracion.py`)
 QTabWidget con: Audio (dispositivo master/preescucha, volúmenes),
 Fade/Transiciones (crossfade on/off + duración), Rutas (bibliotecas +
@@ -3091,6 +3126,22 @@ todo el resto.
     aparece cuando corresponde y que el corte de Emisión al pasar a
     Ventana 1 con Play se escucha como un fundido, nunca como una
     superposición.
+33. ~~Bug real: el refill del FMT no disparaba con crossfade
+    activado~~ — Santiago reportó que, pese al pedido explícito de la
+    ronda anterior, el nuevo ciclo del Musicalizador seguía cargando
+    recién cuando el último ítem terminaba de sonar, no al entrar en
+    verde. Causa real: el chequeo de refill se había agregado SOLO a
+    `GestorPlaylist._avanzar()`, pero con `crossfade_activado=True`
+    (cómo Santiago usa la radio en producción) la transición NATURAL
+    entre temas pasa por `_iniciar_crossfade()` — un camino de código
+    totalmente separado, con su propia copia de la lógica de avance,
+    que nunca tuvo el chequeo. Corregido agregando el mismo chequeo
+    también ahí. **Regla para el futuro**: `_avanzar()` e
+    `_iniciar_crossfade()` no comparten código — cualquier lógica
+    nueva sobre "qué ítem viene después" tiene que agregarse a AMBOS
+    lugares. Probado con un test dedicado que simula el crossfade real
+    (motor entrante real sin VLC) + suite de regresión completa sin
+    fallos nuevos.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
@@ -3104,6 +3155,15 @@ todo el resto.
   sospechar de una delegación incompleta entre wrapper y panel.
 - La columna que se tapaba al redimensionar (Stretch +
   minimumSectionSize).
+- **`_avanzar()` e `_iniciar_crossfade()` (Ventana 2) son dos caminos
+  de avance PARALELOS que no comparten código** — `_avanzar()` corre
+  cuando un ítem termina sin crossfade; `_iniciar_crossfade()` corre
+  en la transición NATURAL cuando `crossfade_activado=True` (el modo
+  real de producción de Santiago). Cualquier lógica nueva sobre "qué
+  ítem sigue" (freno por hora, refill del Musicalizador, etc.) que
+  solo se agregue a `_avanzar()` NUNCA se ejecuta en producción si el
+  crossfade está prendido — hay que agregarla a los DOS lugares. Ya
+  mordió una vez (el refill del FMT, ver roadmap).
 - `externally-managed-environment` de pip → usar venv siempre.
 - `QProcess` está en `QtCore`, no en `QtWidgets` (error real que
   apareció durante el desarrollo).
