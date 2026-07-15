@@ -101,9 +101,9 @@ class GestorPublicidad:
         # Musicalizador cuando falta ventana_explorador.
         self._ventana_explorador = ventana_explorador
         # Cola de reproducción INTERNA de un Comando HTH en curso —
-        # varios clips concatenados (ej. "INTRO HORA" + "HORA 14" +
-        # "MINUTOS 30") que suenan uno atrás del otro con el MISMO
-        # MotorAudio, sin pasar por _avanzar() hasta que se agota.
+        # varios clips concatenados (ej. "HORA 14" + "MINUTOS 30") que
+        # suenan uno atrás del otro con el MISMO MotorAudio, sin pasar
+        # por _avanzar() hasta que se agota.
         self._reproduciendo_hth = False
         self._cola_hth = []
         # Fade OUT automático y corto entre tandas (pedido explícito,
