@@ -4218,6 +4218,157 @@ todo el resto.
     todas de una, que guardar/cargar/borrar listas del Auxiliar
     funciona como espera en el uso diario, y que "TANDA - Rotativa" es
     el texto que quería ver en vez de "Bloque".
+43. ~~5 pedidos: Automático dispara el bloque vigente al activarse,
+    drag&drop de reordenar en V1 (tandas y FMT/HTH), selección celeste
+    con relleno sin borde, reordenar categorías del Explorador,
+    búsqueda de actualización asíncrona (nunca bloqueante)~~ — cinco
+    pedidos independientes en un solo mensaje, "quedan detalles":
+
+    **a) Activar el botón AUTOMÁTICO a mano debe arrancar YA el
+    bloque horario vigente (pedido explícito: "si son las 21.24 debe
+    comenzar con el bloque de las 21 horas")**: `SchedulerAutomatico.
+    _on_automatico_cambiado()` (`core/playlist_manager.py`) ya existía
+    pero solo hacía "limpieza" (`_marcar_bloques_pasados_sin_disparar`)
+    sin arrancar nada — ahora, al activarse, también llama a
+    `_bloque_vigente()` (mismo criterio que usa `_arrancar_al_iniciar`
+    al abrir la app: el de hora más tardía que ya pasó, con ítems) y
+    lo dispara con `_disparar_bloque()`. Dos guards: no dispara si ya
+    hay un bloque disparándose (`_esperando_liberar_emision`), y —
+    **bug real encontrado en esta misma ronda, atrapado por el propio
+    test de regresión antes de llegar a Santiago**— tampoco dispara si
+    Publicidad YA está sonando algo (`gestor_publicidad.motor.
+    esta_reproduciendo()`): sin este segundo guard, activar el
+    Automático mientras un bloque ya estaba en curso lo REINICIABA
+    desde el primer ítem en vez de dejarlo seguir — activar el botón
+    nunca debe interrumpir/reiniciar algo que ya está sonando, solo
+    debe tomar el control de la vuelta a Emisión al terminar.
+
+    **b) Drag&drop para reordenar en Ventana 1 — tandas Y Comandos
+    FMT/HTH (pedido explícito: "no lo puedo hacer, y los FMT tampoco
+    me permite arrastrarlo")**: el diseño original de
+    `ArbolPublicidadConDrop` (`gui/common_widgets.py`) decía
+    literalmente "Nunca hubo reordenado interno pedido para Ventana
+    1" e ignoraba cualquier auto-drop; además su `startDrag()` excluía
+    de la selección cualquier ítem SIN ruta real (los Comandos). Ahora
+    implementa el mismo algoritmo jerárquico (bloque -> tandas/
+    comandos) que ya usa `ArbolProgramadorConDrop._reordenar_manual`
+    — un ítem se reordena DENTRO de su bloque o se mueve a OTRO
+    bloque, nunca los bloques enteros — y los Comandos se reordenan
+    igual que una tanda (simplemente no viajan como `QUrl` si el
+    destino es la Auxiliar, ya que ahí no tienen sentido). El ítem "en
+    punta" (rojo) sigue sin poder moverse mientras suena, mismo
+    criterio que Ventana 2. El `startDrag()` unificado ahora sirve DOS
+    destinos con el mismo gesto: reordenar dentro de sí mismo, y
+    exportar a la Auxiliar (selección múltiple, pedido de la ronda
+    anterior) — se distinguen en `dropEvent()` por `event.source()`,
+    mismo patrón que el resto de árboles con Drag&Drop de la app.
+
+    **c) Selección celeste con relleno sólido + texto negro, sin
+    borde — pero sin tapar nunca rojo/verde (pedido explícito, "regla
+    permanente")**: `gui/styles.py`, la regla
+    `#tree_reproductor::item:selected`/`#tree_publicidad::item:selected`
+    pasó de `background-color: transparent; border: 2px solid celeste`
+    a `background-color: celeste; color: black; border: none`. Esto
+    SOLO afecta a ítems SIN estado — `DelegadoConservaColorEstado`
+    (`gui/common_widgets.py`) sigue interceptando el pintado ANTES de
+    que esta regla se aplique cuando el ítem está en rojo/verde,
+    pintándolo SIN el flag de selección (conserva su color propio
+    intacto); como ahora ya no hace falta señalizar la selección con
+    un borde alternativo en ESE caso (pedido explícito "sin borde,
+    siempre"), se sacó también el borde manual que el delegado
+    dibujaba antes para rojo/verde+seleccionado — un ítem rojo/verde
+    seleccionado ahora no tiene NINGUNA decoración extra, solo su
+    color de estado de siempre.
+
+    **d) Reordenar las categorías del Explorador por arrastre (pedido
+    explícito: "permití también que pueda ordenar las carpetas de las
+    categorías")**: nueva `ArbolCategoriasConDrop`
+    (`gui/common_widgets.py`), reemplaza el `ArbolConDrop` genérico
+    que usaba `tree_categorias`. Alcance acotado A PROPÓSITO: solo
+    reordena una categoría ENTRE SUS HERMANAS (mismo padre, nivel
+    superior o una subcategoría anidada) — mover una categoría a OTRO
+    padre (re-anidarla) es una operación mucho más grande y riesgosa
+    (arrastraría todos sus archivos y subcategorías) que no fue
+    pedida, sigue haciéndose a mano. El drop de archivos EXTERNOS
+    sobre una categoría (ya existente, heredado de `ArbolConDrop`)
+    sigue funcionando igual — se distingue por `event.source()`. Señal
+    nueva `orden_cambiado`, conectada a `VentanaExplorador.
+    _guardar_biblioteca()` — el nuevo orden se persiste solo, sin
+    código nuevo de serialización (`_serializar_biblioteca()` ya
+    recorre el árbol en orden visual).
+
+    **e) Búsqueda de actualización ASÍNCRONA — bug real de fondo
+    corregido de paso (pedido explícito: "no debe impedir la
+    reproducción inmediata y con automático activado")**: la
+    verificación automática al abrir (ronda 41) llamaba a
+    `hay_actualizacion_disponible()`, que hace `git fetch` +
+    `rev-parse` con `subprocess.run()` SINCRÓNICO, en el mismo hilo
+    que corre TODA la app (este proyecto nunca usó threading — ver
+    "Testing" más abajo). Con una conexión lenta, eso podía congelar
+    la app ENTERA (incluida música ya sonando: crossfade, posición,
+    cualquier click) hasta el timeout de 30s. Nueva función
+    `core/actualizador.buscar_actualizacion_async(callback)`: el único
+    paso realmente lento (`git fetch`, va por red) corre en un
+    `QProcess` asíncrono — mismo estilo ya usado en este proyecto para
+    EasyEffects/`reiniciar_aplicacion()`, sin necesitar un `QThread`
+    — y el resto (comparar `rev-parse` local vs. remoto) son lecturas
+    de disco casi instantáneas que sí se resuelven sincrónico dentro
+    del callback. `MainWindow._buscar_actualizacion_automatica()`
+    ahora llama a esta versión, guardando la referencia del
+    `QProcess` en curso (`self._proceso_buscar_actualizacion`, para
+    que Python no lo recolecte a mitad de camino) — el
+    `hay_actualizacion_disponible()` sincrónico ORIGINAL se dejó
+    intacto y sigue siendo el que usa el botón MANUAL de Configuración
+    → Actualizaciones (una espera breve ahí es aceptable, es una
+    acción explícita del operador, no algo que corre solo en segundo
+    plano). El defer de 2.5s antes de disparar la búsqueda se
+    MANTUVO igual (ya no es por miedo a que bloquee, es solo para no
+    competir con el primer render de la ventana) — **bug real
+    encontrado por el propio test de regresión de esta ronda**: un
+    defer más corto (300ms) hacía que varios scripts de test que
+    bombean el event loop un par de segundos para procesar timers
+    diferidos (fades, etc.) dispararan sin querer un `git fetch` REAL
+    contra el repo en medio del test, colgando el proceso hasta que
+    `git` fallara por timeout de red — confirma que 2.5s es la
+    duración correcta, no solo un número arbitrario. Además,
+    `main.py` ahora deja la pantalla de preload (`QSplashScreen`, ya
+    existente desde una ronda anterior) un instante más —
+    tope FIJO de 1.2s, nunca depende de que la verificación termine—
+    mostrando "Verificando actualizaciones..." para cubrir
+    visualmente también esa fase, sin que la reproducción (incluido
+    el arranque automático del bloque vigente, que corre por su
+    cuenta en los timers internos de `MainWindow`) espere a que el
+    splash se cierre.
+
+    Probado con 5 tests nuevos dedicados (Automático dispara el
+    bloque vigente correcto —no uno futuro— al activarse, no dispara
+    nada sin bloque vigente, NO reinicia un bloque ya en curso al
+    activarse; reordenar tandas dentro de un bloque y entre bloques en
+    Ventana 1, reordenar un Comando FMT/HTH, bloqueo del ítem rojo
+    tanto en `_reordenar_manual` como en `startDrag`; QSS de selección
+    con relleno celeste + texto negro + sin borde, delegado confirma
+    que un ítem rojo pierde el flag de selección — nunca se tapa, sin
+    decoración extra; reordenar categorías de nivel superior y
+    subcategorías, rechazo de mover entre padres distintos,
+    persistencia reflejada en `_serializar_biblioteca()`; búsqueda de
+    actualización asíncrona con git REAL contra un remoto bare local
+    de prueba —sin mockear nada— confirmando que el callback se
+    dispara exactamente una vez con el resultado correcto tanto sin
+    cambios como con un commit nuevo en el remoto) + actualización de
+    un test preexistente que mockeaba la API sincrónica vieja
+    (`test_ronda_hth_update_preload_editar.py`) + suite de regresión
+    completa sin fallos nuevos (mismos 3 fallos preexistentes de
+    siempre: `test_confirmaciones.py`, `test_log_git.py`,
+    `test_ventana3.py`). **Sigue sin poder probarse con audio/VLC/git
+    reales de producción**: falta que Santiago confirme que activar el
+    Automático arranca el bloque de la hora correspondiente sin
+    interrumpir nada que ya estuviera sonando, que ahora puede
+    reordenar tandas y Comandos en Ventana 1 arrastrando con
+    naturalidad, que la selección celeste se ve como esperaba sin
+    tapar nunca el rojo/verde, que reordenar categorías en el
+    Explorador funciona con su biblioteca real, y que el arranque se
+    siente igual de inmediato que antes (la búsqueda de actualización
+    nunca debería notarse).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

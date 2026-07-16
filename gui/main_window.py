@@ -66,6 +66,7 @@ class MainWindow(QMainWindow):
         self._tamaños_splitter_previos = None
         self._cerrando_por_actualizacion = False
         self._preload_activo = False
+        self._proceso_buscar_actualizacion = None
 
         self._config = cargar_configuracion()
 
@@ -89,9 +90,15 @@ class MainWindow(QMainWindow):
 
         # Pedido explícito: buscar actualización SOLA al abrir el
         # programa (antes solo se buscaba a mano, en Configuración →
-        # Actualizaciones). Diferida unos segundos para no competir
-        # con el arranque de la radio — es una consulta de red (git
-        # fetch), misma prioridad que ya se le dio a EasyEffects.
+        # Actualizaciones). Ahora corre en un QProcess asíncrono (ver
+        # core/actualizador.buscar_actualizacion_async) — como ya NO
+        # puede congelar nada, el defer de 2.5s (mismo de siempre) es
+        # solo para no competir con el arranque de la radio, no por
+        # miedo a que bloquee. Se mantiene deliberadamente largo (no
+        # se achicó): varios scripts de test bombean el event loop por
+        # un par de segundos para procesar timers diferidos (fades,
+        # etc.) sin esperar disparar esto — un defer corto dispara un
+        # `git fetch` REAL contra el repo en medio de esos tests.
         QTimer.singleShot(2500, self._buscar_actualizacion_automatica)
 
     # ------------------------------------------------------------------
@@ -491,15 +498,24 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _buscar_actualizacion_automatica(self):
         """Antes solo se buscaba a mano en Configuración →
-        Actualizaciones — ahora también se chequea sola al abrir,
-        diferida unos segundos (ver __init__) para no competir con el
-        arranque de la radio. Es una consulta de red (git fetch),
-        así que corre con el mismo cursor de espera que el resto de
-        la app en vez de trabar el arranque en silencio. Si hay una
-        actualización, pregunta "ahora" o "más tarde" — nunca la
-        aplica sola sin confirmación."""
+        Actualizaciones — ahora también se chequea sola al abrir. Corre
+        con `actualizador.buscar_actualizacion_async()` — pedido
+        explícito ("no debe impedir la reproducción inmediata y con
+        automático activado"): el único paso lento de esto es de red
+        (git fetch), y antes corría SINCRÓNICO en el mismo hilo que la
+        radio — con una conexión lenta, eso podía congelar la app
+        entera (incluida música ya sonando) hasta 30s. Ahora es un
+        QProcess asíncrono: nunca bloquea nada, la radio sigue su
+        curso normal mientras se resuelve en segundo plano. Se guarda
+        la referencia en self._proceso_buscar_actualizacion para que
+        Python no lo recolecte a mitad de camino."""
         self._mostrar_preload("Buscando actualización...", duracion_ms=500)
-        hay_actualizacion, mensaje = actualizador.hay_actualizacion_disponible()
+        self._proceso_buscar_actualizacion = actualizador.buscar_actualizacion_async(
+            self._on_resultado_busqueda_actualizacion
+        )
+
+    def _on_resultado_busqueda_actualizacion(self, hay_actualizacion: bool, mensaje: str):
+        self._proceso_buscar_actualizacion = None
         if not hay_actualizacion:
             registrar_evento(f"Buscar actualización automática: {mensaje}")
             return

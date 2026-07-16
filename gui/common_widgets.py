@@ -22,22 +22,23 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem,
 )
 from PySide6.QtCore import Qt, Signal, QMimeData, QUrl
-from PySide6.QtGui import QDrag, QPen, QColor
+from PySide6.QtGui import QDrag
 
 from gui.styles import ROL_ESTADO_ITEM, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE, COLOR_SELECCION
 
 
 class DelegadoConservaColorEstado(QStyledItemDelegate):
-    """Pedido explícito (paridad Dinesat): el rojo (en punta) y el
-    verde (en cola) de un ítem NUNCA deben cambiar al seleccionarlo —
-    el celeste es solo el cursor de selección, y solo se ve como tal
-    en los ítems SIN estado. Con QSS puro esto no se puede lograr: la
-    regla ::item:selected no puede "preguntar" si el ítem tiene un
-    color propio, así que terminaba pisando igual el rojo/verde (bug
-    real reportado). Acá, si el ítem está en rojo/verde Y
-    seleccionado, se pinta SIN el flag de selección (así conserva su
-    propio color de fondo) y se agrega a mano un borde celeste fino;
-    cualquier otro ítem sigue el camino normal (QSS de siempre)."""
+    """Pedido explícito (paridad Dinesat, regla PERMANENTE): el rojo
+    (en punta) y el verde (en cola) de un ítem NUNCA deben cambiar al
+    seleccionarlo — ni con relleno celeste ni con ningún borde, "sin
+    tapar el verde y rojo que son fundamentales". Con QSS puro esto no
+    se puede lograr: la regla ::item:selected no puede "preguntar" si
+    el ítem tiene un color propio, así que terminaba pisando igual el
+    rojo/verde (bug real reportado en una ronda anterior). Acá, si el
+    ítem está en rojo/verde Y seleccionado, se pinta SIN el flag de
+    selección — así conserva su propio color de fondo intacto, sin
+    ninguna decoración extra — cualquier otro ítem sigue el camino
+    normal (QSS de siempre: relleno celeste + letra negra)."""
 
     def paint(self, painter, option, index):
         indice_columna_0 = index.sibling(index.row(), 0)
@@ -46,12 +47,6 @@ class DelegadoConservaColorEstado(QStyledItemDelegate):
             opcion = QStyleOptionViewItem(option)
             opcion.state &= ~QStyle.StateFlag.State_Selected
             super().paint(painter, opcion, index)
-            painter.save()
-            lapiz = QPen(QColor(COLOR_SELECCION))
-            lapiz.setWidth(2)
-            painter.setPen(lapiz)
-            painter.drawRect(option.rect.adjusted(1, 1, -2, -2))
-            painter.restore()
         else:
             super().paint(painter, option, index)
 
@@ -198,13 +193,28 @@ class ArbolPublicidadConDrop(ArbolConDrop):
     receptor. El alcance a "solo Auxiliar, nunca Ventana 2" se
     resuelve del lado RECEPTOR — ver ArbolReproductorConDrop.
     acepta_desde_publicidad más abajo — porque V2 y Auxiliar comparten
-    la MISMA clase de árbol."""
+    la MISMA clase de árbol.
+
+    Pedido explícito (ronda posterior): "ordená el arrastre y mover de
+    los ítems, no lo puedo hacer, y los FMT tampoco me permite
+    arrastrarlo" — el reordenado interno estaba deliberadamente
+    deshabilitado desde el diseño original ("Nunca hubo reordenado
+    interno pedido para Ventana 1"), pero Santiago sí lo quiere ahora.
+    Mismo patrón jerárquico (bloque -> tandas/comandos) que
+    ArbolProgramadorConDrop: un ítem se reordena DENTRO de su bloque o
+    se mueve a OTRO bloque, siempre como hijo de nivel 1 — nunca los
+    bloques enteros. Los Comandos (FMT/HTH, sin ruta real) se
+    reordenan igual que una tanda; simplemente no viajan en el
+    `QUrl` del mimeData (no tiene sentido exportarlos a la Auxiliar).
+    El ítem "en punta" (rojo) no se puede mover mientras suena — mismo
+    criterio que ya usa Ventana 2."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setItemDelegate(DelegadoConservaColorEstado(self))
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -214,36 +224,115 @@ class ArbolPublicidadConDrop(ArbolConDrop):
                 return
         super().keyPressEvent(event)
 
+    def dragEnterEvent(self, event):
+        if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
     def dropEvent(self, event):
         if event.source() is self:
-            # Nunca hubo reordenado interno pedido para Ventana 1 —
-            # un auto-drop (arrastrar un ítem sobre su propio árbol)
-            # no hace nada, en vez de duplicarlo vía el dropEvent
-            # heredado (pensado para arrastres EXTERNOS).
-            event.ignore()
+            self._reordenar_manual(event)
             return
         super().dropEvent(event)
 
     def startDrag(self, supportedActions):
-        """Pedido explícito: la selección múltiple (Ctrl/Shift) también
-        se arrastra completa de una — mismo patrón que
-        ArbolOrigenArrastre del Explorador. Los nodos de bloque y los
-        Comandos (sin ruta real) se descartan de la selección en vez
-        de cancelar todo el arrastre, así seleccionar varias tandas Y
-        de paso un bloque/comando no rompe nada."""
-        rutas = [
-            item.data(0, Qt.ItemDataRole.UserRole)
-            for item in self.selectedItems()
-            if item.parent() is not None and item.data(0, Qt.ItemDataRole.UserRole)
-        ]
-        if not rutas:
+        """Un solo gesto de arrastre soporta DOS destinos: (1)
+        reordenar DENTRO de este mismo árbol (tandas Y Comandos), y
+        (2) exportar hacia la Auxiliar (selección múltiple, pedido
+        explícito de una ronda anterior — solo los ítems con ruta
+        real viajan como QUrl, un Comando no tiene sentido allá). Los
+        nodos de bloque se descartan de la selección en vez de
+        cancelar todo el arrastre."""
+        seleccionados = [item for item in self.selectedItems() if item.parent() is not None]
+        if not seleccionados:
             return
-        mime_data = QMimeData()
-        mime_data.setUrls([QUrl.fromLocalFile(ruta) for ruta in rutas])
-        mime_data.setText(rutas[0])
+        if any(item.data(0, ROL_ESTADO_ITEM) == ESTADO_REPRODUCIENDO for item in seleccionados):
+            # El ítem en el aire (rojo) no se puede mover mientras
+            # suena — pedido explícito, mismo criterio que Ventana 2.
+            return
+
+        indices = self.selectedIndexes()
+        mime_data = self.model().mimeData(indices) if indices else None
+        if mime_data is None:
+            mime_data = QMimeData()
+
+        rutas = [
+            item.data(0, Qt.ItemDataRole.UserRole) for item in seleccionados
+            if item.data(0, Qt.ItemDataRole.UserRole)
+        ]
+        if rutas:
+            mime_data.setUrls([QUrl.fromLocalFile(ruta) for ruta in rutas])
+            mime_data.setText(rutas[0])
+
         drag = QDrag(self)
         drag.setMimeData(mime_data)
-        drag.exec(Qt.DropAction.CopyAction)
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def _reordenar_manual(self, event):
+        """Mueve el ítem arrastrado a la posición soltada — DENTRO de
+        su propio bloque, o a OTRO bloque distinto, siempre como hijo
+        de nivel 1 (nunca lo anida más profundo). Mismo algoritmo que
+        ArbolProgramadorConDrop._reordenar_manual (misma forma de
+        árbol: bloque -> ítems)."""
+        if len(self.selectedItems()) > 1:
+            event.ignore()
+            return
+
+        item_arrastrado = self.currentItem()
+        if item_arrastrado is None or item_arrastrado.parent() is None:
+            event.ignore()
+            return
+        if item_arrastrado.data(0, ROL_ESTADO_ITEM) == ESTADO_REPRODUCIENDO:
+            event.ignore()
+            return
+
+        bloque_origen = item_arrastrado.parent()
+        indice_origen = bloque_origen.indexOfChild(item_arrastrado)
+        if indice_origen < 0:
+            event.ignore()
+            return
+
+        punto = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        item_destino = self.itemAt(punto)
+
+        if item_destino is None:
+            bloque_destino = self._item_de_nivel_superior_mas_cercano(punto)
+            if bloque_destino is None:
+                event.ignore()
+                return
+            indice_destino = bloque_destino.childCount()
+        elif item_destino.parent() is None:
+            # Soltado sobre el TÍTULO de un bloque -> al final de ESE bloque.
+            bloque_destino = item_destino
+            indice_destino = bloque_destino.childCount()
+        else:
+            bloque_destino = item_destino.parent()
+            indice_destino = bloque_destino.indexOfChild(item_destino)
+            if self.dropIndicatorPosition() == QAbstractItemView.DropIndicatorPosition.BelowItem:
+                indice_destino += 1
+
+        if bloque_destino is bloque_origen:
+            if indice_destino > indice_origen:
+                indice_destino -= 1  # se saca el origen antes de reinsertar
+            indice_destino = max(0, min(indice_destino, bloque_origen.childCount() - 1))
+            if indice_destino == indice_origen:
+                event.ignore()
+                return
+        else:
+            indice_destino = max(0, min(indice_destino, bloque_destino.childCount()))
+
+        item = bloque_origen.takeChild(indice_origen)
+        bloque_destino.insertChild(indice_destino, item)
+        bloque_destino.setExpanded(True)
+        self.setCurrentItem(item)
+        event.acceptProposedAction()
 
 
 class ArbolProgramadorConDrop(ArbolConDrop):
@@ -356,6 +445,121 @@ class ArbolProgramadorConDrop(ArbolConDrop):
         bloque_destino.setExpanded(True)
         self.setCurrentItem(item)
         event.acceptProposedAction()
+
+
+class ArbolCategoriasConDrop(ArbolConDrop):
+    """ArbolConDrop + reordenar CATEGORÍAS por arrastre (pedido
+    explícito: "permití también que pueda ordenar las carpetas de las
+    categorías"). Alcance acotado a propósito: reordena una categoría
+    ENTRE SUS HERMANAS (mismo padre — nivel superior o una
+    subcategoría anidada) arriba/abajo; mover una categoría a OTRO
+    padre (re-anidarla bajo una categoría distinta) es una operación
+    mucho más grande y riesgosa — arrastraría todos sus archivos y
+    subcategorías a otro lugar de la jerarquía — que no fue pedida,
+    sigue haciéndose a mano si hace falta. El drop de archivos
+    EXTERNOS sobre una categoría (Explorador -> categoría, ya
+    heredado de ArbolConDrop) sigue funcionando igual — se distingue
+    por `event.source()`, mismo patrón que el resto de los árboles de
+    esta app. Al reordenar con éxito emite `orden_cambiado` para que
+    `VentanaExplorador` persista la biblioteca (el orden de las
+    categorías se guarda tal cual queda el árbol — ver
+    `_serializar_biblioteca`, que recorre en orden visual)."""
+
+    orden_cambiado = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+
+    def dragEnterEvent(self, event):
+        if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.source() is self or event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if event.source() is self:
+            self._reordenar_manual(event)
+            return
+        super().dropEvent(event)
+
+    def startDrag(self, supportedActions):
+        if self.currentItem() is None:
+            return
+        indices = self.selectedIndexes()
+        if not indices:
+            return
+        mime_data = self.model().mimeData(indices)
+        if mime_data is None:
+            return
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def _reordenar_manual(self, event):
+        if len(self.selectedItems()) > 1:
+            event.ignore()
+            return
+
+        item_arrastrado = self.currentItem()
+        if item_arrastrado is None:
+            event.ignore()
+            return
+
+        padre_origen = item_arrastrado.parent()
+        if padre_origen is None:
+            indice_origen = self.indexOfTopLevelItem(item_arrastrado)
+        else:
+            indice_origen = padre_origen.indexOfChild(item_arrastrado)
+        if indice_origen < 0:
+            event.ignore()
+            return
+
+        punto = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        item_destino = self.itemAt(punto)
+        if item_destino is None or item_destino is item_arrastrado:
+            event.ignore()
+            return
+
+        padre_destino = item_destino.parent()
+        if padre_destino is not padre_origen:
+            # Fuera de alcance a propósito: solo reordena hermanas del
+            # MISMO padre — ver docstring de la clase.
+            event.ignore()
+            return
+
+        if padre_destino is None:
+            indice_destino = self.indexOfTopLevelItem(item_destino)
+        else:
+            indice_destino = padre_destino.indexOfChild(item_destino)
+        if self.dropIndicatorPosition() == QAbstractItemView.DropIndicatorPosition.BelowItem:
+            indice_destino += 1
+        if indice_destino > indice_origen:
+            indice_destino -= 1  # se saca el origen antes de reinsertar
+
+        total_hermanas = self.topLevelItemCount() if padre_origen is None else padre_origen.childCount()
+        indice_destino = max(0, min(indice_destino, total_hermanas - 1))
+        if indice_destino == indice_origen:
+            event.ignore()
+            return
+
+        if padre_origen is None:
+            item = self.takeTopLevelItem(indice_origen)
+            self.insertTopLevelItem(indice_destino, item)
+        else:
+            item = padre_origen.takeChild(indice_origen)
+            padre_origen.insertChild(indice_destino, item)
+        self.setCurrentItem(item)
+        event.acceptProposedAction()
+        self.orden_cambiado.emit()
 
 
 class ArbolReproductorConDrop(QTreeWidget):

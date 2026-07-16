@@ -95,6 +95,70 @@ def hay_actualizacion_disponible() -> tuple[bool, str]:
         return False, f"Error consultando actualizaciones: {error}"
 
 
+def buscar_actualizacion_async(callback):
+    """Versión NO BLOQUEANTE de hay_actualizacion_disponible() — pedido
+    explícito ("no debe impedir la reproducción inmediata y con
+    automático activado"): el único paso lento de verdad (git fetch,
+    va por red) corre en un QProcess asíncrono en vez de un
+    subprocess.run() sincrónico — así nunca congela el hilo principal
+    (ni la radio, que corre en ese mismo hilo/event loop) mientras
+    espera a GitHub, sin necesidad de un QThread (mismo estilo
+    deliberadamente simple del resto de la app: QProcess async, ya
+    usado en EasyEffects/reiniciar_aplicacion). Las comparaciones
+    posteriores (rev-parse local vs. remoto) son lecturas de disco
+    casi instantáneas, así que esas sí se resuelven en el callback sin
+    volver a salir a red.
+
+    `callback(hay_actualizacion: bool, mensaje: str)` se llama UNA
+    sola vez, siempre (éxito o error). Devuelve el QProcess en curso —
+    el LLAMADOR tiene que guardar esa referencia en un atributo propio
+    mientras dure, o Python lo recolecta a mitad de camino y el
+    callback nunca llega a dispararse."""
+    if not es_instalacion_git():
+        callback(False, (
+            "Esta copia no es una instalación por git, así que no se puede "
+            "buscar actualizaciones automáticamente. Instalá desde GitHub "
+            f"({REPO_URL}) para habilitar esta función."
+        ))
+        return None
+
+    from PySide6.QtCore import QProcess
+
+    proceso = QProcess()
+    proceso.setProgram("git")
+    proceso.setArguments(["-C", _raiz_app(), "fetch", "origin"])
+
+    def _al_terminar(codigo_salida, _estado_salida):
+        if codigo_salida != 0:
+            error = bytes(proceso.readAllStandardError()).decode("utf-8", errors="replace").strip()
+            callback(False, f"No se pudo contactar GitHub: {error}")
+            return
+        try:
+            rama = _rama_remota_disponible()
+            if rama is None:
+                callback(False, "No se encontró la rama remota (main/master) en el repositorio.")
+                return
+            local = _ejecutar_git("rev-parse", "HEAD").stdout.strip()
+            remoto = _ejecutar_git("rev-parse", f"origin/{rama}").stdout.strip()
+            if not local or not remoto:
+                callback(False, "No se pudo determinar la versión actual o la remota.")
+                return
+            if local == remoto:
+                callback(False, "Ya tenés la última versión instalada.")
+                return
+            callback(True, "Hay una actualización disponible en GitHub.")
+        except (subprocess.TimeoutExpired, OSError) as error:
+            callback(False, f"Error consultando actualizaciones: {error}")
+
+    def _al_fallar_arranque(_error):
+        callback(False, "No se pudo iniciar git para buscar actualizaciones.")
+
+    proceso.finished.connect(_al_terminar)
+    proceso.errorOccurred.connect(_al_fallar_arranque)
+    proceso.start()
+    return proceso
+
+
 def aplicar_actualizacion() -> tuple[bool, str]:
     """Descarga y aplica la actualización (git pull --ff-only).
     Devuelve (éxito, mensaje)."""
