@@ -141,20 +141,23 @@ QTreeWidget#tree_publicidad::item, QTreeWidget#tree_reproductor::item {{
     padding: 1px;
 }}
 
-/* Ventana 1 (Publicidad) y Ventana 2 (Emisión): el resaltado de
-   selección de Qt (azul sólido, regla ::item:selected de más arriba)
-   tapaba el rojo/verde de "en punta"/"en cola" — pedido explícito,
-   tiene que quedar siempre a la vista. Acá la selección deja de
-   pintar un relleno propio (queda transparente) y se marca solo con
-   un borde, así el fondo rojo/verde del ítem nunca se cubre, esté
-   seleccionado o no. Color CELESTE (pedido explícito, igualando
-   Dinesat: "el celeste es solo para una selección... cuando se hace
-   clic en un verde o rojo, nunca pierde ese color") — antes era
-   amarillo; el celeste es la señal de "acá está el cursor de
-   selección", nunca reemplaza al rojo/verde de estado. */
+/* Ventana 1 (Publicidad) y Ventana 2 (Emisión): selección con
+   relleno CELESTE sólido + letra negra, SIN borde (pedido explícito,
+   ronda posterior: "sacá el celeste del contorno... sin borde dejá
+   una selección con relleno celeste y letra negras"). Esto aplica
+   SOLO a ítems SIN estado (ni rojo ni verde) — un ítem en rojo/verde
+   NUNCA debe perder su color al seleccionarlo (regla permanente,
+   "esto es siempre"): con QSS puro esa excepción no se puede
+   expresar (la regla ::item:selected no puede "preguntar" si el
+   ítem tiene un color propio), así que el delegado
+   DelegadoConservaColorEstado (gui/common_widgets.py) intercepta el
+   pintado ANTES de que esta regla se aplique — para un ítem
+   rojo/verde seleccionado, pinta directamente su propio color sin
+   pasar por acá, sin fill celeste y sin ningún borde. */
 QTreeWidget#tree_reproductor::item:selected, QTreeWidget#tree_publicidad::item:selected {{
-    background-color: transparent;
-    border: 2px solid {COLOR_SELECCION};
+    background-color: {COLOR_SELECCION};
+    color: black;
+    border: none;
 }}
 
 /* ---------- Botones de transporte ---------- */

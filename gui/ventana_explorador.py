@@ -62,7 +62,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QUrl, QProcess
 from PySide6.QtGui import QColor, QBrush, QDesktopServices
 
-from gui.common_widgets import ArbolOrigenArrastre, ArbolConDrop, configurar_columnas_ajustables, SliderBusqueda
+from gui.common_widgets import (
+    ArbolOrigenArrastre, ArbolConDrop, ArbolCategoriasConDrop,
+    configurar_columnas_ajustables, SliderBusqueda,
+)
 from gui.indicador_en_vivo import IndicadorEnVivo
 from gui.styles import GENERO_COLORES, GENERO_PREFIJOS_CODIGO, color_texto_legible
 from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
@@ -150,12 +153,18 @@ class VentanaExplorador(QWidget):
         layout_categorias = QVBoxLayout(panel_categorias)
         layout_categorias.setContentsMargins(0, 0, 0, 0)
 
-        self.tree_categorias = ArbolConDrop()
+        # Pedido explícito ("permití también que pueda ordenar las
+        # carpetas de las categorías"): ArbolCategoriasConDrop admite
+        # arrastrar una categoría entre sus hermanas para reordenarla,
+        # además de seguir aceptando archivos soltados desde afuera
+        # (heredado de ArbolConDrop).
+        self.tree_categorias = ArbolCategoriasConDrop()
         self.tree_categorias.setObjectName("tree_categorias")
         self.tree_categorias.setHeaderLabels(["Categoría"])
         self.tree_categorias.setColumnCount(1)
         self.tree_categorias.currentItemChanged.connect(self._on_categoria_seleccionada)
         self.tree_categorias.archivos_soltados.connect(self._on_archivos_soltados_en_categoria)
+        self.tree_categorias.orden_cambiado.connect(self._guardar_biblioteca)
         layout_categorias.addWidget(self.tree_categorias)
 
         barra_categorias = QHBoxLayout()

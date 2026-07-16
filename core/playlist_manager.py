@@ -997,8 +997,31 @@ class SchedulerAutomatico:
 
     # ------------------------------------------------------------------
     def _on_automatico_cambiado(self, activo: bool):
-        if activo:
-            self._marcar_bloques_pasados_sin_disparar()
+        if not activo:
+            return
+        self._marcar_bloques_pasados_sin_disparar()
+        # Pedido explícito: activar el botón AUTOMÁTICO a mano (no
+        # solo al iniciar la app) debe arrancar YA el bloque horario
+        # VIGENTE — ej. si son las 21:24, el bloque de las 21hs —
+        # mismo criterio que _arrancar_al_iniciar(), reutilizado acá.
+        # Guard contra doble disparo: si ya hay un bloque disparándose
+        # (esperando que Emisión libere el control) o Publicidad YA
+        # está sonando algo (un bloque en curso, o el operador puso a
+        # mano un ítem a sonar), no se dispara otro encima — activar
+        # el Automático nunca debe REINICIAR desde el principio algo
+        # que ya está sonando.
+        if self._esperando_liberar_emision or self.gestor_publicidad.motor.esta_reproduciendo():
+            return
+        bloque = self._bloque_vigente()
+        if bloque is None:
+            return
+        hora_str = self.ventana.hora_de_bloque(bloque)
+        if hora_str:
+            self._horas_disparadas_hoy.add(hora_str)
+        registrar_evento(
+            f"Automático activado a mano: reproduciendo el bloque horario vigente '{bloque.text(0)}'"
+        )
+        self._disparar_bloque(bloque)
 
     def _marcar_bloques_pasados_sin_disparar(self):
         ahora = QTime.currentTime()
