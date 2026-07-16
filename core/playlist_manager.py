@@ -418,8 +418,31 @@ class GestorPublicidad:
         self._reproducir_siguiente_clip_hth()
 
     def _reproducir_siguiente_clip_hth(self):
+        """Bug real corregido (pedido explícito, "no quiero silencios
+        al final... deben ser enganchados"): antes se llamaba acá
+        `motor.reproducir(ruta)` a secas, SIN el recorte de silencio
+        ni el nivelado ya calculados al importar el clip — mismo tipo
+        de bug ya corregido en el resto de la app, pero este rincón
+        (Comando HTH) se había quedado afuera. Con clips de voz
+        concatenados uno atrás de otro (HORA XX + MINUTOS XX, etc.),
+        el silencio de cola SIN recortar de cada clip se sentía como
+        un hueco muerto entre palabras. Ahora se busca el registro
+        completo por ruta (mismo patrón que `_reproducir_item`) y se
+        le pasa el análisis — fail-open si no hay `_ventana_explorador`
+        o el registro no aparece (nunca romper el anuncio por esto)."""
         ruta = self._cola_hth.pop(0)
-        self.motor.reproducir(ruta, volumen_base=self._volumen_base)
+        analisis = {}
+        if self._ventana_explorador is not None:
+            registro = self._ventana_explorador.buscar_registro_por_ruta(ruta)
+            if registro:
+                analisis = registro
+        self.motor.reproducir(
+            ruta,
+            punto_inicio_ms=analisis.get("punto_inicio_ms") or 0,
+            punto_fin_ms=analisis.get("punto_fin_ms"),
+            ganancia_db=analisis.get("ganancia_db") or 0.0,
+            volumen_base=self._volumen_base,
+        )
         self.ventana.set_indicador_en_vivo(True)
 
     def _on_click_play(self):

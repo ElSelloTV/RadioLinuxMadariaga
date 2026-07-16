@@ -28,6 +28,23 @@ MENSAJE_VLC_NO_DISPONIBLE = (
     "Instalalo con: sudo apt install vlc libvlc-dev"
 )
 
+# Argumentos globales de la instancia de libVLC (pedido explícito, "para
+# robustecer el sistema"):
+# - "--no-video": esta app es 100% de audio — si un archivo cargado
+#   por error tiene pista de video (ej. un .mp4 importado a la
+#   biblioteca), libVLC NUNCA decodifica ni intenta abrir una ventana
+#   de video para él, solo extrae el audio. Sin esto, decodificar
+#   video de más gasta CPU/memoria en vano en hardware modesto (la
+#   notebook de Santiago, Celeron N2820) y puede ser una causa real de
+#   "tartamudeo".
+# - "--file-caching=1000": sube el buffer de lectura/decodificación de
+#   archivo de libVLC de ~300ms (default) a 1000ms — pedido explícito
+#   ("un sistema de buffer... que otorgue fluidez auditiva"): con más
+#   margen de buffer, una ráfaga de CPU ocupada por otra tarea de la
+#   app (un import pesado, redibujar la UI, etc.) tiene mucho más
+#   espacio antes de que la reproducción llegue a notarse entrecortada.
+ARGUMENTOS_VLC = ["--no-video", "--file-caching=1000"]
+
 
 class MotorAudio(QObject):
     posicion_cambiada = Signal(str, str)   # (transcurrido "hh:mm:ss", restante "hh:mm:ss")
@@ -58,7 +75,7 @@ class MotorAudio(QObject):
         self._volumen_deseado = 100
 
         try:
-            self._instancia = vlc.Instance()
+            self._instancia = vlc.Instance(ARGUMENTOS_VLC)
             self._player = self._instancia.media_player_new()
             if id_dispositivo:
                 self._player.audio_output_device_set(None, id_dispositivo)

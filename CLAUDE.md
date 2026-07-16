@@ -4369,6 +4369,95 @@ todo el resto.
     Explorador funciona con su biblioteca real, y que el arranque se
     siente igual de inmediato que antes (la búsqueda de actualización
     nunca debería notarse).
+44. ~~Robustez de audio: buffer anti-tartamudeo, motor 100% audio
+    (ignora video), re-verificación de silencios V1/V2~~ — pedido
+    explícito, "para robustecer el sistema":
+
+    **a) Buffer para evitar "tartamudeo" ("fluidez auditiva, evitar
+    ruidos o algo que interfiera en la reproducción limpia y
+    persistente")**: `core/audio_engine.py` ganó
+    `ARGUMENTOS_VLC = ["--no-video", "--file-caching=1000"]`, pasado a
+    CADA `vlc.Instance()` que crea un `MotorAudio` (Emisión,
+    Publicidad, Auxiliar, Pisador, previo del Explorador — todos
+    comparten la misma clase). `--file-caching=1000` sube el buffer de
+    lectura/decodificación de archivo de libVLC de ~300ms (default) a
+    1000ms — con más margen de buffer, una ráfaga de CPU ocupada por
+    otra tarea de la app (un import pesado, redibujar la UI, etc., algo
+    más notorio en el hardware modesto de Santiago — Celeron N2820)
+    tiene mucho más espacio antes de que la reproducción llegue a
+    notarse entrecortada.
+
+    **b) Motor 100% audio, ignora video (pedido explícito: "Hay
+    archivos que son videos, hacé que el motor VLC reproduzca SOLO
+    audio")**: el mismo `--no-video` del punto (a) resuelve esto de
+    raíz — con ese flag, libVLC NUNCA decodifica ni intenta abrir una
+    ventana de video para un archivo que la tenga (ej. un .mp4
+    importado por error a la biblioteca), solo extrae y reproduce su
+    pista de audio. De paso, esto también ayuda al punto (a): decodificar
+    video de más es trabajo de CPU completamente inútil para esta app
+    (100% de audio) y una causa real de tartamudeo en hardware modesto.
+
+    **c) Re-verificación de silencios en Ventana 1 y 2 (pedido
+    explícito: "NO quiero silencios al final de la reproducción...
+    deben ser enganchados los temas, un fade veloz") — bug real
+    encontrado y corregido**: se auditaron TODOS los puntos donde el
+    código llama `motor.reproducir()`/`crossfade_a()` en
+    `core/gestor_emision.py` y `core/playlist_manager.py` para
+    confirmar que siempre pasan `punto_inicio_ms`/`punto_fin_ms`/
+    `ganancia_db` (el recorte de silencio y nivelado ya calculados al
+    importar el archivo). La reproducción normal de Ventana 1 y 2, el
+    crossfade de Ventana 2, y el previo del Explorador ya estaban
+    todos correctos — pero
+    `GestorPublicidad._reproducir_siguiente_clip_hth()` (el motor del
+    Comando HTH — concatena 2-3 clips de voz cortos, ej. "HORA 14" +
+    "MINUTOS 30", uno atrás del otro) se había quedado afuera de esa
+    disciplina: llamaba `motor.reproducir(ruta)` a secas, sin ningún
+    análisis — mismo tipo de bug ya corregido varias veces antes en
+    otros rincones de la app, pero este nunca se había tocado desde
+    que se implementó el Comando HTH (ronda 39). El resultado real:
+    el silencio de cola SIN recortar de cada clip se sentía como un
+    hueco muerto entre "HORA 14" y "MINUTOS 30" — exactamente el tipo
+    de "silencio al final" que Santiago pidió eliminar, aunque acá no
+    se trate de "temas" sino de clips de voz cortos concatenados.
+    Corregido buscando el registro completo por ruta
+    (`ventana_explorador.buscar_registro_por_ruta()`, mismo patrón que
+    ya usa `_reproducir_item()` para las tandas normales) antes de
+    reproducir cada clip de la cola — fail-open (sin análisis si no
+    hay `_ventana_explorador` o el registro no aparece, nunca romper
+    el anuncio por esto). El resto del mecanismo de "enganchado con
+    fade veloz" ya estaba andando correctamente y se confirma sin
+    cambios: el fade-out automático de Ventana 1 entre tandas
+    (`duracion_fade_out_v1_ms`, 500ms por defecto) y el crossfade de
+    Ventana 2 (cuando `crossfade_activado`) ya arrancan el tema
+    ENTRANTE inmediato a su volumen final (sin fade-in, pedido de una
+    ronda anterior) mientras el SALIENTE se apaga con un fundido
+    corto — sin gap, sin corte seco.
+
+    Probado con `test_audio_only_y_buffer.py` (nuevo: confirma que
+    `ARGUMENTOS_VLC` incluye `--no-video` y un `--file-caching` mayor
+    al default, que `vlc.Instance()` se invoca efectivamente con esos
+    argumentos —interceptando la llamada real—, y que `MotorAudio()`
+    sigue degradando limpio sin romper nada si no hay libVLC instalado,
+    con o sin los argumentos nuevos) + `test_hth_silencio_analisis.py`
+    (nuevo: arma 2 clips HTH reales con análisis distinto cada uno en
+    la biblioteca, dispara un Comando HTH real a través de
+    `GestorPublicidad._reproducir_item()`, y confirma que CADA clip de
+    la cola llega a `motor.reproducir()` con su propio
+    `punto_inicio_ms`/`punto_fin_ms`/`ganancia_db` — no solo el
+    primero) + regresión de `test_hth_gui.py` (18/18 sin cambios, el
+    fix no rompió la máquina de estados de la cola de clips) + suite
+    de regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py`). **Sigue sin poder probarse
+    con audio/VLC real** (como siempre que se toca `core/audio_engine.py`
+    — el sandbox no tiene libVLC instalado): falta que Santiago
+    confirme con su radio real que (1) el tartamudeo que reportó ya no
+    aparece, sobre todo mientras hace algo pesado en paralelo (importar
+    archivos, reanalizar biblioteca), (2) que un archivo de video
+    importado por error ahora suena bien sin abrir ninguna ventana ni
+    gastar CPU de más, y (3) que el Comando HTH ahora suena con los
+    clips bien pegados, sin el hueco de silencio que tenía antes entre
+    "HORA" y "MINUTOS".
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
