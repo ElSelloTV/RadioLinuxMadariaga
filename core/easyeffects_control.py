@@ -48,15 +48,33 @@ cualquier otro comando (que sí espera una respuesta rápida) se envíe.
 --------------------------------------------------------
 """
 
+import os
 import shutil
 import subprocess
 import time
 
-from PySide6.QtCore import QProcess
-
-from config.settings import registrar_error, registrar_evento
+from config.settings import registrar_error, registrar_evento, DIRECTORIO_CONFIG
 
 NOMBRE_BINARIO = "easyeffects"
+
+# Bug real reportado ("se abre EasyEffects pero se cierra... no me
+# deja activar el preset"): el sondeo de 2 fases (ver más abajo) ya
+# detecta CUÁNDO falla, pero hasta ahora no había forma de ver POR QUÉ
+# — el lanzamiento usaba QProcess.startDetached(), que no permite
+# redirigir stdout/stderr del proceso hijo, así que si EasyEffects
+# crasheaba al arrancar, ese mensaje de error se perdía por completo
+# (ni Santiago ni Claude Code podían verlo sin acceso a una terminal
+# en el momento exacto del fallo). Ahora el lanzamiento usa
+# subprocess.Popen redirigiendo stdout/stderr a este archivo
+# (sobrescrito en CADA intento, para que siempre refleje el último
+# lanzamiento) — start_new_session=True mantiene el mismo
+# comportamiento "independiente de la app" que ya tenía
+# QProcess.startDetached() (el proceso sigue vivo aunque se cierre la
+# radio). Si el sondeo de 2 fases termina fallando, la cola de este
+# archivo se agrega al mensaje de error mostrado en el menú FM y al
+# log de la app — el error REAL del sistema queda a la vista sin
+# necesitar terminal.
+RUTA_LOG_PROCESO = os.path.join(DIRECTORIO_CONFIG, "easyeffects_stdout.txt")
 
 # Flags de la CLI — un solo lugar para actualizar si una versión
 # futura de EasyEffects les cambia el nombre (ver nota arriba).
@@ -86,6 +104,41 @@ INTERVALO_SONDEO_SEGUNDOS = 0.3
 
 def esta_instalado() -> bool:
     return shutil.which(NOMBRE_BINARIO) is not None
+
+
+def _lanzar_proceso_con_captura(args: list) -> bool:
+    """Lanza `easyeffects` DESACOPLADO de esta app (sigue vivo aunque
+    se cierre la radio, mismo comportamiento que ya tenía
+    QProcess.startDetached), pero redirigiendo su stdout/stderr a
+    RUTA_LOG_PROCESO — sobrescrito en cada intento — para poder
+    diagnosticar un crash real (ver nota arriba). Devuelve False solo
+    si el lanzamiento en sí no pudo iniciarse (binario inexistente,
+    permisos, etc.) — nunca lanza excepción."""
+    try:
+        os.makedirs(DIRECTORIO_CONFIG, exist_ok=True)
+        with open(RUTA_LOG_PROCESO, "w", encoding="utf-8", errors="replace") as archivo_log:
+            subprocess.Popen(
+                [NOMBRE_BINARIO, *args],
+                stdout=archivo_log, stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        return True
+    except OSError as error:
+        registrar_error(f"EasyEffects: no se pudo lanzar el proceso ({args}): {error}")
+        return False
+
+
+def _cola_log_proceso(max_lineas: int = 20) -> str:
+    """Últimas líneas de RUTA_LOG_PROCESO — el error REAL del sistema
+    (crash, falta de PipeWire, D-Bus, etc.) si el proceso falló al
+    arrancar o quedó sin responder. Cadena vacía si no hay nada
+    capturado (nunca rompe el flujo por esto)."""
+    try:
+        with open(RUTA_LOG_PROCESO, "r", encoding="utf-8", errors="replace") as archivo_log:
+            lineas = archivo_log.readlines()
+        return "".join(lineas[-max_lineas:]).strip()
+    except OSError:
+        return ""
 
 
 def _esta_corriendo() -> bool:
@@ -173,27 +226,34 @@ def asegurar_en_ejecucion() -> tuple[bool, str]:
         registrar_error("EasyEffects: el proceso existe pero nunca respondió a los comandos.")
         return False, "EasyEffects está abierto pero no responde. Probá cerrarlo y volver a intentar."
 
-    if not QProcess.startDetached(NOMBRE_BINARIO, [FLAG_OCULTAR_VENTANA]):
-        registrar_error("EasyEffects: QProcess.startDetached() no pudo lanzar el proceso.")
+    if not _lanzar_proceso_con_captura([FLAG_OCULTAR_VENTANA]):
         return False, "No se pudo lanzar EasyEffects."
 
     if not _esperar_proceso_vivo(TIMEOUT_ARRANQUE_SEGUNDOS):
+        cola = _cola_log_proceso()
         registrar_error(
             f"EasyEffects: el proceso no apareció (pgrep) en {TIMEOUT_ARRANQUE_SEGUNDOS}s tras el arranque."
+            + (f" Salida capturada:\n{cola}" if cola else "")
         )
-        return False, "EasyEffects no respondió a tiempo al arrancar."
+        mensaje = "EasyEffects no respondió a tiempo al arrancar."
+        return False, mensaje + (f" Detalle: {cola[:300]}" if cola else "")
 
     if not _esperar_cli_responda(TIMEOUT_PROBE_CLI_SEGUNDOS):
         # El proceso llegó a existir (posiblemente se vio brevemente
         # la ventana, "se abre y se cierra") pero nunca quedó listo
         # para recibir comandos — puede haberse caído solo apenas
-        # arrancado. Reportarlo así, en vez del genérico "no
-        # respondió", para que quede claro en el log qué fase falló.
+        # arrancado. Se adjunta la cola de RUTA_LOG_PROCESO (stdout/
+        # stderr real del proceso) — antes esto era invisible porque
+        # QProcess.startDetached() no permite capturar la salida del
+        # hijo, así que un crash quedaba sin ningún rastro.
+        cola = _cola_log_proceso()
         registrar_error(
             "EasyEffects: el proceso arrancó pero nunca respondió a los comandos "
             f"dentro de {TIMEOUT_PROBE_CLI_SEGUNDOS}s (¿se cerró solo justo después de abrir?)."
+            + (f" Salida capturada:\n{cola}" if cola else " Sin salida capturada.")
         )
-        return False, "EasyEffects arrancó pero no llegó a responder. Reintentá desde el ícono FM."
+        mensaje = "EasyEffects arrancó pero no llegó a responder."
+        return False, mensaje + (f" Detalle: {cola[:300]}" if cola else " Reintentá desde el ícono FM.")
 
     registrar_evento("EasyEffects: arrancó oculto y respondió correctamente.")
     return True, "EasyEffects arrancó oculto correctamente."
@@ -277,6 +337,6 @@ def abrir_ventana() -> tuple[bool, str]:
     ok, mensaje = asegurar_en_ejecucion()
     if not ok:
         return False, mensaje
-    if not QProcess.startDetached(NOMBRE_BINARIO, []):
+    if not _lanzar_proceso_con_captura([]):
         return False, "No se pudo abrir la ventana de EasyEffects."
     return True, "Ventana de EasyEffects abierta."
