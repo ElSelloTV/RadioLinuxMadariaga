@@ -7,11 +7,7 @@ para procesar el aire de la FM). Pedido explícito: un botón "FM" en
 el toolbar para cambiar de preset sin tener que abrir la ventana de
 EasyEffects — la afinación fina de cada plugin sigue haciéndose ahí,
 con su propia interfaz; esta app solo dispara comandos de línea de
-comandos sobre la instancia YA CORRIENDO, en modo oculto
-(`--hide-window`, confirmado en la versión 7.2.3 de Santiago — no
-existe flag `--gapplication-service` documentado en esta versión,
-pero `--hide-window` cumple la misma función: arranca/activa la
-instancia única de EasyEffects sin mostrar su ventana).
+comandos sobre la instancia YA CORRIENDO.
 
 Comandos usados (confirmados con `easyeffects --help` en la
 instalación real de Santiago, EasyEffects 7.2.3):
@@ -35,15 +31,36 @@ mostrar en la UI) en vez de romper la aplicación. Mismo patrón que
 core/actualizador.py (subprocess.run con timeout, try/except
 (TimeoutExpired, OSError), devuelve (éxito: bool, mensaje: str)).
 
+**`--hide-window` NO sirve para correr en segundo plano — bug real
+encontrado con `pw-link -l` real de Santiago**: la suposición original
+era que `--hide-window` mantenía el motor de audio de EasyEffects
+activo sin mostrar ventana (documentado así en varias rondas
+anteriores). Comparando el grafo real de PipeWire con y sin la
+ventana abierta, se confirmó que en la instalación real de Santiago
+`--hide-window` NUNCA llega a construir el pipeline de audio
+(`easyeffects_sink`/`easyeffects_source` + la cadena de plugins) — ese
+pipeline solo se arma cuando la ventana existe de VERDAD (mapeada por
+el gestor de ventanas), aunque sea un instante; pero UNA VEZ armado,
+**minimizarla no lo rompe** (confirmado por Santiago con `pw-link -l`
+en los tres estados: abierta, minimizada, cerrada — solo cerrarla con
+la X lo destruye). Por eso esta app ya NO usa `--hide-window` para
+nada: arranca EasyEffects con su ventana real y la minimiza por
+software con `wmctrl` (`_ocultar_ventana_*` más abajo) apenas
+aparece — funcionalmente "oculta" para el operador (además con el
+hint `skip_taskbar`, ni siquiera deja un ícono en la barra de tareas),
+pero con el pipeline de audio realmente construido. `wmctrl` es
+estándar de X11/EWMH — si no está instalado, esta app degrada limpio
+(deja la ventana visible, avisa en el log) en vez de fallar.
+
 GApplication (single-instance) — por qué el arranque necesita ser
 DETACHED y no bloqueante: si EasyEffects todavía no está corriendo,
 la PRIMERA invocación de `easyeffects` se convierte en la instancia
 "primaria" y se queda corriendo indefinidamente (no vuelve la
 terminal) — bloquearía subprocess.run() para siempre. Por eso
 asegurar_en_ejecucion() lanza el proceso DESACOPLADO
-(QProcess.startDetached) y sondea con `pgrep` (no depende de ningún
-flag propio de EasyEffects, así que es más tolerante a cambios de
-versión) hasta confirmar que ya quedó arriba, antes de dejar que
+(`_lanzar_proceso_con_captura`) y sondea con `pgrep` (no depende de
+ningún flag propio de EasyEffects, así que es más tolerante a cambios
+de versión) hasta confirmar que ya quedó arriba, antes de dejar que
 cualquier otro comando (que sí espera una respuesta rápida) se envíe.
 --------------------------------------------------------
 """
@@ -78,6 +95,10 @@ RUTA_LOG_PROCESO = os.path.join(DIRECTORIO_CONFIG, "easyeffects_stdout.txt")
 
 # Flags de la CLI — un solo lugar para actualizar si una versión
 # futura de EasyEffects les cambia el nombre (ver nota arriba).
+# FLAG_OCULTAR_VENTANA (--hide-window) queda definido por si algún día
+# una versión futura de EasyEffects lo corrige, pero esta app YA NO lo
+# usa para nada (ver nota de arriba) — el ocultamiento real se hace
+# con wmctrl sobre una ventana genuina, más abajo.
 FLAG_OCULTAR_VENTANA = "--hide-window"
 FLAG_CARGAR_PRESET = "--load-preset"
 FLAG_LISTAR_PRESETS = "--presets"
@@ -86,6 +107,18 @@ FLAG_PRESET_ACTIVO = "--active-preset"
 FLAG_SALIR = "--quit"
 CATEGORIA_SALIDA = "output"   # el ejemplo de `--help` usa el valor en inglés
 CATEGORIA_ENTRADA = "input"
+
+# Herramienta externa (estándar de X11/EWMH, NO específica de
+# EasyEffects) para minimizar/restaurar su ventana por software —
+# `wmctrl -b add,hidden,skip_taskbar` la iconifica Y le pide al
+# escritorio que no le muestre ningún botón en la barra de tareas;
+# `wmctrl -b remove,hidden` + `-a` la restaura y le da foco. Si no
+# está instalada, esta app degrada limpio: la ventana queda visible
+# (mejor eso que romper el pipeline de audio intentando algo raro) y
+# se avisa una vez en el log con la instrucción de instalación.
+NOMBRE_HERRAMIENTA_VENTANAS = "wmctrl"
+TIMEOUT_WMCTRL_SEGUNDOS = 3
+TIMEOUT_OCULTAR_VENTANA_SEGUNDOS = 5.0
 
 TIMEOUT_COMANDO_SEGUNDOS = 5
 # Bug real reportado: "se abre EasyEffects pero se cierra... 'no
@@ -153,6 +186,143 @@ def _esta_corriendo() -> bool:
         return False
 
 
+# ------------------------------------------------------------------
+# Ocultar/mostrar la ventana real por software (wmctrl) — ver la nota
+# grande al principio del archivo sobre por qué --hide-window no
+# sirve para esto en la instalación real de Santiago.
+# ------------------------------------------------------------------
+def _hay_herramienta_ventanas() -> bool:
+    return shutil.which(NOMBRE_HERRAMIENTA_VENTANAS) is not None
+
+
+def _buscar_id_ventana_easyeffects() -> str | None:
+    """ID de ventana X11 de EasyEffects según `wmctrl -lx` (columna de
+    WM_CLASS + título) — se busca "easyeffects" sin importar
+    mayúsculas en cualquiera de las dos, así no depende del idioma del
+    sistema. `None` si wmctrl no está instalado, falla, o no hay
+    ninguna ventana de EasyEffects abierta en este momento."""
+    if not _hay_herramienta_ventanas():
+        return None
+    try:
+        resultado = subprocess.run(
+            [NOMBRE_HERRAMIENTA_VENTANAS, "-lx"],
+            capture_output=True, text=True, timeout=TIMEOUT_WMCTRL_SEGUNDOS,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if resultado.returncode != 0:
+        return None
+    for linea in resultado.stdout.splitlines():
+        if "easyeffects" in linea.lower():
+            partes = linea.split()
+            if partes:
+                return partes[0]
+    return None
+
+
+def _intentar_ocultar_ventana_una_vez() -> bool:
+    """Un solo intento: busca la ventana y, si la encuentra, la
+    minimiza (`hidden`) y le pide al escritorio que no le muestre
+    ícono en la barra de tareas (`skip_taskbar`) — pedido explícito de
+    Santiago ("que pueda verlo y no verlo"). `False` si wmctrl no está
+    disponible o la ventana todavía no apareció (para reintentar)."""
+    id_ventana = _buscar_id_ventana_easyeffects()
+    if not id_ventana:
+        return False
+    try:
+        subprocess.run(
+            [NOMBRE_HERRAMIENTA_VENTANAS, "-i", "-r", id_ventana, "-b", "add,hidden,skip_taskbar"],
+            capture_output=True, timeout=TIMEOUT_WMCTRL_SEGUNDOS,
+        )
+        return True
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _intentar_mostrar_ventana_una_vez() -> bool:
+    """Inverso de `_intentar_ocultar_ventana_una_vez()` — restaura la
+    ventana (le saca `hidden`/`skip_taskbar`) y le da foco. `False` si
+    wmctrl no está disponible o no hay ninguna ventana para restaurar
+    (en ese caso hay que lanzar una instancia nueva, ver
+    `abrir_ventana()`)."""
+    id_ventana = _buscar_id_ventana_easyeffects()
+    if not id_ventana:
+        return False
+    try:
+        subprocess.run(
+            [NOMBRE_HERRAMIENTA_VENTANAS, "-i", "-r", id_ventana, "-b", "remove,hidden,remove,skip_taskbar"],
+            capture_output=True, timeout=TIMEOUT_WMCTRL_SEGUNDOS,
+        )
+        subprocess.run(
+            [NOMBRE_HERRAMIENTA_VENTANAS, "-i", "-a", id_ventana],
+            capture_output=True, timeout=TIMEOUT_WMCTRL_SEGUNDOS,
+        )
+        return True
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def ocultar_ventana_bloqueante(timeout_segundos: float = TIMEOUT_OCULTAR_VENTANA_SEGUNDOS) -> bool:
+    """Espera (BLOQUEANTE) a que la ventana de EasyEffects exista y la
+    oculta — para usar SOLO desde un camino ya bloqueante/interactivo
+    (asegurar_en_ejecucion(), disparado por el operador desde el menú
+    FM, que ya muestra un cursor de espera mientras corre). Sin
+    wmctrl, avisa una sola vez en el log y devuelve False sin
+    reintentar (no tiene sentido esperar algo que no va a pasar)."""
+    if not _hay_herramienta_ventanas():
+        registrar_evento(
+            f"EasyEffects: no se encontró '{NOMBRE_HERRAMIENTA_VENTANAS}' para ocultar su "
+            f"ventana — queda visible. Instalalo con: sudo apt install {NOMBRE_HERRAMIENTA_VENTANAS}"
+        )
+        return False
+    inicio = time.monotonic()
+    while time.monotonic() - inicio < timeout_segundos:
+        if _intentar_ocultar_ventana_una_vez():
+            registrar_evento("EasyEffects: ventana ocultada (wmctrl).")
+            return True
+        time.sleep(INTERVALO_SONDEO_SEGUNDOS)
+    registrar_error(f"EasyEffects: no se pudo ocultar su ventana dentro de {timeout_segundos}s.")
+    return False
+
+
+def ocultar_ventana_diferido(intentos_restantes: int = 15, intervalo_ms: int = 400):
+    """Igual que `ocultar_ventana_bloqueante()`, pero SIN bloquear el
+    hilo principal — se reintenta a sí misma vía QTimer.singleShot en
+    vez de un `time.sleep()` en loop. Pensado EXCLUSIVAMENTE para el
+    arranque fire-and-forget de MainWindow (lanzar la radio nunca debe
+    demorarse ni un instante esperando esto)."""
+    from PySide6.QtCore import QTimer
+
+    if not _hay_herramienta_ventanas():
+        registrar_evento(
+            f"EasyEffects: no se encontró '{NOMBRE_HERRAMIENTA_VENTANAS}' para ocultar su "
+            f"ventana — queda visible. Instalalo con: sudo apt install {NOMBRE_HERRAMIENTA_VENTANAS}"
+        )
+        return
+    if _intentar_ocultar_ventana_una_vez():
+        registrar_evento("EasyEffects: ventana ocultada al arrancar (wmctrl).")
+        return
+    if intentos_restantes <= 0:
+        registrar_error("EasyEffects: no se pudo ocultar su ventana tras varios intentos al arrancar.")
+        return
+    QTimer.singleShot(
+        intervalo_ms, lambda: ocultar_ventana_diferido(intentos_restantes - 1, intervalo_ms)
+    )
+
+
+def ocultar_ventana() -> tuple[bool, str]:
+    """Versión pública, para el ítem de menú "Ocultar ventana de
+    EasyEffects" — pedido explícito de Santiago de poder mostrarla y
+    ocultarla desde el propio programa, no solo mostrarla."""
+    if not _esta_corriendo():
+        return True, "EasyEffects no está abierto."
+    if ocultar_ventana_bloqueante(TIMEOUT_WMCTRL_SEGUNDOS * 3):
+        return True, "Ventana de EasyEffects ocultada."
+    return False, (
+        f"No se pudo ocultar la ventana (¿tenés '{NOMBRE_HERRAMIENTA_VENTANAS}' instalado?)."
+    )
+
+
 def _ejecutar_comando(*args, timeout: float = TIMEOUT_COMANDO_SEGUNDOS):
     """Envía `args` a la instancia YA CORRIENDO de EasyEffects (round
     trip corto vía D-Bus/GApplication). Nunca se debe llamar antes de
@@ -186,11 +356,17 @@ def _esperar_cli_responda(timeout_segundos: float) -> bool:
 
 
 def asegurar_en_ejecucion() -> tuple[bool, str]:
-    """Arranca EasyEffects OCULTO si todavía no está corriendo, o lo
-    oculta si ya estaba con la ventana abierta (el operador la abrió
-    a mano) — el mismo flag `--hide-window` sirve para las dos cosas.
-    No bloquea el arranque en sí (proceso desacoplado); sondea en DOS
-    fases antes de declarar éxito:
+    """Confirma que EasyEffects esté corriendo y respondiendo a
+    comandos remotos — la arranca si todavía no lo estaba. YA NO usa
+    `--hide-window` (ver nota grande al principio del archivo): si hay
+    que lanzarla de cero, arranca con su ventana real y la oculta por
+    software con wmctrl apenas aparece (`ocultar_ventana_bloqueante`).
+    Si ya estaba corriendo (la lanzó esta misma app antes, o el
+    operador la abrió a mano), acá NO se le toca la visibilidad —
+    mostrarla/ocultarla a partir de ahí es una acción explícita del
+    operador (ver `abrir_ventana()`/`ocultar_ventana()`).
+
+    Sondea en DOS fases antes de declarar éxito:
     1) `pgrep` hasta que el PROCESO esté vivo (arranque en sí).
     2) Un comando REAL de solo lectura (--presets) hasta que la
        instancia responda de verdad — bug real reportado ("se abre
@@ -210,23 +386,22 @@ def asegurar_en_ejecucion() -> tuple[bool, str]:
     if _esta_corriendo():
         # Ya estaba corriendo — pero "el proceso existe" no es lo
         # mismo que "responde": si estaba a mitad de arrancar o de
-        # cerrarse, --hide-window puede fallar en silencio. Se
-        # confirma con el mismo sondeo de CLI antes de dar por buena
-        # la instancia existente.
+        # cerrarse, un comando puede fallar en silencio. Se confirma
+        # con el mismo sondeo de CLI antes de dar por buena la
+        # instancia existente. Nunca se toca la visibilidad de la
+        # ventana acá (ver docstring).
         if _cli_responde():
-            _ejecutar_comando(FLAG_OCULTAR_VENTANA)
             return True, "EasyEffects ya estaba en ejecución."
         registrar_evento(
             "EasyEffects: proceso detectado (pgrep) pero no respondió al sondeo — esperando..."
         )
         if _esperar_cli_responda(TIMEOUT_PROBE_CLI_SEGUNDOS):
-            _ejecutar_comando(FLAG_OCULTAR_VENTANA)
             registrar_evento("EasyEffects: respondió tras esperar.")
             return True, "EasyEffects ya estaba en ejecución."
         registrar_error("EasyEffects: el proceso existe pero nunca respondió a los comandos.")
         return False, "EasyEffects está abierto pero no responde. Probá cerrarlo y volver a intentar."
 
-    if not _lanzar_proceso_con_captura([FLAG_OCULTAR_VENTANA]):
+    if not _lanzar_proceso_con_captura([]):
         return False, "No se pudo lanzar EasyEffects."
 
     if not _esperar_proceso_vivo(TIMEOUT_ARRANQUE_SEGUNDOS):
@@ -255,8 +430,13 @@ def asegurar_en_ejecucion() -> tuple[bool, str]:
         mensaje = "EasyEffects arrancó pero no llegó a responder."
         return False, mensaje + (f" Detalle: {cola[:300]}" if cola else " Reintentá desde el ícono FM.")
 
-    registrar_evento("EasyEffects: arrancó oculto y respondió correctamente.")
-    return True, "EasyEffects arrancó oculto correctamente."
+    registrar_evento("EasyEffects: arrancó y respondió correctamente.")
+    # Recién ahí, con el pipeline de audio ya armado (necesita la
+    # ventana real, ver nota grande al principio del archivo), se
+    # oculta por software — antes de esto hubiera sido inútil, la
+    # ventana todavía no existía.
+    ocultar_ventana_bloqueante()
+    return True, "EasyEffects arrancó correctamente."
 
 
 def _esperar_proceso_vivo(timeout_segundos: float) -> bool:
@@ -360,46 +540,65 @@ def esta_en_bypass() -> bool | None:
 
 def abrir_ventana() -> tuple[bool, str]:
     """Muestra la ventana real de EasyEffects para afinar los plugins
-    a fondo.
+    a fondo — pedido explícito de Santiago de poder verla y ocultarla
+    desde el propio programa (ver también `ocultar_ventana()`).
 
-    Bug real reportado ("tampoco abre desde FM EasyEffects (Opciones
-    Avanzadas)"): la suposición original — invocar el binario SIN
-    --hide-window sobre una instancia YA corriendo oculta activaría
-    esa instancia y GApplication presentaría su ventana sola, sin
-    hacer falta ningún otro paso — no se cumplió en la práctica (ya
-    quedaba documentado como incierto desde que se escribió, nunca
-    confirmado). No hay un flag "--show-window" documentado en el
-    --help real de Santiago para forzarlo directamente. La única
-    forma CONFIABLE de garantizar que la ventana aparezca, sin
-    depender de un comportamiento de reactivación no confirmado, es
-    cerrar la instancia oculta actual (`--quit`, sí confirmado en su
-    --help) y esperar a que termine de verdad, y recién ahí lanzar
-    una instancia NUEVA sin --hide-window — un arranque fresco sin
-    ese flag muestra su ventana por comportamiento normal de
-    cualquier app GTK, sin depender de si la activación remota la
-    "destapa" o no."""
+    Como esta app ya NO usa `--hide-window` (ver nota grande al
+    principio del archivo), la instancia en segundo plano YA tiene una
+    ventana real, solo que MINIMIZADA por wmctrl — mostrarla es
+    simplemente RESTAURARLA (`_intentar_mostrar_ventana_una_vez`),
+    mucho más liviano que reiniciar el proceso entero (mecanismo de la
+    ronda anterior, cuando todavía dependíamos de --hide-window). Si
+    wmctrl no está disponible, o por algún motivo no se encuentra la
+    ventana, cae de respaldo a ese mecanismo viejo (`--quit` + relanzar
+    fresca) — más lento, pero no depende de wmctrl para funcionar."""
     if not esta_instalado():
         return False, (
             "EasyEffects no está instalado en este sistema. "
             "Instalalo con: sudo apt install easyeffects"
         )
 
-    if _esta_corriendo():
-        _ejecutar_comando(FLAG_SALIR)
-        inicio = time.monotonic()
-        while time.monotonic() - inicio < TIMEOUT_ARRANQUE_SEGUNDOS:
-            if not _esta_corriendo():
-                break
-            time.sleep(INTERVALO_SONDEO_SEGUNDOS)
-        else:
+    if not _esta_corriendo():
+        if not _lanzar_proceso_con_captura([]):
+            return False, "No se pudo abrir la ventana de EasyEffects."
+        if not _esperar_proceso_vivo(TIMEOUT_ARRANQUE_SEGUNDOS):
+            cola = _cola_log_proceso()
             registrar_error(
-                "EasyEffects: no terminó de cerrarse tras --quit — no se pudo "
-                "relanzar con la ventana visible."
+                "EasyEffects: no apareció al intentar abrir su ventana."
+                + (f" Salida capturada:\n{cola}" if cola else "")
             )
-            return False, (
-                "EasyEffects no respondió al intentar cerrarlo para volver a "
-                "abrirlo con la ventana visible."
-            )
+            mensaje = "EasyEffects no respondió a tiempo al abrirse."
+            return False, mensaje + (f" Detalle: {cola[:300]}" if cola else "")
+        registrar_evento("EasyEffects: abierto con ventana visible.")
+        return True, "Ventana de EasyEffects abierta."
+
+    # Ya está corriendo (oculta por esta app, o visible) — restaurar
+    # la ventana existente es más liviano que reiniciar el proceso.
+    if _intentar_mostrar_ventana_una_vez():
+        registrar_evento("EasyEffects: ventana restaurada (wmctrl).")
+        return True, "Ventana de EasyEffects abierta."
+
+    # Respaldo sin wmctrl (o si no se encontró la ventana pese a estar
+    # corriendo): mismo mecanismo de la ronda anterior, cerrar y
+    # relanzar fresca sin --hide-window.
+    registrar_evento(
+        "EasyEffects: no se pudo restaurar la ventana con wmctrl — reiniciando el proceso para mostrarla."
+    )
+    _ejecutar_comando(FLAG_SALIR)
+    inicio = time.monotonic()
+    while time.monotonic() - inicio < TIMEOUT_ARRANQUE_SEGUNDOS:
+        if not _esta_corriendo():
+            break
+        time.sleep(INTERVALO_SONDEO_SEGUNDOS)
+    else:
+        registrar_error(
+            "EasyEffects: no terminó de cerrarse tras --quit — no se pudo "
+            "relanzar con la ventana visible."
+        )
+        return False, (
+            "EasyEffects no respondió al intentar cerrarlo para volver a "
+            "abrirlo con la ventana visible."
+        )
 
     if not _lanzar_proceso_con_captura([]):
         return False, "No se pudo abrir la ventana de EasyEffects."
@@ -407,11 +606,11 @@ def abrir_ventana() -> tuple[bool, str]:
     if not _esperar_proceso_vivo(TIMEOUT_ARRANQUE_SEGUNDOS):
         cola = _cola_log_proceso()
         registrar_error(
-            "EasyEffects: no volvió a aparecer tras relanzarlo (sin --hide-window) para mostrar la ventana."
+            "EasyEffects: no volvió a aparecer tras relanzarlo para mostrar la ventana."
             + (f" Salida capturada:\n{cola}" if cola else "")
         )
         mensaje = "EasyEffects no volvió a abrir tras relanzarlo."
         return False, mensaje + (f" Detalle: {cola[:300]}" if cola else "")
 
-    registrar_evento("EasyEffects: relanzado sin --hide-window para mostrar la ventana.")
+    registrar_evento("EasyEffects: relanzado (sin wmctrl disponible) para mostrar la ventana.")
     return True, "Ventana de EasyEffects abierta."
