@@ -5267,30 +5267,48 @@ todo el resto.
     `~/.config/pipewire/pipewire.conf.d/` y
     `systemctl --user restart pipewire pipewire-pulse wireplumber` —
     el sink `fm_processing_input` apareció sin errores
-    (`pactl list sinks short`). **Bug real encontrado y corregido**: al
-    elegir el sink nuevo como salida en el programa, no se escuchaba
-    NADA — `pw-link -l` reveló que la salida ya procesada se estaba
-    conectando a SÍ MISMA (`fm_processing_input:playback_FL |->
-    fm_processing_input:playback_FL`), un bucle cerrado que nunca
-    llegaba al hardware (`alsa_output...` quedaba `SUSPENDED`, sin
-    nada). Causa: `target.object = "@DEFAULT_SINK@"` en
-    `playback.props` se resuelve UNA sola vez al cargar el módulo, no
-    de nuevo cada vez que cambia el sink por defecto del sistema — y
-    el default había quedado apuntando, por una prueba de A/B
-    anterior, al propio `fm_processing_input`. Corregido apuntando
-    `target.object` directo al nombre real del dispositivo
-    (`alsa_output.pci-0000_00_1b.0.analog-stereo`) en vez de
-    `@DEFAULT_SINK@` — evita esta clase entera de bug para siempre, ya
-    no depende de cuál sea "el default" en el momento en que arranca
-    PipeWire. De paso se sacó `node.passive = true` de la salida (ya
-    no hacía falta, y podía estar contribuyendo a que la salida no se
-    conectara sola). **Pendiente**: que Santiago recargue el archivo
-    actualizado (mismo `cp` + `systemctl --user restart` de arriba,
-    sobrescribiendo `~/.config/pipewire/pipewire.conf.d/99-fm-processing.conf`)
-    y confirme que ahora SÍ se escucha el procesamiento — recién ahí
-    se puede evaluar si el preset (compresión/limitador/estéreo) suena
-    como se buscaba, y repetir el despliegue completo en su PC real de
-    transmisión.
+    (`pactl list sinks short`).
+
+    **Primer diagnóstico, descartado — fue un artefacto de `grep`, no
+    un bug real**: al no escucharse nada, un primer `pw-link -l |
+    grep -iE "fm_proc|alsa_output"` pareció mostrar la salida
+    conectada a SÍ MISMA (`fm_processing_input:playback_FL |->
+    fm_processing_input:playback_FL`) — pero ese filtro corta la línea
+    de ORIGEN de cada conexión si no contiene el patrón buscado,
+    mostrando solo el DESTINO y dando la falsa impresión de un bucle.
+    Repitiendo con contexto (`grep -B1`) se vio la imagen real: el
+    audio de VLC SÍ entraba bien a `fm_processing_input` — el problema
+    real estaba del otro lado, en que la salida ya procesada nunca
+    aparecía conectada a NADA (ni a `alsa_output`, ni a ningún otro
+    lado), ni siquiera con `target.object` ya apuntando al dispositivo
+    real. **Regla para el futuro**: un `grep` que filtra `pw-link -l`
+    por un patrón puede cortar la línea de contexto que prueba o
+    descarta un diagnóstico — repetir siempre con `-B1` (o sin filtro)
+    antes de confiar en una lectura así.
+
+    **Causa real, confirmada contra la documentación oficial (`Stream/
+    Output/Audio is a playback stream`, vía búsqueda — esta vez sí se
+    pudo verificar)**: `playback.props` tenía `media.class =
+    "Audio/Source"` — la clase EQUIVOCADA. "Audio/Source" es para algo
+    de lo que OTROS clientes capturan (como un micrófono virtual);
+    nunca se conecta solo a ningún lado, sin importar qué diga
+    `target.object`. La clase correcta para un stream que debe
+    empujar su audio HACIA un dispositivo de salida, igual que
+    cualquier reproductor común, es `Stream/Output/Audio`. Corregido
+    en `assets/pipewire-fm-processing.conf` — con la clase correcta,
+    `target.object` (ya apuntando al nombre real del hardware, no a
+    `@DEFAULT_SINK@`, sigue siendo la elección correcta para no
+    depender de cuál sea "el default" del sistema en cualquier
+    momento) debería conectarse solo, igual que lo haría VLC.
+
+    **Pendiente**: que Santiago recargue el archivo actualizado
+    (mismo `cp` + `systemctl --user restart` de siempre, sobrescribiendo
+    `~/.config/pipewire/pipewire.conf.d/99-fm-processing.conf`) y
+    confirme con `pw-link -l | grep -B1 -iE "fm_proc|alsa_output"` que
+    esta vez la salida SÍ aparece conectada a `alsa_output...`, y que
+    se escucha el procesamiento — recién ahí se puede evaluar si el
+    preset (compresión/limitador/estéreo) suena como se buscaba, y
+    repetir el despliegue completo en su PC real de transmisión.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
