@@ -4572,6 +4572,79 @@ todo el resto.
     que reportó, con playlists restauradas de una sesión anterior), y
     que el ítem Aleatorio en un bloque de separadores realmente varía
     de archivo cada vez que le toca sonar.
+46. ~~Refresco de clima en segundo plano (sin bloquear la emisión)~~ —
+    Santiago confirmó que el Comando HTH ya lee bien el clima, pero
+    notó "un breve silencio porque está leyendo los datos mediante la
+    web del servidor del clima" y pidió que se lea "en off... guardado
+    de antemano... que no interrumpa la emisión ni demore la carga,
+    que trabaje de alguna manera silenciosa". Causa real: `core/
+    clima_meteo.py:obtener_clima()` (única llamada de red de toda la
+    app) usaba `urllib.request.urlopen()` SINCRÓNICO, disparado
+    LAZY — recién en el momento exacto en que el Comando HTH necesita
+    el dato — dentro de `core/hth.py:resolver_comando_hth()`, que a su
+    vez se llama desde `GestorPublicidad._reproducir_comando_hth()` en
+    el hilo principal (esta app nunca usó threading). Si la caché de
+    20 minutos ya estaba vencida (o todavía vacía, poco después de
+    abrir la app), esa consulta bloqueaba TODO el hilo principal —
+    incluida la música ya sonando — hasta 6 segundos: el "breve
+    silencio" que reportó Santiago.
+
+    Corrección de fondo, no un ajuste de timeout: `core/clima_meteo.py`
+    ganó `RefrescadorClima` (`QObject` con `QNetworkAccessManager` —
+    HTTP asíncrono NATIVO de Qt, sin subprocess ni `QThread`, mismo
+    espíritu "sin threading" del resto de la app) que se dispara SOLO,
+    en segundo plano, cada `INTERVALO_REFRESCO_MINUTOS = 15` (bien por
+    debajo de los 20 minutos de vigencia de la caché — en uso normal,
+    el refresco de fondo renueva la caché mucho antes de que llegue a
+    vencerse) más una vez al arrancar la app (diferido 3s, mismo
+    criterio que EasyEffects/la búsqueda de actualización: no competir
+    con el primer render). `obtener_clima()` — el ÚNICO punto que usa
+    `core/hth.py` en el camino de reproducción — cambió de raíz: ya
+    NUNCA sale a la red, es una simple lectura de la caché en memoria
+    (instantánea); si no hay caché vigente (recién abierta la app,
+    antes del primer refresco de fondo, o si el refresco dejó de
+    andar por algún motivo), devuelve `None` de inmediato — `core/
+    hth.py` ya trataba eso exactamente igual que un clip de voz
+    faltante ("saltea todo el comando, sin sonar nada"), así que el
+    comportamiento de "nunca deja el aire en un estado raro" se
+    mantiene sin cambios, solo que ahora el camino de reproducción
+    JAMÁS puede bloquearse esperando una respuesta de red. Un
+    `_consultar_open_meteo_sincronico()` bloqueante queda disponible
+    como respaldo (sin usarse por ahora) por si algún día hace falta
+    un botón "probar ahora" en Configuración, donde una espera breve
+    sí es aceptable (acción manual explícita del operador). Wireado
+    en `MainWindow.__init__` (nuevo `_coordenadas_clima_actuales()`,
+    vuelve a leer `config_general.json → clima` en cada refresco —
+    un cambio de coordenadas en Configuración se aplica solo, sin
+    reiniciar la app).
+
+    Probado con `test_clima_refresco_async.py` (nuevo, 7
+    verificaciones): `obtener_clima()` con caché vacía devuelve `None`
+    de inmediato SIN tocar la red (confirmado interceptando
+    `urllib.request.urlopen` para asegurar que jamás se llama), con
+    caché vigente devuelve el valor cacheado, con caché vencida
+    devuelve `None` (no sirve datos arbitrariamente viejos si el
+    refresco de fondo dejó de andar); `RefrescadorClima.refrescar_ahora()`
+    dispara el pedido asíncrono sin bloquear ni tocar la caché hasta
+    que llega la respuesta (simulada con un reply falso, sin red real
+    — la caché se actualiza recién al emitir `finished`), no superpone
+    un segundo pedido mientras uno ya está en vuelo, un error de red
+    no rompe nada (la caché anterior queda intacta), y `iniciar()`
+    arranca el timer periódico con el intervalo correcto — + regresión
+    de `test_hth_motor.py`/`test_hth_gui.py` (sin cambios, ambos
+    inyectan `clima=`/`ahora=` directo, sin depender de la red) + suite
+    de regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py` — un cuarto fallo visto en
+    una corrida puntual, `test_dinesat_play_fundido_stops.py`, resultó
+    ser flaky/no reproducible: confirmado corriendo la MISMA suite dos
+    veces más, pasó limpio las dos, sin relación con este cambio).
+    **Sigue sin poder probarse contra la red real de Open-Meteo ni con
+    audio real**: falta que Santiago confirme que el Comando HTH de
+    TEMPERATURA/HUMEDAD ya no tiene ningún hueco de silencio al
+    dispararse (el dato debería estar siempre "tibio" de antemano), y
+    que cambiar la ciudad en Configuración → General sigue actualizando
+    el clima sin reiniciar la app.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
