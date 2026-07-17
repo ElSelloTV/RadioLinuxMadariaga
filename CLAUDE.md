@@ -4729,6 +4729,81 @@ todo el resto.
     — recién con ese detalle real se va a poder saber SI el problema es
     PipeWire, D-Bus, GTK, permisos, u otra cosa, y encarar el arreglo
     de fondo específico para su instalación.
+48. ~~Bug real encontrado con el log real de Santiago: `--presets` en
+    su instalación no lista un preset por línea, así que `--load-preset`
+    recibía basura~~ — pedido explícito: "ahí volvió a fallar, revisá
+    el archivo de log y decime cuál es el problema". Santiago pegó el
+    contenido de `easyeffects_stdout.txt` (solo un warning inofensivo
+    de PipeWire, ningún crash) y de `log_aplicacion.txt`, que reveló la
+    causa real de una:
+
+    ```
+    EasyEffects: arrancó oculto y respondió correctamente.
+    EasyEffects: '--load-preset Perfiles de salida: Radio Tuyu,' falló,
+    reintentando una vez...
+    EasyEffects: '--load-preset Perfiles de salida: Radio Tuyu,' no
+    respondió tras reintentar.
+    ```
+
+    EasyEffects arrancaba y respondía bien (la captura de la ronda
+    anterior confirmó que NO era un crash) — el problema era que
+    `listar_presets()` le estaba mandando a `--load-preset` el string
+    **`"Perfiles de salida: Radio Tuyu,"`** en vez de simplemente
+    **`"Radio Tuyu"`**. Causa de fondo: `listar_presets()` asumía que
+    `--presets` imprime UN NOMBRE DE PRESET POR LÍNEA (suposición
+    basada en la ayuda de la CLI, nunca confirmada contra la salida
+    real) — pero en la instalación real de Santiago (EasyEffects 7.2.3,
+    sistema en español) imprime UNA LÍNEA POR CATEGORÍA, con los
+    nombres separados por coma:
+    ```
+    Perfiles de salida: Radio Tuyu,
+    Perfiles de entrada:
+    ```
+    `listar_presets()` tomaba la línea ENTERA como si fuera el nombre
+    de un preset — de ahí el string con el prefijo de categoría y la
+    coma pegados, que obviamente no coincide con ningún preset real
+    guardado, así que `--load-preset` fallaba siempre (ni un timeout ni
+    un crash — un simple "no existe un preset con ese nombre").
+
+    Corregido en `listar_presets()` (`core/easyeffects_control.py`)
+    con un parseo tolerante al formato: por cada línea no vacía, si
+    tiene `":"`, se toma solo lo de DESPUÉS de los dos puntos (sin
+    importar el texto ni el idioma de la categoría — "Perfiles de
+    salida"/"Output presets"/lo que sea) y se separa por comas,
+    filtrando vacíos; si la línea NO tiene `":"`, se toma entera como
+    un solo nombre (compatibilidad hacia atrás, por si alguna versión
+    sí lista un nombre por línea sin categorías — es el formato que ya
+    usaban los tests/binarios falsos preexistentes, así que sigue
+    funcionando sin tocarlos). `preset_activo()` no se tocó — usa
+    `--active-preset <categoría>`, una consulta de UNA sola categoría
+    a la vez, sin ambigüedad que resolver con un prefijo, y el log no
+    mostró ningún síntoma de que tuviera el mismo problema.
+
+    Probado con `test_easyeffects_parseo_presets.py` (nuevo, 6
+    verificaciones): el formato REAL exacto que mandó Santiago (un
+    preset de salida, ninguno de entrada) parsea a `["Radio Tuyu"]`;
+    varios presets en la misma categoría separados por coma; el mismo
+    parseo funciona igual con el encabezado en inglés ("Output
+    presets:"); el formato viejo sin categorías (un nombre por línea,
+    sin `":"`) sigue funcionando igual que antes; sin presets
+    guardados en ninguna categoría da lista vacía (no basura tipo
+    `["", ""]`); y de punta a punta, `cargar_preset("Radio Tuyu")` con
+    el nombre ya limpio le manda a la CLI exactamente
+    `('--load-preset', 'Radio Tuyu')`, confirmado interceptando el
+    comando real — + regresión de `test_easyeffects_control.py`,
+    `test_ronda_dnd_reanalisis_ee.py` y
+    `test_easyeffects_captura_error.py` (los tres sin cambios, sin
+    fallos nuevos) + suite de regresión completa sin fallos nuevos
+    (mismos 3 fallos preexistentes de siempre:
+    `test_confirmaciones.py`, `test_log_git.py`, `test_ventana3.py`).
+    **Sigue sin poder confirmarse contra el EasyEffects real de
+    Santiago** (el sandbox no lo tiene instalado, el formato real se
+    reconstruyó a partir del log que él pegó, no de una instalación
+    real corriendo acá): falta que Santiago vuelva a intentar cambiar
+    de preset desde el menú "🎚 FM" y confirme que ahora sí se aplica
+    en el aire — si el menú le muestra "Radio Tuyu" (sin el prefijo de
+    categoría) como opción, es la señal de que el parseo ya está
+    limpio.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
