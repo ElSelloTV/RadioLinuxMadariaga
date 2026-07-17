@@ -50,6 +50,7 @@ from PySide6.QtGui import QBrush, QColor
 from gui.common_widgets import ArbolProgramadorConDrop
 from gui.styles import (
     ROL_ANALISIS_AUDIO, ROL_VIGENCIA, ROL_ES_COMANDO, ROL_TIPO_COMANDO, ROL_PARAMETRO_COMANDO, COLOR_COMANDO,
+    ROL_ES_ALEATORIO, ROL_CATEGORIA_ALEATORIO, ROL_RECURSIVO_ALEATORIO, COLOR_ALEATORIO,
 )
 from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
 from gui.dialogo_editar_bloque import DialogoEditarBloque
@@ -57,6 +58,7 @@ from gui.dialogo_programaciones_guardadas import DialogoProgramacionesGuardadas
 from gui.dialogo_duplicar_programacion import DialogoDuplicarProgramacion
 from gui.dialogo_insertar_comando_fmt import DialogoInsertarComandoFMT
 from gui.dialogo_insertar_comando_hth import DialogoInsertarComandoHTH
+from gui.dialogo_insertar_item_aleatorio import DialogoInsertarItemAleatorio
 from gui import estado_ui
 from core.audio_engine import obtener_duracion_formateada
 from config.settings import (
@@ -199,9 +201,15 @@ class VentanaProgramador(QDialog):
             "humedad concatenando los clips de voz del género \"HTH\"."
         )
         self.btn_insertar_hth.clicked.connect(self._insertar_comando_hth)
+        self.btn_insertar_aleatorio = QPushButton("🎲 Ítem Aleatorio...")
+        self.btn_insertar_aleatorio.setToolTip(
+            "Elige un archivo al azar de una categoría/subcategoría CADA VEZ que\n"
+            "le toca sonar (nunca el mismo fijo) — para darle dinamismo, ej. separadores."
+        )
+        self.btn_insertar_aleatorio.clicked.connect(self._insertar_item_aleatorio)
         for boton in (
             self.btn_agregar_item, self.btn_reemplazar, self.btn_quitar,
-            self.btn_insertar_fmt, self.btn_insertar_hth,
+            self.btn_insertar_fmt, self.btn_insertar_hth, self.btn_insertar_aleatorio,
         ):
             fila_items.addWidget(boton, 1)
         layout_grupo.addLayout(fila_items)
@@ -355,6 +363,45 @@ class VentanaProgramador(QDialog):
         bloque.setExpanded(True)
         return hijo
 
+    def _agregar_item_aleatorio_a_bloque(self, bloque, categoria: list, recursivo: bool, indice: int = None):
+        """Ítem ALEATORIO (pedido explícito: "agregar un ítem aleatorio
+        de alguna categoría o sub-categoría, para darle dinamismo") —
+        mismo concepto que VentanaPublicidad.agregar_item_aleatorio(),
+        acá en el editor del Programador."""
+        titulo_categoria = " / ".join(categoria) if categoria else "(categoría no encontrada)"
+        hijo = QTreeWidgetItem([f"🎲 Aleatorio: {titulo_categoria}", "—", "—"])
+        hijo.setData(0, Qt.ItemDataRole.UserRole, "")
+        hijo.setData(0, ROL_ES_ALEATORIO, True)
+        hijo.setData(0, ROL_CATEGORIA_ALEATORIO, categoria)
+        hijo.setData(0, ROL_RECURSIVO_ALEATORIO, recursivo)
+        fondo = QBrush(QColor(COLOR_ALEATORIO))
+        for columna in range(3):
+            hijo.setBackground(columna, fondo)
+            hijo.setForeground(columna, QBrush(QColor("white")))
+        if indice is None:
+            bloque.addChild(hijo)
+        else:
+            bloque.insertChild(indice, hijo)
+        bloque.setExpanded(True)
+        return hijo
+
+    def _insertar_item_aleatorio(self):
+        bloque = self._bloque_destino_actual()
+        if bloque is None:
+            QMessageBox.information(self, "Ítem Aleatorio", "Primero creá un bloque horario.")
+            return
+        if self._ventana_explorador is None:
+            QMessageBox.information(self, "Ítem Aleatorio", "No hay Explorador disponible.")
+            return
+        dialogo = DialogoInsertarItemAleatorio(self._ventana_explorador.tree_categorias, parent=self)
+        if dialogo.exec() != DialogoInsertarItemAleatorio.DialogCode.Accepted:
+            return
+        categoria, recursivo = dialogo.resultado()
+        if categoria:
+            self._agregar_item_aleatorio_a_bloque(
+                bloque, categoria, recursivo, self._indice_insercion_actual(bloque),
+            )
+
     def _insertar_comando_fmt(self):
         bloque = self._bloque_destino_actual()
         if bloque is None:
@@ -407,6 +454,13 @@ class VentanaProgramador(QDialog):
                 "tipo_comando": hijo.data(0, ROL_TIPO_COMANDO),
                 "parametro_comando": hijo.data(0, ROL_PARAMETRO_COMANDO),
             }
+        if hijo.data(0, ROL_ES_ALEATORIO):
+            return {
+                "es_aleatorio": True,
+                "categoria_aleatorio": hijo.data(0, ROL_CATEGORIA_ALEATORIO) or [],
+                "recursivo_aleatorio": True if hijo.data(0, ROL_RECURSIVO_ALEATORIO) is None
+                    else bool(hijo.data(0, ROL_RECURSIVO_ALEATORIO)),
+            }
         analisis = hijo.data(0, ROL_ANALISIS_AUDIO) or {}
         vigencia = hijo.data(0, ROL_VIGENCIA) or {}
         return {
@@ -446,6 +500,11 @@ class VentanaProgramador(QDialog):
             if item_data.get("es_comando"):
                 self._agregar_comando_a_bloque(
                     bloque, item_data.get("tipo_comando", "FMT"), item_data.get("parametro_comando", ""), indice,
+                )
+            elif item_data.get("es_aleatorio"):
+                self._agregar_item_aleatorio_a_bloque(
+                    bloque, item_data.get("categoria_aleatorio") or [],
+                    item_data.get("recursivo_aleatorio", True), indice,
                 )
             else:
                 self._agregar_registro_a_bloque(bloque, item_data, indice)
@@ -525,6 +584,15 @@ class VentanaProgramador(QDialog):
                 "Un Comando (FMT/HTH) no se \"reemplaza\" — quitalo (botón ✕ Quitar)\n"
                 "y agregá uno nuevo con \"▶ Comando FMT...\" o \"▶ Comando HTH...\"\n"
                 "si querés cambiar el comando.",
+            )
+            return
+
+        if item.data(0, ROL_ES_ALEATORIO):
+            QMessageBox.information(
+                self, "Reemplazar",
+                "Un Ítem Aleatorio no se \"reemplaza\" — quitalo (botón ✕ Quitar)\n"
+                "y agregá uno nuevo con \"🎲 Ítem Aleatorio...\" si querés cambiar\n"
+                "la categoría.",
             )
             return
 
@@ -647,6 +715,11 @@ class VentanaProgramador(QDialog):
             for item in bloque.get("items", []):
                 if item.get("es_comando"):
                     self._agregar_comando_a_bloque(nodo, item.get("tipo_comando", "FMT"), item.get("parametro_comando", ""))
+                    continue
+                if item.get("es_aleatorio"):
+                    self._agregar_item_aleatorio_a_bloque(
+                        nodo, item.get("categoria_aleatorio") or [], item.get("recursivo_aleatorio", True),
+                    )
                     continue
                 hijo = QTreeWidgetItem([item.get("titulo", ""), item.get("duracion", ""), item.get("codigo", "—")])
                 hijo.setData(0, Qt.ItemDataRole.UserRole, item.get("ruta", ""))

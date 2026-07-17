@@ -4458,6 +4458,120 @@ todo el resto.
     gastar CPU de más, y (3) que el Comando HTH ahora suena con los
     clips bien pegados, sin el hueco de silencio que tenía antes entre
     "HORA" y "MINUTOS".
+45. ~~Bug real: al abrir solo sonaba el primer ítem de Ventana 1 y
+    saltaba a Emisión + ítem Aleatorio de categoría/subcategoría en el
+    Programador~~ — dos pedidos:
+
+    **a) Bug real corregido — "cuando abro, se reproduce solo el
+    primer item de la ventana 1, y luego pasa a la 2"**: investigado a
+    fondo con un test que simula el arranque real (`_arrancar_al_iniciar`
+    + varios `finalizo_item` consecutivos sobre un bloque de 3 tandas)
+    — la lógica de avance DENTRO de un bloque (`_avanzar()` +
+    `_bloque_automatico_actual`) resultó estar bien en el caso general,
+    pero se encontró la causa real con un segundo test que reproduce
+    el escenario de un verde (`item_siguiente`) restaurado de una
+    sesión anterior (`playlist_publicidad.json`) apuntando a OTRO
+    bloque: `disparar_bloque()`/`_reproducir_primero_del_bloque()`
+    llamaban a `_asegurar_rojo_y_verde()` después de arrancar el
+    primer ítem, pero ese helper por diseño NUNCA pisa un verde que
+    "todavía parece válido" (sigue en el árbol, tiene ruta, sin
+    vigencia vencida) — para no interferir con una elección manual del
+    operador. El problema: un verde STALE de una sesión anterior (o
+    dejado en otro bloque) sigue pareciendo válido aunque apunte a un
+    bloque totalmente distinto del que se acaba de disparar. Con ese
+    verde stale todavía puesto, `_avanzar()` — al terminar el PRIMER
+    ítem del bloque recién disparado — evalúa el candidato (ese verde
+    viejo), ve que `candidato.parent() is not self._bloque_automatico_actual`,
+    y llama a `_finalizar_bloque_automatico()` de inmediato: exactamente
+    "suena uno y salta a la 2". Corregido con un helper nuevo
+    compartido, `_reproducir_primer_item_de_bloque()` (usado por
+    `disparar_bloque()` Y `_reproducir_primero_del_bloque()`): después
+    de arrancar el primer ítem, si el verde actual NO apunta dentro del
+    bloque recién disparado, se recalcula a mano al próximo ítem válido
+    DENTRO de ese bloque (o se limpia a `None` si no hay más) — antes
+    de llamar a `_asegurar_rojo_y_verde()`. Confirmado con un test que
+    primero reprodujo el bug tal cual en el código original (`git
+    stash` sobre el fix, la aserción del verde stale falla exactamente
+    como describe Santiago) y luego con el fix aplicado, el bloque
+    completo (las 3 tandas) suena entero antes de pasar a Emisión.
+
+    **b) Ítem Aleatorio en el Programador de Ventana 1 (pedido
+    explícito: "agregar un ítem aleatorio de alguna categoría o
+    sub-categoría, para darle dinamismo, por ejemplo en separadores...
+    que sea buen aleatorio y variado")**: a diferencia de arrastrar un
+    archivo puntual, este ítem nuevo (`ROL_ES_ALEATORIO`,
+    `ROL_CATEGORIA_ALEATORIO`, `ROL_RECURSIVO_ALEATORIO` en
+    `gui/styles.py`, color verde azulado `#16a085` para distinguirlo
+    del azul de los Comandos) NO tiene una ruta fija — guarda el
+    CAMINO de una categoría/subcategoría y recién resuelve un archivo
+    al azar de ahí CADA VEZ que le toca sonar
+    (`GestorPublicidad._resolver_item_aleatorio()`), nunca el mismo
+    archivo elegido una sola vez para siempre. Reutiliza al 100% la
+    infraestructura YA PREPARADA para esto en una ronda anterior
+    ("preparación explícita para el Musicalizador Avanzado"):
+    `VentanaExplorador.elegir_aleatorio_de_categoria()`/
+    `listar_registros_de_categoria()`/`buscar_categoria_por_ruta()`, y
+    el mismo mecanismo de no-repetir del Musicalizador
+    (`config.settings.rutas_recientes_en_historial()`, lee el
+    historial de reproducción PERSISTENTE) — "buen aleatorio y
+    variado" se traduce en: nunca repite un archivo hasta agotar los
+    demás de esa categoría, y esto sobrevive un reinicio porque lee el
+    historial en disco, no un contador en memoria.
+    - **Motor** (`core/playlist_manager.py`): `_item_valido()` acepta
+      un ítem aleatorio como válido estructuralmente (igual que un
+      Comando — no "suena" hasta que se resuelve). `_reproducir_item()`
+      detecta `es_aleatorio(item)` y llama a
+      `_reproducir_item_aleatorio()`: resuelve un registro real,
+      arranca `motor.reproducir()` con SU análisis completo (recorte
+      de silencio + nivelado, mismo patrón que toda la app) y llama a
+      `registrar_reproduccion()` con la ruta REAL resuelta (no la del
+      placeholder, que nunca tiene ruta propia — es lo que hace
+      funcionar el no-repetir de una reproducción a la siguiente). Si
+      la categoría está vacía, borrada, o no hay `_ventana_explorador`
+      disponible, se saltea sin sonar nada y sigue con el próximo
+      ítem real — mismo criterio "nunca romper la emisión" que ya
+      rige toda la app.
+    - **UI** (`gui/dialogo_insertar_item_aleatorio.py`, nuevo): elige
+      categoría con el selector ya existente
+      (`gui/dialogo_seleccionar_categoria.py`, mismo que usa el
+      Musicalizador) + checkbox "Incluir subcategorías" (default
+      activado). Botón nuevo "🎲 Ítem Aleatorio..." en el Programador,
+      junto a los de Comando FMT/HTH. "Reemplazar" avisa que un ítem
+      aleatorio no se reemplaza (quitar + agregar uno nuevo), mismo
+      criterio ya usado para los Comandos.
+    - **Persistencia end-to-end**: viaja por TODOS los caminos ya
+      existentes sin duplicar lógica — `VentanaPublicidad.cargar_bloques()`
+      (Ventana 1), `GestorPublicidad._guardar_estado_ahora()`/
+      `_restaurar_desde_disco()` (playlist_publicidad.json),
+      `VentanaProgramador._serializar_item()`/`_serializar_bloques()`/
+      `_cargar_programacion_existente()` (programacion.json), y
+      Copiar/Pegar del Programador (reusa `_serializar_item()`, mismo
+      formato de datos que el resto).
+
+    Probado con `test_verde_stale_al_disparar_bloque.py` (nuevo: 3
+    tandas en el bloque vigente, un verde stale apuntando a OTRO
+    bloque de una "sesión restaurada", confirma que el fix lo
+    recalcula a T2 dentro del bloque disparado y que las 3 tandas
+    suenan enteras antes de pasar a Emisión — y confirmado que este
+    mismo test FALLA tal cual sobre el código sin el fix, vía `git
+    stash`) + `test_arranque_bloque_completo.py` (nuevo, regresión del
+    caso general sin verde stale) + `test_item_aleatorio_v1.py` (nuevo,
+    12 verificaciones: creación del ítem, `_item_valido()`, resolución
+    real con análisis completo, variedad entre 3 archivos en 6 vueltas
+    sin repetir de entrada, categoría vacía se saltea sin sonar nada,
+    persistencia ida y vuelta en playlist_publicidad.json, diálogo
+    expone categoría+recursivo) + `test_item_aleatorio_programador.py`
+    (nuevo, round-trip completo: insertar → guardar programación →
+    vaciar el editor → cargar de nuevo → copiar/pegar → "Aplicar
+    Ahora" en Ventana 1) + suite de regresión completa sin fallos
+    nuevos (mismos 3 fallos preexistentes de siempre:
+    `test_confirmaciones.py`, `test_log_git.py`, `test_ventana3.py`).
+    **Sigue sin poder probarse con audio/VLC real**: falta que
+    Santiago confirme con su radio real que al abrir la app ahora suena
+    el bloque horario COMPLETO antes de pasar a Emisión (el caso real
+    que reportó, con playlists restauradas de una sesión anterior), y
+    que el ítem Aleatorio en un bloque de separadores realmente varía
+    de archivo cada vez que le toca sonar.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

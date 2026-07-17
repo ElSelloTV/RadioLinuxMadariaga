@@ -44,7 +44,7 @@ from core.audio_engine import MotorAudio
 from core.hth import resolver_comando_hth, TIPO_COMANDO_HTH
 from config.settings import (
     cargar_playlist_publicidad, guardar_playlist_publicidad, registrar_error, registrar_evento,
-    titulo_bloque_sin_prefijo_hora, vigencia_activa,
+    titulo_bloque_sin_prefijo_hora, vigencia_activa, rutas_recientes_en_historial, registrar_reproduccion,
 )
 
 DEBOUNCE_GUARDADO_PUBLICIDAD_MS = 500
@@ -289,10 +289,15 @@ class GestorPublicidad:
         _item_valido() para avanzar, sin cortar la emisión ni tocar
         el ítem (sigue en la lista, se saltea cada vez que le toca).
         Un ítem-comando (FMT) SÍ es un candidato válido — no "suena"
-        pero se ejecuta al llegarle el turno (ver _reproducir_item)."""
+        pero se ejecuta al llegarle el turno (ver _reproducir_item). Un
+        ítem ALEATORIO también es válido estructuralmente — no tiene
+        ruta fija, recién se resuelve (y se puede saltear si la
+        categoría está vacía) al llegarle el turno."""
         if item is None:
             return False
         if self.ventana.es_comando(item):
+            return True
+        if self.ventana.es_aleatorio(item):
             return True
         if not item.data(0, Qt.ItemDataRole.UserRole):
             return False
@@ -358,6 +363,9 @@ class GestorPublicidad:
             self.ventana.marcar_siguiente_item(siguiente)
             self._avanzar()
             return
+        if self.ventana.es_aleatorio(item):
+            self._reproducir_item_aleatorio(item)
+            return
         self.ventana.tree.setCurrentItem(item)
         self.ventana.marcar_reproduciendo_item(item)
         # Nuevo ítem arrancando: habilita de nuevo el fade-out
@@ -380,6 +388,70 @@ class GestorPublicidad:
         )
         self.ventana.set_indicador_en_vivo(True)
         registrar_evento(f"Publicidad: reproduciendo '{item.text(0)}'")
+
+    # ------------------------------------------------------------------
+    # Ítem ALEATORIO (pedido explícito, Programador: "para darle
+    # dinamismo, por ejemplo en separadores... que sea buen aleatorio y
+    # variado"): a diferencia de una tanda normal, no tiene una ruta
+    # fija — resuelve un archivo al azar de la categoría guardada CADA
+    # VEZ que le toca sonar, con el mismo no-repetir vía historial
+    # persistente que ya usa el Musicalizador Avanzado
+    # (rutas_recientes_en_historial), así nunca repite un archivo hasta
+    # agotar los demás de esa categoría.
+    # ------------------------------------------------------------------
+    def _resolver_item_aleatorio(self, item):
+        if self._ventana_explorador is None:
+            return None
+        ruta_categoria = self.ventana.categoria_aleatorio_de_item(item) or []
+        categoria = self._ventana_explorador.buscar_categoria_por_ruta(ruta_categoria)
+        if categoria is None:
+            return None
+        recursivo = self.ventana.recursivo_aleatorio_de_item(item)
+        candidatos = self._ventana_explorador.listar_registros_de_categoria(categoria, recursivo)
+        if not candidatos:
+            return None
+        rutas_candidatas = {r.get("ruta") for r in candidatos if r.get("ruta")}
+        evitar = rutas_recientes_en_historial(rutas_candidatas, max(0, len(rutas_candidatas) - 1))
+        return self._ventana_explorador.elegir_aleatorio_de_categoria(categoria, recursivo, excluir_rutas=evitar)
+
+    def _reproducir_item_aleatorio(self, item):
+        registro = self._resolver_item_aleatorio(item)
+        if registro is None:
+            # Pedido explícito (mismo criterio que el resto de la app):
+            # una categoría vacía, borrada, o sin Explorador nunca
+            # rompe la emisión — se saltea sin sonar nada y sigue
+            # directo con el próximo ítem real.
+            registrar_evento(
+                f"Publicidad: ítem aleatorio '{item.text(0)}' salteado "
+                "(categoría vacía, borrada, o sin Explorador)"
+            )
+            self.ventana.marcar_reproduciendo_item(item)
+            siguiente = self.ventana.tree.itemBelow(item)
+            while siguiente is not None and not self._item_valido(siguiente):
+                siguiente = self.ventana.tree.itemBelow(siguiente)
+            self.ventana.marcar_siguiente_item(siguiente)
+            self._avanzar()
+            return
+
+        self.ventana.tree.setCurrentItem(item)
+        self.ventana.marcar_reproduciendo_item(item)
+        self._item_fade_out_v1_disparado = None
+        self.motor.reproducir(
+            registro.get("ruta", ""),
+            punto_inicio_ms=registro.get("punto_inicio_ms") or 0,
+            punto_fin_ms=registro.get("punto_fin_ms"),
+            ganancia_db=registro.get("ganancia_db") or 0.0,
+            volumen_base=self._volumen_base,
+        )
+        self.ventana.set_indicador_en_vivo(True)
+        # El historial se registra con el archivo REAL resuelto (no el
+        # ítem placeholder, que nunca tiene ruta propia) — es lo que
+        # permite que el no-repetir funcione entre una reproducción y
+        # la siguiente.
+        registrar_reproduccion(
+            "Publicidad", registro.get("titulo", ""), registro.get("codigo", ""), registro.get("ruta", ""),
+        )
+        registrar_evento(f"Publicidad: ítem aleatorio '{item.text(0)}' -> '{registro.get('titulo', '')}'")
 
     # ------------------------------------------------------------------
     # Comando HTH (Hora-Temperatura-Humedad) — pedido explícito,
@@ -520,17 +592,52 @@ class GestorPublicidad:
         self._reproducir_item(item)
         self._asegurar_rojo_y_verde()
 
-    def _reproducir_primero_del_bloque(self, item_bloque):
-        primero = None
+    def _primer_item_valido_de(self, item_bloque):
         for i in range(item_bloque.childCount()):
             candidato = item_bloque.child(i)
             if self._item_valido(candidato):
-                primero = candidato
-                break
+                return candidato
+        return None
+
+    def _reproducir_primer_item_de_bloque(self, item_bloque, primero):
+        """Arranca `primero` y deja el verde (item_siguiente) apuntando
+        DENTRO de `item_bloque` — nunca a un ítem de otro lado.
+
+        Bug real corregido (pedido explícito: "al abrirse reproduzca
+        todo el bloque horario correspondiente" — en la práctica solo
+        sonaba el primer ítem y saltaba directo a Emisión): un verde
+        restaurado de una sesión anterior (playlist_publicidad.json),
+        o dejado por el operador sobre OTRO bloque, podía seguir
+        "pareciendo válido" (sigue en el árbol, tiene ruta, sin
+        vigencia vencida) — `_asegurar_rojo_y_verde()` por diseño NO
+        pisa un verde que ya luce válido (para no interferir con una
+        elección manual del operador), así que ese verde stale
+        quedaba apuntando afuera del bloque recién disparado. En
+        `_avanzar()`, el freno "no cruzar de bloque"
+        (`candidato.parent() is not self._bloque_automatico_actual`)
+        entonces se disparaba INMEDIATAMENTE después del primer ítem
+        — visualmente indistinguible de "solo suena uno y salta a la
+        2". Acá, disparar un bloque nuevo (automático o manual) SIEMPRE
+        fuerza que el verde apunte al próximo ítem válido DENTRO de
+        este mismo bloque (o quede vacío si no hay más), sin importar
+        qué hubiera marcado antes."""
+        self._reproducir_item(primero)
+        verde_actual = self.ventana.item_siguiente()
+        if verde_actual is None or verde_actual.parent() is not item_bloque:
+            siguiente = self.ventana.tree.itemBelow(primero)
+            while siguiente is not None and not self._item_valido(siguiente):
+                siguiente = self.ventana.tree.itemBelow(siguiente)
+            if siguiente is not None and siguiente.parent() is item_bloque:
+                self.ventana.marcar_siguiente_item(siguiente)
+            else:
+                self.ventana.marcar_siguiente_item(None)
+        self._asegurar_rojo_y_verde()
+
+    def _reproducir_primero_del_bloque(self, item_bloque):
+        primero = self._primer_item_valido_de(item_bloque)
         if primero is None:
             return
-        self._reproducir_item(primero)
-        self._asegurar_rojo_y_verde()
+        self._reproducir_primer_item_de_bloque(item_bloque, primero)
 
     # ------------------------------------------------------------------
     # Modo AUTOMÁTICO: disparar un bloque completo por horario
@@ -546,19 +653,12 @@ class GestorPublicidad:
         self._bloque_automatico_actual = item_bloque
         self._callback_bloque_finalizado = al_finalizar
 
-        primero = None
-        for i in range(item_bloque.childCount()):
-            candidato = item_bloque.child(i)
-            if self._item_valido(candidato):
-                primero = candidato
-                break
-
+        primero = self._primer_item_valido_de(item_bloque)
         if primero is None:
             self._finalizar_bloque_automatico()
             return
 
-        self._reproducir_item(primero)
-        self._asegurar_rojo_y_verde()
+        self._reproducir_primer_item_de_bloque(item_bloque, primero)
 
     def _finalizar_bloque_automatico(self):
         registrar_evento("Publicidad: bloque automático finalizado")
@@ -859,6 +959,13 @@ class GestorPublicidad:
                         "es_comando": True,
                         "tipo_comando": self.ventana.tipo_comando_de_item(hijo),
                         "parametro_comando": self.ventana.parametro_comando_de_item(hijo),
+                    })
+                    continue
+                if self.ventana.es_aleatorio(hijo):
+                    items.append({
+                        "es_aleatorio": True,
+                        "categoria_aleatorio": self.ventana.categoria_aleatorio_de_item(hijo) or [],
+                        "recursivo_aleatorio": self.ventana.recursivo_aleatorio_de_item(hijo),
                     })
                     continue
                 analisis = self.ventana.analisis_de_item(hijo)

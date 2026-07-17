@@ -43,6 +43,7 @@ from gui.styles import (
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
     ROL_YA_REPRODUCIDO, icono_reproducido, ROL_VIGENCIA,
     ROL_ES_COMANDO, ROL_TIPO_COMANDO, ROL_PARAMETRO_COMANDO, COLOR_COMANDO,
+    ROL_ES_ALEATORIO, ROL_CATEGORIA_ALEATORIO, ROL_RECURSIVO_ALEATORIO, COLOR_ALEATORIO,
 )
 from config.settings import cargar_configuracion, titulo_bloque_sin_prefijo_hora, registrar_reproduccion
 
@@ -307,6 +308,12 @@ class VentanaPublicidad(QWidget):
                         nodo_bloque, item.get("tipo_comando", "FMT"), item.get("parametro_comando", ""),
                     )
                     continue
+                if item.get("es_aleatorio"):
+                    self.agregar_item_aleatorio(
+                        nodo_bloque, item.get("categoria_aleatorio") or [],
+                        item.get("recursivo_aleatorio", True),
+                    )
+                    continue
                 self.agregar_tanda(
                     nodo_bloque, item.get("titulo", ""), item.get("duracion", ""),
                     item.get("codigo", "—"), item.get("ruta", ""),
@@ -360,6 +367,37 @@ class VentanaPublicidad(QWidget):
 
     def parametro_comando_de_item(self, item):
         return item.data(0, ROL_PARAMETRO_COMANDO)
+
+    def agregar_item_aleatorio(self, nodo_bloque, categoria: list, recursivo: bool = True):
+        """Ítem ALEATORIO (pedido explícito, Programador: "para darle
+        dinamismo, por ejemplo en separadores"): tampoco tiene una
+        ruta FIJA — a diferencia de una tanda normal, guarda el CAMINO
+        de una categoría y recién elige un archivo al azar de ahí CADA
+        VEZ que le toca sonar (ver GestorPublicidad._reproducir_item),
+        nunca el mismo archivo fijado para siempre."""
+        titulo_categoria = " / ".join(categoria) if categoria else "(categoría no encontrada)"
+        hijo = QTreeWidgetItem([f"🎲 Aleatorio: {titulo_categoria}", "—", "—"])
+        hijo.setData(0, Qt.ItemDataRole.UserRole, "")
+        hijo.setData(0, ROL_ESTADO_ITEM, ESTADO_NORMAL)
+        hijo.setData(0, ROL_ES_ALEATORIO, True)
+        hijo.setData(0, ROL_CATEGORIA_ALEATORIO, categoria)
+        hijo.setData(0, ROL_RECURSIVO_ALEATORIO, recursivo)
+        fondo = QBrush(QColor(COLOR_ALEATORIO))
+        for columna in range(3):
+            hijo.setBackground(columna, fondo)
+            hijo.setForeground(columna, QBrush(QColor("white")))
+        nodo_bloque.addChild(hijo)
+        return hijo
+
+    def es_aleatorio(self, item) -> bool:
+        return bool(item.data(0, ROL_ES_ALEATORIO)) if item is not None else False
+
+    def categoria_aleatorio_de_item(self, item):
+        return item.data(0, ROL_CATEGORIA_ALEATORIO)
+
+    def recursivo_aleatorio_de_item(self, item) -> bool:
+        valor = item.data(0, ROL_RECURSIVO_ALEATORIO)
+        return True if valor is None else bool(valor)
 
     def analisis_de_item(self, item) -> dict:
         if item is None:
