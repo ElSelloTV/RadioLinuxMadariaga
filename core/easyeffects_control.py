@@ -271,11 +271,41 @@ def _esperar_proceso_vivo(timeout_segundos: float) -> bool:
 def listar_presets() -> list[str]:
     """Presets guardados en EasyEffects (salida de `--presets`).
     Lista vacía si EasyEffects no responde o no hay ninguno — nunca
-    rompe la UI que la use."""
+    rompe la UI que la use.
+
+    Bug real reportado por Santiago ("no me deja activar el preset")
+    — el log real mostró que se le mandaba a `--load-preset` el
+    nombre literal 'Perfiles de salida: Radio Tuyu,' en vez de 'Radio
+    Tuyu': en su instalación (EasyEffects 7.2.3, sistema en español),
+    `--presets` NO imprime un nombre de preset por línea (la
+    suposición original) — imprime UNA LÍNEA POR CATEGORÍA, con los
+    nombres separados por coma:
+        Perfiles de salida: Radio Tuyu,
+        Perfiles de entrada:
+    (el encabezado de categoría sale traducido según el idioma del
+    sistema — "Output presets:"/"Input presets:" en inglés, etc.).
+    Ahora se parsea de forma tolerante al formato: si la línea tiene
+    ":", se toma solo lo de DESPUÉS de los dos puntos (sin importar el
+    texto de la categoría) y se separa por comas; si no tiene ":", se
+    toma la línea entera como un solo nombre (compatibilidad con una
+    versión que sí liste un nombre por línea, sin categorías)."""
     resultado = _ejecutar_comando(FLAG_LISTAR_PRESETS)
     if resultado is None or resultado.returncode != 0:
         return []
-    return [linea.strip() for linea in resultado.stdout.splitlines() if linea.strip()]
+    presets = []
+    for linea in resultado.stdout.splitlines():
+        linea = linea.strip()
+        if not linea:
+            continue
+        _, separador, resto = linea.partition(":")
+        if separador:
+            for nombre in resto.split(","):
+                nombre = nombre.strip()
+                if nombre:
+                    presets.append(nombre)
+        else:
+            presets.append(linea)
+    return presets
 
 
 def cargar_preset(nombre: str) -> tuple[bool, str]:
