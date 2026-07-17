@@ -4885,6 +4885,129 @@ todo el resto.
     de audio configurado + si esta app aparece conectada en el Pipe
     Manager de EasyEffects) para poder avanzar con el problema del
     preset que no se escucha.
+50. ~~LA CAUSA DE FONDO del preset que no se escuchaba: `--hide-window`
+    nunca arma el pipeline de audio en la instalación real de
+    Santiago~~ — investigación conjunta con Santiago en vivo, sesión
+    larga de diagnóstico con datos reales de su sistema (nunca
+    reproducible en el sandbox, que no tiene PipeWire/EasyEffects):
+
+    **El camino hasta la causa real**: descartado el dispositivo de
+    salida (probó "default" y el explícito, sin cambio) y descartado
+    un problema de timing (Stop+Play tras el arranque tampoco cambió
+    nada, ni el Bypass del menú FM) — se le pidió el ruteo REAL de
+    PipeWire con `pactl`/`pw-link -l` en vez de confiar en lo que
+    mostraba la interfaz. `pactl list sink-inputs` reveló que el
+    stream de VLC estaba conectado DIRECTO al sink físico
+    (`alsa_output.pci-...`), sin ningún nodo de EasyEffects en el
+    medio — a pesar de que EasyEffects mostraba el reproductor como
+    "Activar" tildado. La prueba decisiva fue comparar `pw-link -l`
+    CON y SIN la ventana de EasyEffects abierta: **sin ventana
+    (incluso lanzada con `--hide-window`), NUNCA existe el nodo
+    `easyeffects_sink` ni la cadena de plugins — con la ventana
+    genuinamente abierta, aparece la cadena completa y funciona
+    perfecto** (`VLC → easyeffects_sink → autogain → loudness →
+    crystalizer → compressor → limiter → stereo_tools → spectrum →
+    output_level → hardware`). Santiago confirmó además que
+    MINIMIZAR (no cerrar) la ventana ya abierta mantiene la cadena
+    intacta — solo cerrarla con la X la destruye. Conclusión: en su
+    instalación, `--hide-window` JAMÁS llega a construir el pipeline
+    de PipeWire (documentado como asumido, nunca antes verificado, en
+    las rondas 37/40/43) — el pipeline se arma SOLO cuando la ventana
+    existe de verdad (mapeada por el gestor de ventanas), aunque sea
+    un instante, y sobrevive minimizada.
+
+    **Rediseño de fondo en `core/easyeffects_control.py`**: reemplazado
+    `--hide-window` por completo (la constante `FLAG_OCULTAR_VENTANA`
+    queda definida por si una versión futura lo arregla, pero ya no se
+    usa) por control de ventana con **`wmctrl`** (herramienta estándar
+    de X11/EWMH, ajena a EasyEffects — Santiago confirmó tenerla
+    instalada) — arranca con la ventana REAL y la oculta por software
+    apenas aparece: `wmctrl -b add,hidden,skip_taskbar` la minimiza Y
+    le pide al escritorio que no le muestre ícono en la barra de
+    tareas (pedido explícito de Santiago, "que pueda verlo y no
+    verlo... no quiero que se vea minimizado en la barra de tareas");
+    `wmctrl -b remove,hidden,remove,skip_taskbar` + `-a` la restaura y
+    le da foco. Dos versiones del ocultamiento, mismo criterio ya
+    usado en el resto del proyecto para separar caminos bloqueantes de
+    no bloqueantes:
+    - `ocultar_ventana_bloqueante()` — poll con `time.sleep()`, para
+      usar SOLO desde un camino ya bloqueante/interactivo
+      (`asegurar_en_ejecucion()`, disparado por el operador desde el
+      menú FM, que ya muestra un cursor de espera).
+    - `ocultar_ventana_diferido()` — la MISMA lógica pero encadenada
+      vía `QTimer.singleShot` en vez de `time.sleep()`, exclusiva del
+      arranque fire-and-forget de `MainWindow` — la radio nunca debe
+      demorarse ni un instante esperando que la ventana de EasyEffects
+      llegue a existir.
+    Sin `wmctrl` instalado, degrada limpio (deja la ventana visible,
+    avisa una vez en el log con la instrucción de instalación) — mismo
+    criterio de tolerancia a dependencias faltantes de siempre.
+
+    **`asegurar_en_ejecucion()`** ya no manda `--hide-window` en
+    ningún caso — si hay que lanzar de cero, arranca sin flags y
+    oculta la ventana recién construido el pipeline (`ocultar_ventana_bloqueante()`
+    al final, no antes — antes de eso la ventana todavía no existe).
+    Si YA estaba corriendo (la lanzó esta misma app antes, o el
+    operador la abrió a mano), esta función **ya no le toca la
+    visibilidad** — decisión de diseño explícita: mostrar/ocultar a
+    partir de ahí es una acción DELIBERADA del operador, nunca un
+    efecto secundario silencioso de simplemente cambiar un preset
+    desde el menú FM.
+
+    **`abrir_ventana()` simplificado** (ya no necesita el ciclo
+    `--quit` + relanzar de la ronda 49 como camino principal): si
+    EasyEffects ya está corriendo, alcanza con RESTAURAR la ventana
+    existente (`wmctrl -b remove,hidden...` + `-a`) — mucho más
+    liviano que reiniciar el proceso entero. El ciclo `--quit` +
+    relanzar de la ronda anterior queda como RESPALDO, para cuando
+    `wmctrl` no está disponible o por algún motivo no se encuentra la
+    ventana.
+
+    **Nuevo, pedido explícito ("que pueda verlo y no verlo desde el
+    programa nuestro")**: función pública `ocultar_ventana()` +
+    ítem de menú nuevo **"Ocultar ventana de EasyEffects"** (junto a
+    "Abrir EasyEffects (edición avanzada)...", `gui/main_window.py`) —
+    el operador ahora puede mostrar Y volver a ocultar la ventana real
+    desde el propio programa, sin cerrar el proceso (el pipeline de
+    audio sigue andando durante todo el ciclo mostrar/ocultar, solo
+    cambia si la ventana se ve o no).
+
+    Probado con `test_easyeffects_ocultar_mostrar_wmctrl.py` (nuevo,
+    dedicado — con binarios falsos de `easyeffects`, `pgrep` Y
+    `wmctrl` simulando el ciclo completo, algo que ningún test anterior
+    había cubierto): `asegurar_en_ejecucion()` de punta a punta arranca
+    con ventana real y queda oculta sola al final (nunca manda
+    `--hide-window`); `abrir_ventana()` restaura la ventana existente
+    SIN pasar por el ciclo quit+relanzar; `ocultar_ventana()` nuevo
+    vuelve a ocultarla; `ocultar_ventana_diferido()` oculta de
+    inmediato si la ventana ya existe, NO bloquea en el primer llamado
+    si todavía no existe, y el reintento vía `QTimer` la encuentra y
+    oculta apenas aparece (simulado haciendo "aparecer" la ventana con
+    un `QTimer.singleShot` propio del test, bombeando el event loop
+    real con `app.processEvents()` — no un mock); degradación limpia
+    confirmada sin `wmctrl` en el PATH (mensaje explícito, sin
+    excepción) — + actualización de 2 tests preexistentes
+    (`test_easyeffects_control.py`, que verificaba literalmente el uso
+    de `--hide-window`, ahora verifica lo opuesto; `test_ronda_dnd_reanalisis_ee.py`,
+    cuyo fake de `easyeffects` no manejaba una invocación sin flags) +
+    regresión de `test_easyeffects_captura_error.py`,
+    `test_easyeffects_abrir_ventana.py` y
+    `test_easyeffects_parseo_presets.py` sin cambios necesarios + suite
+    de regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py`). **Sigue sin poder
+    confirmarse contra el EasyEffects/wmctrl/PipeWire reales de
+    Santiago** (el sandbox no tiene ninguno de los tres): falta que
+    confirme (1) que al abrir la radio, EasyEffects arranca con
+    efectos realmente activos desde el primer instante (`pw-link -l`
+    debería mostrar la cadena completa poco después del arranque) y
+    sin dejar ningún ícono en la barra de tareas, (2) que "Abrir
+    EasyEffects"/"Ocultar ventana de EasyEffects" alternan mostrar/
+    ocultar la ventana real sin reiniciar el proceso ni perder los
+    efectos, y (3) que con esto YA resuelto (el pipeline realmente
+    armado), el cambio de preset desde el menú FM finalmente SÍ se
+    escucha en el aire — que era el problema original de esta
+    investigación.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
