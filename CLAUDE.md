@@ -5258,6 +5258,40 @@ todo el resto.
     a diferencia de EasyEffects — el filter-chain de PipeWire es
     completamente independiente del programa de la radio).
 
+    **Actualización en vivo, probando con Santiago en su PC secundaria
+    (no la de aire)**: `pipewire -c archivo.conf` (arrancar un
+    servidor nuevo desde cero) dio error — es la herramienta
+    equivocada, no un problema del archivo; un supuesto binario
+    standalone `pipewire-filter-chain` tampoco existe en su Debian.
+    El camino real que SÍ funcionó: copiar el archivo a
+    `~/.config/pipewire/pipewire.conf.d/` y
+    `systemctl --user restart pipewire pipewire-pulse wireplumber` —
+    el sink `fm_processing_input` apareció sin errores
+    (`pactl list sinks short`). **Bug real encontrado y corregido**: al
+    elegir el sink nuevo como salida en el programa, no se escuchaba
+    NADA — `pw-link -l` reveló que la salida ya procesada se estaba
+    conectando a SÍ MISMA (`fm_processing_input:playback_FL |->
+    fm_processing_input:playback_FL`), un bucle cerrado que nunca
+    llegaba al hardware (`alsa_output...` quedaba `SUSPENDED`, sin
+    nada). Causa: `target.object = "@DEFAULT_SINK@"` en
+    `playback.props` se resuelve UNA sola vez al cargar el módulo, no
+    de nuevo cada vez que cambia el sink por defecto del sistema — y
+    el default había quedado apuntando, por una prueba de A/B
+    anterior, al propio `fm_processing_input`. Corregido apuntando
+    `target.object` directo al nombre real del dispositivo
+    (`alsa_output.pci-0000_00_1b.0.analog-stereo`) en vez de
+    `@DEFAULT_SINK@` — evita esta clase entera de bug para siempre, ya
+    no depende de cuál sea "el default" en el momento en que arranca
+    PipeWire. De paso se sacó `node.passive = true` de la salida (ya
+    no hacía falta, y podía estar contribuyendo a que la salida no se
+    conectara sola). **Pendiente**: que Santiago recargue el archivo
+    actualizado (mismo `cp` + `systemctl --user restart` de arriba,
+    sobrescribiendo `~/.config/pipewire/pipewire.conf.d/99-fm-processing.conf`)
+    y confirme que ahora SÍ se escucha el procesamiento — recién ahí
+    se puede evaluar si el preset (compresión/limitador/estéreo) suena
+    como se buscaba, y repetir el despliegue completo en su PC real de
+    transmisión.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
