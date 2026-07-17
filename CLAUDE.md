@@ -5008,6 +5008,92 @@ todo el resto.
     armado), el cambio de preset desde el menú FM finalmente SÍ se
     escucha en el aire — que era el problema original de esta
     investigación.
+51. ~~Fade-in "declick" configurable en Ventana 1 (evitar el click al
+    arrancar cada ítem)~~ — pedido explícito: "hay un titubeo, un
+    mínimo tartamudeo al inicio de los ítems en la ventana 1, incluso
+    un clip de sonido al inicio, ¿lo puedo silenciar con un leve fade
+    de inicio en configuraciones?". Este pedido llegó justo después de
+    la ronda anterior (armar el pipeline real de EasyEffects) —
+    consistente con la causa más probable: un salto INSTANTÁNEO a
+    volumen final justo al arrancar cada ítem (comportamiento de
+    siempre de `MotorAudio.reproducir()`, nunca antes había una rampa
+    de entrada) es mucho más audible ahora que el audio pasa por una
+    cadena de dinámica real (autogain/compressor/limiter de
+    EasyEffects) — un escalón de volumen instantáneo es un disparador
+    clásico de "pumping"/click en ese tipo de plugins.
+
+    **Aclaración importante, para no confundir con una ronda
+    anterior**: esto NO es volver a poner el fade-in MUSICAL que se
+    sacó a propósito ("que los temas suenen más enganchados, sin
+    fade-in", varias rondas atrás) — esa decisión sigue vigente sin
+    cambios (crossfade de Ventana 2, botón verde con fundido). Acá la
+    rampa es de unos pocos MILISEGUNDOS (60ms por defecto) — muy por
+    debajo del umbral en el que un oído humano percibe algo como "un
+    fundido" (~100-150ms) — solo alcanza para evitar la discontinuidad
+    digital, no para que se note como una entrada gradual.
+
+    **Implementación**: `MotorAudio.reproducir()`
+    (`core/audio_engine.py`) ganó un parámetro nuevo,
+    `duracion_declick_ms: int = 0` — en vez del salto directo de
+    siempre (`set_volumen(volumen_final)`), si es mayor a 0 arranca en
+    `set_volumen(0)` y sube con el mismo mecanismo de rampa ya
+    existente (`fade_volumen_a(volumen_final, duracion_declick_ms /
+    1000.0)`) — reusa toda la infraestructura de volumen "deseado"
+    de rondas anteriores (la re-aplicación diferida a los 150ms sigue
+    funcionando sin cambios, solo reafirma el valor interpolado que la
+    rampa ya está sosteniendo en ese instante). Con `duracion_declick_ms=0`
+    (el valor por defecto de `MotorAudio.reproducir()` en sí, para no
+    afectar ningún llamador que no lo pase explícitamente) el
+    comportamiento es IDÉNTICO a como era antes de esta ronda.
+
+    `GestorPublicidad` (`core/playlist_manager.py`) ganó
+    `duracion_fade_in_declick_ms: int = 60` en el constructor, guardado
+    como atributo, y pasado como `duracion_declick_ms=` en los DOS
+    lugares donde arranca un ítem real de Ventana 1: `_reproducir_item()`
+    (tanda normal) y `_reproducir_item_aleatorio()` (ítem Aleatorio,
+    ronda 39) — a propósito, scope acotado a Ventana 1 por ahora
+    (mismo criterio ya usado para `duracion_fade_out_v1_ms`, que
+    tampoco toca Ventana 2); si Santiago confirma que el mismo
+    artefacto se nota en Ventana 2/Auxiliar, es la misma técnica,
+    fácil de extender a `GestorPlaylist` en una ronda futura. Nueva
+    clave de configuración `reproduccion.duracion_fade_in_declick_v1_ms`
+    (default 60, en `config/settings.py` — `0` = desactivado, salto
+    directo como toda la vida), con spin box nuevo en Configuración →
+    Reproducción y Automatización ("Fade IN (anti-click) al arrancar
+    ítems de Ventana 1"), rango 0-500ms, junto al ya existente "Fade
+    OUT entre tandas de Ventana 1". Wireado en `MainWindow` tanto en la
+    construcción de `GestorPublicidad` como en
+    `_aplicar_configuracion_en_vivo()` (mismo patrón exacto que
+    `duracion_fade_out_v1_ms` — cambiar el valor en Configuración se
+    aplica sin reiniciar la app).
+
+    Probado con `test_fade_in_declick_v1.py` (nuevo, dedicado, 15
+    verificaciones): con un player VLC falso (mismo patrón ya usado en
+    `test_volumen_robusto.py`), `duracion_declick_ms=0` confirma el
+    comportamiento IDÉNTICO de siempre (salto directo, sin ningún timer
+    de fade); `duracion_declick_ms=200` confirma que arranca en
+    silencio absoluto (volumen deseado 0) justo después de
+    `reproducir()` y que, bombeando el event loop real, la rampa
+    termina exactamente en el volumen final — incluido el caso con
+    `ganancia_db` (el techo de la rampa es el volumen YA nivelado, no
+    el volumen_base crudo); el valor por defecto en
+    `CONFIG_POR_DEFECTO` es 60ms y un `config_general.json` VIEJO (sin
+    la clave nueva, de una instalación anterior a esta ronda) se
+    autocompleta solo al fusionar, sin `KeyError`; `GestorPublicidad`
+    se construye con el valor de config y lo pasa correctamente tanto
+    para un ítem normal como para uno Aleatorio (confirmado
+    interceptando `motor.reproducir` y mirando los kwargs reales);
+    cambiar el valor en Configuración se aplica en vivo sin reiniciar;
+    el spin box nuevo carga y guarda el valor correctamente — + suite
+    de regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py`). **Sigue sin poder
+    confirmarse con audio/EasyEffects reales** (como todo lo que toca
+    `core/audio_engine.py` — el sandbox no tiene libVLC): falta que
+    Santiago confirme que el titubeo/click al inicio de los ítems de
+    Ventana 1 desaparece con el valor por defecto (60ms), y que ese
+    valor le alcanza o prefiere ajustarlo desde Configuración (0 lo
+    desactiva por completo, volviendo al comportamiento de siempre).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

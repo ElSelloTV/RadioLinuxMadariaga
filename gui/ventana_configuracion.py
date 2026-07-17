@@ -246,6 +246,19 @@ class VentanaConfiguracion(QDialog):
         self.spin_fade_out_v1.setSingleStep(50)
         self.spin_fade_out_v1.setSuffix(" ms")
 
+        self.spin_fade_in_declick_v1 = QSpinBox()
+        self.spin_fade_in_declick_v1.setRange(0, 500)
+        self.spin_fade_in_declick_v1.setSingleStep(10)
+        self.spin_fade_in_declick_v1.setSuffix(" ms")
+        self.spin_fade_in_declick_v1.setToolTip(
+            "Rampa de unos pocos milisegundos al ARRANCAR cada ítem de\n"
+            "Ventana 1 — NO es un fundido musical (eso se sacó a propósito\n"
+            "en una ronda anterior), solo evita el click/tartamudeo de un\n"
+            "salto brusco a volumen final justo al empezar a sonar (más\n"
+            "notorio si el audio pasa por una cadena de efectos como\n"
+            "EasyEffects). 0 = desactivado, salto directo como antes."
+        )
+
         form.addRow(self.chk_avanzar_en_error)
         form.addRow("Fallos consecutivos antes de detenerse:", self.spin_reintentos)
         form.addRow(self.chk_repetir_lista)
@@ -254,6 +267,7 @@ class VentanaConfiguracion(QDialog):
         form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
         form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
         form.addRow("Fade OUT entre tandas de Ventana 1:", self.spin_fade_out_v1)
+        form.addRow("Fade IN (anti-click) al arrancar ítems de Ventana 1:", self.spin_fade_in_declick_v1)
 
         nota_silencio = QLabel(
             "El recorte de silencio SOLO mira el principio y el final de\n"
@@ -660,6 +674,7 @@ class VentanaConfiguracion(QDialog):
         self.spin_umbral_silencio.setValue(reproduccion["umbral_silencio_dbfs"])
         self.spin_bajada_pisador.setValue(reproduccion["pisador_bajada_db"])
         self.spin_fade_out_v1.setValue(reproduccion["duracion_fade_out_v1_ms"])
+        self.spin_fade_in_declick_v1.setValue(reproduccion["duracion_fade_in_declick_v1_ms"])
 
         general = self._config["general"]
         self.txt_nombre_emisora.setText(general.get("nombre_emisora", ""))
@@ -713,6 +728,7 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["umbral_silencio_dbfs"] = self.spin_umbral_silencio.value()
         self._config["reproduccion"]["pisador_bajada_db"] = self.spin_bajada_pisador.value()
         self._config["reproduccion"]["duracion_fade_out_v1_ms"] = self.spin_fade_out_v1.value()
+        self._config["reproduccion"]["duracion_fade_in_declick_v1_ms"] = self.spin_fade_in_declick_v1.value()
 
         self._config["clima"]["latitud"] = self.spin_latitud.value()
         self._config["clima"]["longitud"] = self.spin_longitud.value()

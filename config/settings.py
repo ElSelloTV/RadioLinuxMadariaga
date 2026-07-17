@@ -65,6 +65,18 @@ CONFIG_POR_DEFECTO = {
         # "duracion_fade_segundos" de Fade/Transiciones, que es en
         # segundos y es para el crossfade/fundido manual de Ventana 2).
         "duracion_fade_out_v1_ms": 500,
+        # Pedido explícito ("un mínimo tartamudeo, incluso un clip de
+        # sonido al inicio de los ítems en la ventana 1... un leve
+        # fade de inicio"): rampa de MILISEGUNDOS (no un fade musical)
+        # al arrancar cada ítem — evita el click/discontinuidad de
+        # saltar de golpe a volumen final justo al empezar a sonar,
+        # más audible desde que el audio pasa por la cadena de
+        # EasyEffects (un compresor/limiter/autogain puede reaccionar
+        # a un escalón de volumen instantáneo). 0 = desactivado. Ver
+        # MotorAudio.reproducir(duracion_declick_ms=...) — DISTINTO
+        # del fade-in musical que se sacó a propósito en una ronda
+        # anterior, acá la duración es imperceptible como "fundido".
+        "duracion_fade_in_declick_v1_ms": 60,
     },
     "general": {
         "confirmar_antes_de_eliminar": True,
