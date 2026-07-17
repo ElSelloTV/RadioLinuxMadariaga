@@ -38,6 +38,7 @@ from gui import estado_ui
 from core.playlist_manager import GestorPublicidad, GestorExplorador, SchedulerAutomatico
 from core.gestor_emision import GestorPlaylist
 from core.audio_engine import obtener_duracion_formateada
+from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
 from core import easyeffects_control
 from core import actualizador
 from config.settings import (
@@ -87,6 +88,15 @@ class MainWindow(QMainWindow):
         # sin esperar respuesta — para no demorar el arranque de la
         # radio ni un segundo.
         self._iniciar_easyeffects_en_segundo_plano()
+
+        # Pedido explícito ("que lo lea en off y lo tenga guardado de
+        # antemano... que no interrumpa la emisión ni demore la
+        # carga"): el clima del Comando HTH se refresca solo, en
+        # segundo plano y de forma asíncrona (QNetworkAccessManager,
+        # nunca bloquea), mucho antes de que la rotativa lo necesite —
+        # ver core/clima_meteo.py.
+        self._refrescador_clima = RefrescadorClima(self._coordenadas_clima_actuales)
+        self._refrescador_clima.iniciar()
 
         # Pedido explícito: buscar actualización SOLA al abrir el
         # programa (antes solo se buscaba a mano, en Configuración →
@@ -235,6 +245,22 @@ class MainWindow(QMainWindow):
     def _actualizar_reloj(self):
         ahora = QDateTime.currentDateTime()
         self.lbl_reloj.setText(ahora.toString("ddd dd/MM/yyyy hh:mm:ss"))
+
+    # ------------------------------------------------------------------
+    # Clima del Comando HTH (pedido explícito, ver core/clima_meteo.py):
+    # coordenadas ACTUALES para el refresco en segundo plano — se
+    # vuelve a leer la config en cada refresco (no una copia fija al
+    # arrancar), así un cambio en Configuración → General se aplica
+    # solo, sin reiniciar la app.
+    # ------------------------------------------------------------------
+    def _coordenadas_clima_actuales(self):
+        seccion_clima = cargar_configuracion().get("clima", {})
+        latitud = seccion_clima.get("latitud")
+        longitud = seccion_clima.get("longitud")
+        return (
+            latitud if latitud is not None else LATITUD_DEFECTO,
+            longitud if longitud is not None else LONGITUD_DEFECTO,
+        )
 
     # ------------------------------------------------------------------
     # EasyEffects (efectos de audio de la FM) — pedido explícito: un
