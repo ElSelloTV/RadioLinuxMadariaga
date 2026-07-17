@@ -279,10 +279,7 @@ class MainWindow(QMainWindow):
         claridad la primera vez que se abre."""
         if not easyeffects_control.esta_instalado():
             return
-        from PySide6.QtCore import QProcess
-        QProcess.startDetached(
-            easyeffects_control.NOMBRE_BINARIO, [easyeffects_control.FLAG_OCULTAR_VENTANA]
-        )
+        easyeffects_control._lanzar_proceso_con_captura([easyeffects_control.FLAG_OCULTAR_VENTANA])
 
     def _poblar_menu_easyeffects(self):
         self.menu_easyeffects.clear()

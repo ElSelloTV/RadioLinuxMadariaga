@@ -4645,6 +4645,90 @@ todo el resto.
     dispararse (el dato debería estar siempre "tibio" de antemano), y
     que cambiar la ciudad en Configuración → General sigue actualizando
     el clima sin reiniciar la app.
+47. ~~Captura del error real de EasyEffects ("se abre pero se cierra")~~
+    — Santiago probó la ronda de robustez de EasyEffects (sondeo en 2
+    fases + reintento de preset, ver más arriba) y el problema
+    persistió: "sigue fallando EasyEffects... se abre pero se cierra,
+    no me deja activar el preset por medio del programa" — y pidió
+    explícitamente si había forma de ver el error real que tira.
+
+    **Causa de fondo, encontrada al auditar el lanzamiento**: hasta
+    esta ronda, `core/easyeffects_control.py` lanzaba el proceso con
+    `QProcess.startDetached()` — el mecanismo elegido a propósito en
+    su momento porque deja a EasyEffects corriendo INDEPENDIENTE de
+    esta app (sigue vivo aunque se cierre la radio). El problema real:
+    `QProcess.startDetached()` **no tiene ninguna forma de capturar
+    stdout/stderr del proceso hijo** — si EasyEffects crasheaba al
+    arrancar (exactamente "se abre pero se cierra"), cualquier mensaje
+    de error real del sistema (GTK, PipeWire, D-Bus, lo que sea) se
+    perdía por completo, sin dejar NINGÚN rastro ni en pantalla ni en
+    ningún archivo — invisible tanto para Santiago como para Claude
+    Code, sin acceso a una terminal en el momento exacto del fallo.
+
+    **Corrección**: reemplazado por `subprocess.Popen(...,
+    start_new_session=True)` — mismo comportamiento "desacoplado,
+    sobrevive al cierre de la radio" que ya tenía `startDetached()`
+    (`start_new_session=True` es el equivalente de `setsid`), pero
+    esta vez redirigiendo `stdout`/`stderr` a un archivo nuevo,
+    `config/data/easyeffects_stdout.txt` (`RUTA_LOG_PROCESO`,
+    `core/easyeffects_control.py`) — **sobrescrito en CADA intento de
+    lanzamiento** (`open(..., "w")`, no append), así el contenido
+    siempre refleja el ÚLTIMO intento, nunca datos viejos de una
+    sesión anterior. Se redirige a un ARCHIVO, no a un `subprocess.PIPE`
+    — a propósito, para evitar un riesgo real: el stdout/stderr de un
+    proceso desacoplado de larga vida, si nadie lo lee, puede llenar el
+    buffer de un pipe del sistema operativo y eventualmente bloquear al
+    proceso hijo cuando escriba lo suficiente; un archivo en disco no
+    tiene ese límite. El extra `.txt` de la extensión se eligió a
+    propósito para que el patrón YA EXISTENTE en `.gitignore`
+    (`config/data/*.txt`) lo cubra solo, sin tocar el archivo de
+    ignorados.
+
+    Dos funciones nuevas (`_lanzar_proceso_con_captura()`,
+    `_cola_log_proceso()`) reemplazan el único lugar que llamaba
+    `QProcess.startDetached()` directo — tanto en
+    `asegurar_en_ejecucion()` (el camino con el sondeo de 2 fases:
+    primero espera que el PROCESO exista vía `pgrep`, después que la
+    CLI responda de verdad a un comando real, `--presets`) como en
+    `abrir_ventana()`. Los DOS puntos de fallo del sondeo existente
+    ahora adjuntan la cola del archivo capturado (últimas 20 líneas)
+    tanto al `registrar_error()` del log de la app como al MENSAJE
+    devuelto — que en la práctica termina mostrándose directo en el
+    ítem deshabilitado del menú "🎚 FM" cuando algo sale mal, sin que
+    Santiago necesite abrir ningún archivo a mano. El lanzamiento
+    fire-and-forget al ARRANCAR la app
+    (`MainWindow._iniciar_easyeffects_en_segundo_plano()`, que a
+    propósito NO usa el sondeo completo para no demorar el arranque de
+    la radio) también se cambió a `_lanzar_proceso_con_captura()` — así
+    un crash silencioso ahí (antes de que el operador toque el menú
+    "FM" siquiera) también queda capturado desde el primer instante.
+
+    Probado con `test_easyeffects_captura_error.py` (nuevo, dedicado):
+    un binario `easyeffects` FALSO que simula un crash realista al
+    arrancar (escribe mensajes de estilo GTK/PipeWire a stderr y sale
+    con código de error, sin llegar a quedar corriendo — `pgrep` falso
+    siempre "no lo ve") confirma que (1) el stderr REAL del proceso
+    queda capturado tal cual en `RUTA_LOG_PROCESO`, (2)
+    `asegurar_en_ejecucion()` adjunta ese detalle al mensaje que
+    devuelve, y (3) el mismo detalle queda también en
+    `log_aplicacion.txt` — + regresión de los dos tests preexistentes
+    de EasyEffects (`test_easyeffects_control.py`,
+    `test_ronda_dnd_reanalisis_ee.py`, ambos sin cambios, confirmando
+    que el reemplazo del mecanismo de lanzamiento no rompió ningún
+    flujo ya probado: arranque oculto, listar/cargar presets, bypass,
+    abrir ventana, ni el sondeo de 2 fases con reintentos) + suite de
+    regresión completa sin fallos nuevos (mismos 3 fallos preexistentes
+    de siempre: `test_confirmaciones.py`, `test_log_git.py`,
+    `test_ventana3.py`). **Sigue sin poder probarse contra el
+    EasyEffects real de Santiago** (el sandbox no lo tiene instalado,
+    todo esto se probó contra un binario falso que imita un crash):
+    falta que Santiago repita la prueba que le sigue fallando y, si
+    vuelve a fallar, esta vez comparta el mensaje de error nuevo que
+    debería aparecer en el menú "🎚 FM" (o el contenido de
+    `config/data/easyeffects_stdout.txt` / `config/data/log_aplicacion.txt`)
+    — recién con ese detalle real se va a poder saber SI el problema es
+    PipeWire, D-Bus, GTK, permisos, u otra cosa, y encarar el arreglo
+    de fondo específico para su instalación.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
