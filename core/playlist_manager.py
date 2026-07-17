@@ -87,6 +87,7 @@ class GestorPublicidad:
         reintentos_maximos: int = 3,
         persistir: bool = False,
         duracion_fade_out_v1_ms: int = 500,
+        duracion_fade_in_declick_ms: int = 60,
         ventana_explorador=None,
     ):
         self.ventana = ventana_publicidad
@@ -114,6 +115,13 @@ class GestorPublicidad:
         # fade-in en el entrante — pedido explícito, "el fade es
         # siempre OUT, no usaremos el fade IN").
         self.duracion_fade_out_v1_ms = duracion_fade_out_v1_ms
+        # Pedido explícito ("un mínimo tartamudeo, un clip de sonido al
+        # inicio de los ítems... un leve fade de inicio"): rampa de
+        # milisegundos al ARRANCAR cada ítem (no un fade musical, ver
+        # MotorAudio.reproducir) — evita el click de un salto brusco a
+        # volumen final, más audible desde que el audio pasa por la
+        # cadena de EasyEffects.
+        self.duracion_fade_in_declick_ms = duracion_fade_in_declick_ms
         self._fallos_consecutivos = 0
         self._volumen_base = 100
         self._bloque_automatico_actual = None
@@ -385,6 +393,7 @@ class GestorPublicidad:
             punto_fin_ms=analisis.get("punto_fin_ms"),
             ganancia_db=analisis.get("ganancia_db") or 0.0,
             volumen_base=self._volumen_base,
+            duracion_declick_ms=self.duracion_fade_in_declick_ms,
         )
         self.ventana.set_indicador_en_vivo(True)
         registrar_evento(f"Publicidad: reproduciendo '{item.text(0)}'")
@@ -442,6 +451,7 @@ class GestorPublicidad:
             punto_fin_ms=registro.get("punto_fin_ms"),
             ganancia_db=registro.get("ganancia_db") or 0.0,
             volumen_base=self._volumen_base,
+            duracion_declick_ms=self.duracion_fade_in_declick_ms,
         )
         self.ventana.set_indicador_en_vivo(True)
         # El historial se registra con el archivo REAL resuelto (no el

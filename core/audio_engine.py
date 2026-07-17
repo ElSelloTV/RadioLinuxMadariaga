@@ -103,13 +103,28 @@ class MotorAudio(QObject):
         self._ruta_actual = ruta
 
     def reproducir(self, ruta: str = None, punto_inicio_ms: int = 0, punto_fin_ms: int = None,
-                    ganancia_db: float = 0.0, volumen_base: int = 100):
+                    ganancia_db: float = 0.0, volumen_base: int = 100, duracion_declick_ms: int = 0):
         """Reproduce `ruta` (o retoma la actual). Si se pasan
         punto_inicio_ms/punto_fin_ms (calculados por
         core/analizador_audio.py al agregar el tema), arranca desde
         ahí y corta antes de llegar al silencio de salida — sin
         tocar el archivo original. `ganancia_db` nivela el volumen
         de ESTE ítem en particular respecto al resto de la biblioteca.
+
+        `duracion_declick_ms` (pedido explícito, Ventana 1: "un mínimo
+        tartamudeo, incluso un clip de sonido al inicio... un leve
+        fade de inicio"): en vez de saltar de golpe a `volumen_final`
+        justo al arrancar, sube en una rampa de unos pocos MILISEGUNDOS
+        — evita el click/discontinuidad de un escalón de volumen
+        instantáneo (más audible desde que el audio pasa por una
+        cadena de efectos como EasyEffects, donde un compresor/
+        limiter/autogain puede reaccionar de forma audible a ese
+        escalón). 0 (default) = comportamiento de siempre, salto
+        directo. Esto es DISTINTO del fade-in MUSICAL que se sacó a
+        propósito en una ronda anterior ("que los temas suenen más
+        enganchados, sin fade-in") — acá la duración es de
+        milisegundos, muy por debajo de lo perceptible como "fundido",
+        solo alcanza para evitar el artefacto digital.
         """
         if not self._disponible:
             self.error_reproduccion.emit(MENSAJE_VLC_NO_DISPONIBLE)
@@ -149,7 +164,11 @@ class MotorAudio(QObject):
         if ganancia_db:
             from core.analizador_audio import volumen_ajustado_por_ganancia
             volumen_final = volumen_ajustado_por_ganancia(volumen_base, ganancia_db)
-        self.set_volumen(volumen_final)
+        if duracion_declick_ms > 0:
+            self.set_volumen(0)
+            self.fade_volumen_a(volumen_final, duracion_declick_ms / 1000.0)
+        else:
+            self.set_volumen(volumen_final)
 
         # El seek necesita que el media ya haya arrancado a
         # reproducirse; libvlc lo tolera con un pequeño retardo.
