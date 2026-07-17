@@ -4804,6 +4804,87 @@ todo el resto.
     en el aire — si el menú le muestra "Radio Tuyu" (sin el prefijo de
     categoría) como opción, es la señal de que el parseo ya está
     limpio.
+49. ~~"Abrir EasyEffects (Opciones Avanzadas)" tampoco abría la
+    ventana~~ — Santiago probó el fix del parseo de presets (ronda
+    48, ya sin error) y reportó dos cosas más de una: "no se escucha
+    que se aplique el preset" (lo probó comparando contra abrir
+    EasyEffects a mano desde el menú de su PC) y "tampoco abre desde
+    FM EasyEffects (Opciones Avanzadas)".
+
+    **b) Botón "Abrir EasyEffects" corregido**: la suposición original
+    (documentada como incierta desde que se escribió, nunca
+    confirmada) era que invocar el binario SIN `--hide-window` sobre
+    una instancia YA corriendo oculta la "destaparía" sola, por
+    comportamiento de reactivación de GApplication. Santiago confirmó
+    que eso no pasa en la práctica. Como no hay un flag `--show-window`
+    documentado en su `--help` real, `abrir_ventana()`
+    (`core/easyeffects_control.py`) se reescribió para no depender de
+    ese comportamiento no confirmado: si EasyEffects está corriendo,
+    se le manda `--quit` (SÍ confirmado en el `--help` de Santiago) y
+    se espera a que el proceso termine de verdad (sondeado por
+    `pgrep`, mismo mecanismo de siempre); recién ahí se relanza una
+    instancia FRESCA sin `--hide-window` — un arranque nuevo sin ese
+    flag muestra su ventana por comportamiento normal de cualquier app
+    GTK, sin depender de si la reactivación remota la destapa. Si no
+    estaba corriendo, no hace falta el paso de `--quit`, va directo al
+    relanzamiento. Mismo mecanismo de captura de stderr/stdout de la
+    ronda 47 (`_lanzar_proceso_con_captura()`) sigue aplicando acá, así
+    que si el relanzamiento fallara también quedaría diagnosticable.
+
+    **a) "No se escucha que se aplique el preset" — NO es un bug de
+    esta app, es (casi con certeza) ruteo de audio en PipeWire, sin
+    poder confirmarlo sin datos de la instalación real de Santiago**:
+    el comando `--load-preset` ahora tiene éxito sin error (confirmado
+    por el propio Santiago: "ahora no arroja error"), lo cual descarta
+    que sea el mismo bug de parseo de la ronda 48 — EasyEffects SÍ
+    recibe y acepta el cambio de preset. Que el cambio no se escuche
+    aunque el comando funcione es el síntoma típico de que el audio de
+    esta app (via libVLC) no está pasando físicamente por el nodo de
+    procesamiento de EasyEffects en PipeWire — EasyEffects solo aplica
+    efectos al audio que está efectivamente ruteado a través de su
+    sink/nodo virtual, no a todo el audio del sistema por arte de
+    magia. No se tocó código por esto — no hay forma de diagnosticar
+    ruteo de PipeWire sin ver la instalación real, y modificar a
+    ciegas el módulo de salida de audio del motor (`core/audio_engine.py`,
+    que hoy deja que libVLC autodetecte el módulo de audio) sin saber
+    la causa real sería puro tanteo. Pendiente que Santiago confirme
+    dos datos concretos para poder seguir: (1) qué dispositivo de
+    salida tiene elegido en Configuración → Audio → Master — si es
+    "default"/el que trae por defecto, o si eligió un dispositivo
+    específico por nombre; (2) con la radio reproduciendo, abrir
+    EasyEffects a mano (como ya lo hace) y mirar la pestaña que lista
+    las apps/streams conectados (en inglés suele llamarse "Pipe
+    Manager" o similar) — si ahí NO aparece esta app/su proceso
+    conectado al pipeline de Salida, confirma que el audio nunca pasa
+    por EasyEffects sin importar qué preset esté cargado, y el ajuste
+    necesario sería de ruteo de PipeWire (o de qué dispositivo elige
+    esta app), no de la lógica de `--load-preset`.
+
+    Probado con `test_easyeffects_abrir_ventana.py` (nuevo, dedicado):
+    contra un binario falso que simula el ciclo completo (corriendo
+    oculto -> `--quit` -> deja de estar "corriendo" -> relanzado sin
+    flags -> vuelve a aparecer, esta vez "con ventana"), confirma que
+    la PRIMERA llamada es `--quit`, que hay una invocación sin flags
+    DESPUÉS de esa (nunca antes), que `abrir_ventana()` devuelve éxito
+    al final, y que si NO había nada corriendo previamente no se manda
+    ningún `--quit` de más (va directo al relanzamiento) — + ajuste al
+    binario falso de `test_easyeffects_control.py` (agregado el manejo
+    de `--quit` y de la invocación sin flags, que antes no existían en
+    ese fake) para que su assertion preexistente de `abrir_ventana()`
+    siga reflejando el comportamiento real + suite de regresión
+    completa sin fallos nuevos (mismos 3 fallos preexistentes de
+    siempre: `test_confirmaciones.py`, `test_log_git.py`,
+    `test_ventana3.py` — un cuarto fallo visto en esta corrida puntual,
+    `test_dinesat_play_fundido_stops.py`, ya está documentado desde la
+    ronda 46 como flaky/no reproducible por timing de garbage
+    collection de Qt; confirmado de nuevo corriéndolo 3 veces más
+    aislado, pasó limpio en 2 de esas 3, sin relación con este cambio).
+    **Sigue sin poder probarse contra el EasyEffects real de Santiago**:
+    falta que confirme que "Abrir EasyEffects" ahora sí muestra la
+    ventana, y que comparta los dos datos pedidos arriba (dispositivo
+    de audio configurado + si esta app aparece conectada en el Pipe
+    Manager de EasyEffects) para poder avanzar con el problema del
+    preset que no se escucha.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
