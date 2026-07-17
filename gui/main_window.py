@@ -18,10 +18,10 @@ import os
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QWidget, QVBoxLayout, QLabel,
     QToolBar, QStatusBar, QMenuBar, QSizePolicy,
-    QMessageBox, QApplication, QToolButton, QMenu, QInputDialog
+    QMessageBox, QApplication, QInputDialog
 )
 from PySide6.QtCore import Qt, QTimer, QDateTime
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence
 
 from gui.ventana_publicidad import VentanaPublicidad
 from gui.ventana_emision import VentanaEmision
@@ -39,7 +39,6 @@ from core.playlist_manager import GestorPublicidad, GestorExplorador, SchedulerA
 from core.gestor_emision import GestorPlaylist
 from core.audio_engine import obtener_duracion_formateada
 from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
-from core import easyeffects_control
 from core import actualizador
 from config.settings import (
     cargar_configuracion, registrar_evento,
@@ -84,10 +83,6 @@ class MainWindow(QMainWindow):
         self._actualizar_reloj()
 
         self._mostrar_preload("Cargando Auto-Radio Tuyú...")
-        # EasyEffects arranca oculto ya desde acá (pedido explícito),
-        # sin esperar respuesta — para no demorar el arranque de la
-        # radio ni un segundo.
-        self._iniciar_easyeffects_en_segundo_plano()
 
         # Pedido explícito ("que lo lea en off y lo tenga guardado de
         # antemano... que no interrumpa la emisión ni demore la
@@ -225,20 +220,6 @@ class MainWindow(QMainWindow):
         self.lbl_reloj.setStyleSheet("font-weight: bold; padding-right: 10px;")
         toolbar.addWidget(self.lbl_reloj)
 
-        # Pedido explícito: control de EasyEffects (efectos de audio
-        # de la FM) desde un ícono junto al reloj — EasyEffects corre
-        # OCULTO en segundo plano (nunca se ve su ventana ni aparece
-        # minimizado en la barra de tareas), y este botón solo cambia
-        # de preset/bypass o lo abre para afinación fina.
-        self.btn_easyeffects = QToolButton()
-        self.btn_easyeffects.setText("🎚 FM")
-        self.btn_easyeffects.setToolTip("Efectos de audio de la FM (EasyEffects)")
-        self.btn_easyeffects.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.menu_easyeffects = QMenu(self)
-        self.menu_easyeffects.aboutToShow.connect(self._poblar_menu_easyeffects)
-        self.btn_easyeffects.setMenu(self.menu_easyeffects)
-        toolbar.addWidget(self.btn_easyeffects)
-
     def _actualizar_nombre_emisora(self):
         self.lbl_nombre_emisora.setText(self._config.get("general", {}).get("nombre_emisora", "") or "")
 
@@ -261,109 +242,6 @@ class MainWindow(QMainWindow):
             latitud if latitud is not None else LATITUD_DEFECTO,
             longitud if longitud is not None else LONGITUD_DEFECTO,
         )
-
-    # ------------------------------------------------------------------
-    # EasyEffects (efectos de audio de la FM) — pedido explícito: un
-    # ícono junto al reloj para cambiar de preset sin abrir su
-    # ventana. EasyEffects corre oculto en segundo plano; esta app
-    # solo le manda comandos por línea de comandos (core/
-    # easyeffects_control.py) a la instancia ya corriendo.
-    # ------------------------------------------------------------------
-    def _iniciar_easyeffects_en_segundo_plano(self):
-        """Lo lanza ya desde el arranque de la app (pedido explícito:
-        "que se ejecute oculto") — SIN esperar a que responda
-        (fire-and-forget, sin el sondeo de `asegurar_en_ejecucion()`)
-        para no demorar el arranque de la radio ni un segundo. Si no
-        está instalado, es un no-op silencioso — el botón de la
-        toolbar igual avisa con claridad la primera vez que se abre.
-
-        Bug real encontrado con `pw-link -l` real de Santiago:
-        `--hide-window` nunca construye el pipeline de audio de
-        EasyEffects en su instalación (solo se arma con la ventana
-        genuinamente mapeada) — así que ahora se lanza con la ventana
-        REAL, y se la oculta por software con wmctrl apenas aparece
-        (`ocultar_ventana_diferido`, reintentos vía QTimer — nunca un
-        `time.sleep()` bloqueante, para no congelar el arranque de la
-        radio ni un instante mientras se espera a que la ventana
-        exista)."""
-        if not easyeffects_control.esta_instalado():
-            return
-        easyeffects_control._lanzar_proceso_con_captura([])
-        easyeffects_control.ocultar_ventana_diferido()
-
-    def _poblar_menu_easyeffects(self):
-        self.menu_easyeffects.clear()
-
-        if not easyeffects_control.esta_instalado():
-            accion = self.menu_easyeffects.addAction("EasyEffects no está instalado")
-            accion.setEnabled(False)
-            return
-
-        # Primer uso en la sesión (o si se cerró a mano): puede tardar
-        # un instante en arrancar — se avisa con el mismo patrón de
-        # "preload" (cursor de espera) que ya usa el resto de la app.
-        self._mostrar_preload("Conectando con EasyEffects...")
-        ok, mensaje = easyeffects_control.asegurar_en_ejecucion()
-        if not ok:
-            accion = self.menu_easyeffects.addAction(f"⚠ {mensaje}")
-            accion.setEnabled(False)
-            return
-
-        presets = easyeffects_control.listar_presets()
-        activo = easyeffects_control.preset_activo(easyeffects_control.CATEGORIA_SALIDA)
-
-        if not presets:
-            accion = self.menu_easyeffects.addAction("Sin presets guardados en EasyEffects")
-            accion.setEnabled(False)
-        else:
-            grupo = QActionGroup(self.menu_easyeffects)
-            grupo.setExclusive(True)
-            for nombre in presets:
-                accion = self.menu_easyeffects.addAction(nombre)
-                accion.setCheckable(True)
-                accion.setChecked(nombre == activo)
-                accion.triggered.connect(lambda _checked=False, n=nombre: self._cambiar_preset_easyeffects(n))
-                grupo.addAction(accion)
-
-        self.menu_easyeffects.addSeparator()
-
-        en_bypass = easyeffects_control.esta_en_bypass()
-        accion_bypass = self.menu_easyeffects.addAction("Bypass (sin efectos)")
-        accion_bypass.setCheckable(True)
-        accion_bypass.setChecked(bool(en_bypass))
-        accion_bypass.triggered.connect(self._alternar_bypass_easyeffects)
-
-        self.menu_easyeffects.addSeparator()
-        accion_abrir = self.menu_easyeffects.addAction("Abrir EasyEffects (edición avanzada)...")
-        accion_abrir.triggered.connect(self._abrir_ventana_easyeffects)
-        accion_ocultar = self.menu_easyeffects.addAction("Ocultar ventana de EasyEffects")
-        accion_ocultar.triggered.connect(self._ocultar_ventana_easyeffects)
-
-    def _cambiar_preset_easyeffects(self, nombre: str):
-        ok, mensaje = easyeffects_control.cargar_preset(nombre)
-        self.statusBar().showMessage(mensaje, 4000)
-        if not ok:
-            QMessageBox.warning(self, "EasyEffects", mensaje)
-
-    def _alternar_bypass_easyeffects(self, activar: bool):
-        ok, mensaje = easyeffects_control.set_bypass(activar)
-        self.statusBar().showMessage(mensaje, 4000)
-        if not ok:
-            QMessageBox.warning(self, "EasyEffects", mensaje)
-
-    def _abrir_ventana_easyeffects(self):
-        ok, mensaje = easyeffects_control.abrir_ventana()
-        if not ok:
-            QMessageBox.warning(self, "EasyEffects", mensaje)
-
-    def _ocultar_ventana_easyeffects(self):
-        """Pedido explícito de Santiago ("que pueda verlo y no verlo
-        desde el programa nuestro") — inverso de "Abrir EasyEffects":
-        la minimiza de nuevo sin cerrar el proceso (el pipeline de
-        audio sigue andando, solo se saca la ventana de la vista)."""
-        ok, mensaje = easyeffects_control.ocultar_ventana()
-        if not ok:
-            QMessageBox.warning(self, "EasyEffects", mensaje)
 
     # ------------------------------------------------------------------
     # Paneles centrales (las 3 ventanas)

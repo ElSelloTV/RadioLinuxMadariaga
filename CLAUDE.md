@@ -2554,12 +2554,18 @@ fallback).
 sudo apt install vlc libvlc-dev ffmpeg
 ```
 
-Opcional — control de EasyEffects (procesamiento de audio de la FM,
-ver roadmap ronda 37):
+Opcional — procesamiento de audio de la FM (Compresor/Limitador/
+Estéreo). EasyEffects se probó a fondo (rondas 37-51) pero se
+descartó — ver roadmap ronda 52 — a favor del módulo nativo
+`filter-chain` de PipeWire con plugins Calf, sin ventana ni proceso
+de por medio:
 
 ```bash
-sudo apt install easyeffects
+sudo apt install calf-plugins
 ```
+
+(config del filter-chain: ver `docs/` una vez armado con Santiago
+contra los nombres reales de puertos LV2 de su instalación.)
 
 `requirements.txt` (Python): PySide6, python-vlc, mutagen, pydub.
 
@@ -5094,6 +5100,87 @@ todo el resto.
     Ventana 1 desaparece con el valor por defecto (60ms), y que ese
     valor le alcanza o prefiere ajustarlo desde Configuración (0 lo
     desactiva por completo, volviendo al comportamiento de siempre).
+52. ~~Reemplazo de EasyEffects por el módulo nativo `filter-chain` de
+    PipeWire (en curso — primera mitad: remoción de EasyEffects)~~ —
+    pedido explícito de Santiago tras la ronda anterior: "EasyEffects
+    tampoco es que se solucionó, la ventana sigue apareciendo de
+    fondo. Vayamos con la opción [PipeWire nativo], que además es
+    liviana para el sistema... Desinstalemos EasyEffects." Cinco
+    rondas (37, 40, 43-51) de trabajo sobre la integración con
+    EasyEffects (arranque oculto, sondeo de 2 fases, captura de
+    stderr/stdout, parseo de presets, ciclo quit+relanzar, control de
+    ventana con wmctrl) terminaron en la misma conclusión: EasyEffects
+    necesita una ventana real y VISIBLE (aunque sea un instante) para
+    armar su pipeline de audio, y eso siempre iba a dejar algún rastro
+    (aparecer un instante, quedar en la barra de tareas según el
+    gestor de ventanas) que Santiago no terminaba de aceptar — la
+    alternativa que eligió, el módulo `libpipewire-module-filter-chain`
+    de PipeWire, corre DENTRO del propio servidor de audio, sin ningún
+    proceso ni ventana por separado, así que el problema de fondo
+    (¿cómo ocultar una ventana ajena?) directamente deja de existir.
+
+    **Primera mitad de esta ronda — remoción completa de EasyEffects**
+    (la segunda mitad, escribir y afinar el `filter-chain` con
+    plugins Calf para un preset de FM, queda pendiente: necesita los
+    nombres REALES de los puertos LV2 de la instalación de Santiago
+    —`lv2ls`/`lv2info`— antes de escribir la configuración, para no
+    adivinar un nombre de control y que un parámetro quede sin
+    aplicarse en silencio; se le pidieron esos comandos y se sigue en
+    la próxima ronda con su resultado):
+    - `core/easyeffects_control.py` eliminado por completo (todo el
+      módulo — lanzamiento, sondeo de 2 fases, parseo de presets,
+      wmctrl, captura de stderr/stdout).
+    - `gui/main_window.py`: sacado el botón "🎚 FM" del toolbar, el
+      menú completo (presets/bypass/abrir/ocultar ventana), los 6
+      métodos manejadores (`_iniciar_easyeffects_en_segundo_plano`,
+      `_poblar_menu_easyeffects`, `_cambiar_preset_easyeffects`,
+      `_alternar_bypass_easyeffects`, `_abrir_ventana_easyeffects`,
+      `_ocultar_ventana_easyeffects`), el `import easyeffects_control`
+      y el llamado de arranque en `__init__` — de paso, `QToolButton`/
+      `QMenu`/`QActionGroup` quedaron sin ningún otro uso en el
+      archivo y se sacaron también de los imports (ya no hacía falta
+      un `# noqa` ni dejarlos "por las dudas": nada más en el archivo
+      los necesitaba).
+    - 5 archivos de test dedicados a EasyEffects eliminados
+      (`test_easyeffects_control.py`, `test_easyeffects_captura_error.py`,
+      `test_easyeffects_abrir_ventana.py`, `test_easyeffects_parseo_presets.py`,
+      `test_easyeffects_ocultar_mostrar_wmctrl.py`) — probaban un
+      módulo que ya no existe. `test_ronda_dnd_reanalisis_ee.py`
+      (compartía archivo con drag&drop V1→Auxiliar y "Reanalizar
+      biblioteca", features que SÍ siguen vigentes) se editó para
+      sacar solo su sección 3 (el bloque de EasyEffects), sin tocar
+      las otras dos.
+    - `duracion_fade_in_declick_v1_ms` (ronda anterior) se queda TAL
+      CUAL — el motivo original (evitar que un salto instantáneo de
+      volumen "pumpee" un compresor/limiter aguas abajo) sigue
+      aplicando igual, o más, con el filter-chain de PipeWire que lo
+      reemplace.
+
+    Probado: suite de regresión completa sin fallos nuevos (mismos 3
+    fallos preexistentes de siempre — `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py` — más 2 fallos dependientes
+    de la hora real del sistema, `test_automatico_dispara_al_activar.py`
+    y `test_play_bloque_y_hora.py`, que la corrida cayó cerca de
+    medianoche; confirmado con `git stash` que fallan IDÉNTICO contra
+    el código sin este cambio, ya documentados como flaky desde rondas
+    anteriores) + smoke test de arranque limpio. **Pendiente antes de
+    seguir con la segunda mitad**: que Santiago corra en su máquina
+    real (esta app NO puede desinstalar/instalar paquetes ni ejecutar
+    nada en su PC — todo lo que sigue son comandos para que él corra):
+    ```bash
+    sudo apt remove --purge easyeffects
+    sudo apt install calf-plugins
+    lv2ls | grep -i calf
+    lv2info http://calf.sourceforge.net/plugins/Compressor
+    lv2info http://calf.sourceforge.net/plugins/Limiter
+    lv2info http://calf.sourceforge.net/plugins/StereoTools
+    ```
+    y pegue el resultado — con eso se escribe el `filter-chain.conf`
+    con los nombres de control CONFIRMADOS (no adivinados) para un
+    preset de FM: separación estéreo, compresión que nivele temas
+    silenciosos contra temas con picos altos al mismo rango, limitador
+    contra saturación, y sonoridad/escala sin distorsión — pedido
+    textual de Santiago para la segunda mitad de esta ronda.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
