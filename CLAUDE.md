@@ -5182,6 +5182,82 @@ todo el resto.
     contra saturación, y sonoridad/escala sin distorsión — pedido
     textual de Santiago para la segunda mitad de esta ronda.
 
+    **Segunda mitad — el archivo de configuración
+    (`assets/pipewire-fm-processing.conf`, nuevo)**: Santiago
+    desinstaló EasyEffects e instaló `calf-plugins` (`lv2ls`/`lv2info`
+    no venían con ese paquete — hubo que pedirle además `lilv-utils`,
+    que trae esas herramientas de introspección). Con la salida REAL
+    de `lv2info` (nombres de puerto y rangos confirmados, filtrada a
+    `Symbol/Minimum/Maximum/Default/Type` para que no fuera tan larga
+    de pegar) se armó la cadena `libpipewire-module-filter-chain` con
+    tres plugins de Calf en serie:
+    - **StereoTools** (ancho estéreo): `slev = 1.15` (15% más ancho
+      que el original) — a propósito MODERADO, un ancho mayor arriesga
+      cancelación de fase y problemas de compatibilidad mono, algo
+      sensible en una transmisión FM real. `stereo_base` y el resto de
+      los controles de fase/balance quedan neutros (0), sin activar
+      ningún modo de ensanchado más agresivo.
+    - **Compressor** (nivelado — pedido textual: "que el tema más
+      silencioso... y otro con picos altos, se escuche parejo... al
+      mismo rango"): `threshold = 0.1` (~-20dB, en escala LINEAL —
+      importante: los controles de ganancia de Calf son lineales, no
+      dB, aunque su interfaz gráfica los muestre en dB) para que
+      agarre la MAYORÍA del contenido, no solo picos ocasionales —
+      `ratio = 3.5`, `attack = 15ms`, `release = 200ms` (lo
+      suficientemente lento para no sonar "bombeado"), `detection = 1`
+      (RMS, más musical que peak), `stereo_link = 1` (los dos canales
+      se reducen IGUAL, para que la imagen estéreo no se corra al
+      comprimir — explícito porque el default de Calf es 0/desvinculado),
+      `makeup = 2.0` (~+6dB lineal, moderado a propósito para no
+      forzar de más al limitador de después).
+    - **Limiter** (seguridad — pedido textual: "por si hay algún
+      sobre salto de saturación"): `limit = 0.933` (~-0.6dB lineal,
+      techo con margen contra picos entre muestras/inter-sample
+      peaks — nunca deja pasar saturación real), `asc = 1` (Automatic
+      Sustain Control, reduce el bombeo audible en pasajes fuertes
+      sostenidos), `oversampling = 2` (mejor calidad que el default
+      sin llegar al máximo — equilibrio pensado para el hardware
+      modesto de Santiago, Celeron N2820), `auto_level = 1` (auto-
+      compensación de nivel, ya viene así por defecto en Calf).
+    `capture.props` arma un sink virtual nuevo, `fm_processing_input`
+    — ESE es el que hay que elegir como salida en Configuración →
+    Audio → Salida Master del programa una vez confirmado que anda.
+    `playback.props` conecta la salida ya procesada a
+    `@DEFAULT_SINK@` (el hardware real).
+
+    **Limitación reconocida de esta ronda, explicada a Santiago**: no
+    se pudo verificar la sintaxis exacta del archivo (la estructura
+    general de `context.modules`/`filter.graph`/`capture.props`)
+    contra la documentación oficial en vivo — el acceso saliente de
+    este entorno a `docs.pipewire.org`/`wiki.archlinux.org` está
+    bloqueado por política (403 del proxy de la organización, no un
+    error de la app). Los nombres de PLUGINS y de CONTROLES sí están
+    100% confirmados contra la instalación real de Santiago
+    (`lv2info`), pero la sintaxis general del archivo es la mejor
+    reconstrucción posible a partir de fragmentos de documentación
+    indirectos (resultados de búsqueda) — no una copia verificada de
+    un ejemplo oficial. Por eso el pedido explícito a Santiago es
+    probarlo primero como proceso SUELTO en primer plano
+    (`pipewire -c assets/pipewire-fm-processing.conf`, matable con
+    Ctrl+C sin tocar su audio real en curso) antes de ponerlo en
+    autoarranque — si hay un error de sintaxis, PipeWire lo va a
+    imprimir ahí mismo en texto plano, sin romper nada de lo que ya
+    está sonando, y se corrige con ese detalle real (mismo patrón
+    colaborativo "ground truth de tu máquina real" que ya funcionó
+    bien durante toda la investigación de EasyEffects).
+
+    No probado — no hay forma de hacerlo en el sandbox (no tiene
+    PipeWire real, ni Calf, ni una tarjeta de sonido): falta que
+    Santiago corra el comando de prueba en primer plano, confirme que
+    no tira error de sintaxis, verifique con `pactl list sinks short |
+    grep fm_processing` que aparecen los nodos nuevos, elija
+    "fm_processing_input" como salida en Configuración → Audio del
+    programa, y confirme cómo suena — recién ahí, si todo anda, mover
+    el archivo a `~/.config/pipewire/pipewire.conf.d/` para que
+    arranque solo con el sistema (sin pasar por esta app en absoluto,
+    a diferencia de EasyEffects — el filter-chain de PipeWire es
+    completamente independiente del programa de la radio).
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
