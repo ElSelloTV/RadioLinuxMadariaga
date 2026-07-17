@@ -360,13 +360,58 @@ def esta_en_bypass() -> bool | None:
 
 def abrir_ventana() -> tuple[bool, str]:
     """Muestra la ventana real de EasyEffects para afinar los plugins
-    a fondo. No hay un flag "mostrar ventana" documentado en esta
-    versión (solo --hide-window para ocultarla) — invocar el binario
-    SIN ese flag activa la instancia existente, y GApplication
-    presenta su ventana por defecto al recibir esa activación."""
-    ok, mensaje = asegurar_en_ejecucion()
-    if not ok:
-        return False, mensaje
+    a fondo.
+
+    Bug real reportado ("tampoco abre desde FM EasyEffects (Opciones
+    Avanzadas)"): la suposición original — invocar el binario SIN
+    --hide-window sobre una instancia YA corriendo oculta activaría
+    esa instancia y GApplication presentaría su ventana sola, sin
+    hacer falta ningún otro paso — no se cumplió en la práctica (ya
+    quedaba documentado como incierto desde que se escribió, nunca
+    confirmado). No hay un flag "--show-window" documentado en el
+    --help real de Santiago para forzarlo directamente. La única
+    forma CONFIABLE de garantizar que la ventana aparezca, sin
+    depender de un comportamiento de reactivación no confirmado, es
+    cerrar la instancia oculta actual (`--quit`, sí confirmado en su
+    --help) y esperar a que termine de verdad, y recién ahí lanzar
+    una instancia NUEVA sin --hide-window — un arranque fresco sin
+    ese flag muestra su ventana por comportamiento normal de
+    cualquier app GTK, sin depender de si la activación remota la
+    "destapa" o no."""
+    if not esta_instalado():
+        return False, (
+            "EasyEffects no está instalado en este sistema. "
+            "Instalalo con: sudo apt install easyeffects"
+        )
+
+    if _esta_corriendo():
+        _ejecutar_comando(FLAG_SALIR)
+        inicio = time.monotonic()
+        while time.monotonic() - inicio < TIMEOUT_ARRANQUE_SEGUNDOS:
+            if not _esta_corriendo():
+                break
+            time.sleep(INTERVALO_SONDEO_SEGUNDOS)
+        else:
+            registrar_error(
+                "EasyEffects: no terminó de cerrarse tras --quit — no se pudo "
+                "relanzar con la ventana visible."
+            )
+            return False, (
+                "EasyEffects no respondió al intentar cerrarlo para volver a "
+                "abrirlo con la ventana visible."
+            )
+
     if not _lanzar_proceso_con_captura([]):
         return False, "No se pudo abrir la ventana de EasyEffects."
+
+    if not _esperar_proceso_vivo(TIMEOUT_ARRANQUE_SEGUNDOS):
+        cola = _cola_log_proceso()
+        registrar_error(
+            "EasyEffects: no volvió a aparecer tras relanzarlo (sin --hide-window) para mostrar la ventana."
+            + (f" Salida capturada:\n{cola}" if cola else "")
+        )
+        mensaje = "EasyEffects no volvió a abrir tras relanzarlo."
+        return False, mensaje + (f" Detalle: {cola[:300]}" if cola else "")
+
+    registrar_evento("EasyEffects: relanzado sin --hide-window para mostrar la ventana.")
     return True, "Ventana de EasyEffects abierta."
