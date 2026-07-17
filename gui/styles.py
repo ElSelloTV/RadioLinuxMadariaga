@@ -393,6 +393,21 @@ ROL_TIPO_COMANDO = 1007       # ej. "FMT"
 ROL_PARAMETRO_COMANDO = 1008  # ej. nombre del formato del Musicalizador
 COLOR_COMANDO = "#2980b9"     # azul, distinto del rojo/verde de estado y del violeta del Pisador
 
+# Ítem ALEATORIO (pedido explícito, Programador de Ventana 1: "agregar
+# un ítem aleatorio de alguna categoría o sub-categoría, para darle
+# dinamismo... que sea buen aleatorio y variado"): igual que un
+# Comando, no tiene una ruta FIJA — a diferencia de arrastrar un
+# archivo puntual, este ítem guarda el CAMINO de una categoría y
+# recién resuelve un archivo al azar de ahí CADA VEZ que le toca sonar
+# (no una sola vez al agregarlo) — mismo mecanismo de no-repetir vía
+# historial ya usado por el Musicalizador Avanzado
+# (config.settings.rutas_recientes_en_historial), así nunca repite un
+# archivo hasta agotar los demás de esa categoría.
+ROL_ES_ALEATORIO = 1009
+ROL_CATEGORIA_ALEATORIO = 1010    # list[str]: camino de nombres (ver VentanaExplorador.ruta_de_categoria)
+ROL_RECURSIVO_ALEATORIO = 1011    # bool: suma también las subcategorías
+COLOR_ALEATORIO = "#16a085"       # verde azulado, distinto de COLOR_COMANDO y del rojo/verde de estado
+
 # Colores por género, usados en la Ventana 3 (Explorador) para pintar
 # el fondo de cada fila según el tipo de material (pedido explícito).
 GENERO_COLORES = {
