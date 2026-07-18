@@ -140,6 +140,7 @@ class VentanaExplorador(QWidget):
         self.btn_limpiar_busqueda.clicked.connect(self._limpiar_busqueda)
         self.btn_expandir = QPushButton("⤢ Expandir")
         self.btn_expandir.setToolTip("Expandir esta ventana para trabajar con más visibilidad")
+        self.btn_expandir.setProperty("class", "btnCompacto")
         self.btn_expandir.clicked.connect(self.solicitud_alternar_expansion.emit)
         barra_superior.addWidget(self.txt_busqueda)
         barra_superior.addWidget(self.btn_buscar)
@@ -169,20 +170,27 @@ class VentanaExplorador(QWidget):
         self.tree_categorias.orden_cambiado.connect(self._guardar_biblioteca)
         layout_categorias.addWidget(self.tree_categorias)
 
-        barra_categorias = QHBoxLayout()
+        # Misma razón que la fila de archivos de abajo: 2 filas de
+        # botones en vez de 1 sola, para no forzar tanto ancho mínimo
+        # en pantallas anchas pero bajas (ej. 1360x768).
+        fila_categorias_1 = QHBoxLayout()
+        fila_categorias_2 = QHBoxLayout()
         self.btn_nueva_categoria = QPushButton("＋ Categoría")
         self.btn_nueva_categoria.setToolTip("Nueva categoría de primer nivel")
         self.btn_nueva_subcategoria = QPushButton("＋ Sub")
         self.btn_nueva_subcategoria.setToolTip("Nueva subcategoría dentro de la seleccionada")
-        self.btn_eliminar_categoria = QPushButton("✕")
+        self.btn_eliminar_categoria = QPushButton("✕ Eliminar")
         self.btn_eliminar_categoria.setToolTip("Eliminar categoría")
         self.btn_nueva_categoria.clicked.connect(self._nueva_categoria)
         self.btn_nueva_subcategoria.clicked.connect(self._nueva_subcategoria)
         self.btn_eliminar_categoria.clicked.connect(self._eliminar_categoria)
-        barra_categorias.addWidget(self.btn_nueva_categoria)
-        barra_categorias.addWidget(self.btn_nueva_subcategoria)
-        barra_categorias.addWidget(self.btn_eliminar_categoria)
-        layout_categorias.addLayout(barra_categorias)
+        for btn in (self.btn_nueva_categoria, self.btn_nueva_subcategoria, self.btn_eliminar_categoria):
+            btn.setProperty("class", "btnCompacto")
+        fila_categorias_1.addWidget(self.btn_nueva_categoria)
+        fila_categorias_1.addWidget(self.btn_nueva_subcategoria)
+        fila_categorias_2.addWidget(self.btn_eliminar_categoria)
+        layout_categorias.addLayout(fila_categorias_1)
+        layout_categorias.addLayout(fila_categorias_2)
 
         # ---------- Columna derecha: archivos de la categoría ----------
         panel_archivos = QWidget()
@@ -215,7 +223,12 @@ class VentanaExplorador(QWidget):
 
         layout_archivos.addWidget(self.tree_archivos)
 
-        barra_archivos = QHBoxLayout()
+        # Pedido explícito (pantalla de 1360px, "se va de ancho"): en
+        # vez de 1 sola fila de 4 botones (pedía demasiado ancho
+        # mínimo), 2 filas de 2 — cambia ancho por alto, del que hay
+        # de sobra en pantallas anchas pero bajas.
+        fila_archivos_1 = QHBoxLayout()
+        fila_archivos_2 = QHBoxLayout()
         self.btn_agregar = QPushButton("＋ Agregar")
         self.btn_info = QPushButton("✏ Info")
         self.btn_info.setToolTip("Editar información (título, artista, género, categoría) sin tocar el audio")
@@ -226,8 +239,13 @@ class VentanaExplorador(QWidget):
         self.btn_reemplazar.clicked.connect(self._reemplazar_archivo)
         self.btn_eliminar.clicked.connect(self._eliminar_archivo)
         for btn in (self.btn_agregar, self.btn_info, self.btn_reemplazar, self.btn_eliminar):
-            barra_archivos.addWidget(btn)
-        layout_archivos.addLayout(barra_archivos)
+            btn.setProperty("class", "btnCompacto")
+        fila_archivos_1.addWidget(self.btn_agregar)
+        fila_archivos_1.addWidget(self.btn_info)
+        fila_archivos_2.addWidget(self.btn_reemplazar)
+        fila_archivos_2.addWidget(self.btn_eliminar)
+        layout_archivos.addLayout(fila_archivos_1)
+        layout_archivos.addLayout(fila_archivos_2)
 
         # --- Previo (preescucha, Play/Stop) ---
         barra_preview = QHBoxLayout()
@@ -240,6 +258,8 @@ class VentanaExplorador(QWidget):
         self.btn_stop_preview.setObjectName("btnStop")
         self.btn_play_preview.clicked.connect(self.solicitud_play_preview.emit)
         self.btn_stop_preview.clicked.connect(self.solicitud_stop_preview.emit)
+        self.btn_play_preview.setProperty("class", "btnCompacto")
+        self.btn_stop_preview.setProperty("class", "btnCompacto")
         barra_preview.addWidget(self.indicador_preview)
         barra_preview.addWidget(self.btn_play_preview)
         barra_preview.addWidget(self.btn_stop_preview)
@@ -263,6 +283,7 @@ class VentanaExplorador(QWidget):
         self.txt_url_youtube.setPlaceholderText("Pegá acá el enlace de YouTube (video o playlist)...")
         self.txt_url_youtube.returnPressed.connect(self._descargar_de_youtube)
         self.btn_descargar_youtube = QPushButton("⬇ Descargar")
+        self.btn_descargar_youtube.setProperty("class", "btnCompacto")
         self.btn_descargar_youtube.clicked.connect(self._descargar_de_youtube)
         fila_url.addWidget(self.txt_url_youtube)
         fila_url.addWidget(self.btn_descargar_youtube)
