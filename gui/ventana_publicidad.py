@@ -116,7 +116,7 @@ class VentanaPublicidad(QWidget):
         self.btn_automatico.setCheckable(True)
         self.btn_automatico.setProperty("activo", "false")
         self.btn_automatico.setToolTip("AUTOMÁTICO: dispara los bloques horarios por hora y gobierna la vuelta a Emisión.")
-        self.btn_automatico.clicked.connect(self._toggle_automatico)
+        self.btn_automatico.clicked.connect(self._on_click_automatico)
 
         # --- 1) Fila combinada relojes + Ahora/Luego (pedido explícito,
         # "aprovechar más el espacio", igual criterio que Ventana 2):
@@ -434,6 +434,40 @@ class VentanaPublicidad(QWidget):
         return item_bloque.data(0, ROL_HORA_BLOQUE) or ""
 
     # ------------------------------------------------------------------
+    def _on_click_automatico(self):
+        """Pedido explícito: confirmar SIEMPRE que el operador toca el
+        botón AUTOMÁTICO a mano (tanto para activarlo como para
+        desactivarlo) -- a propósito NO pasa por acá el arranque de la
+        app (`MainWindow._inicializar_motores_audio` llama a
+        `_toggle_automatico()` directo, sin pasar por `clicked`), así
+        que nunca interrumpe el inicio con un diálogo. Al hacer click,
+        Qt ya invirtió el estado del botón (checkable) -- si el
+        operador cancela, hay que revertirlo a mano sin llamar a
+        `_toggle_automatico()`, para no emitir ningún cambio real."""
+        activar = self.btn_automatico.isChecked()
+        if activar:
+            texto = (
+                "¿Activar el modo AUTOMÁTICO?\n\n"
+                "Los bloques horarios de esta ventana se van a disparar "
+                "solos por horario, y al terminar Publicidad la radio va "
+                "a retomar Emisión sin intervención tuya."
+            )
+        else:
+            texto = (
+                "¿Desactivar el modo AUTOMÁTICO?\n\n"
+                "Los bloques horarios YA NO se van a disparar solos, y la "
+                "vuelta a Emisión al terminar Publicidad tampoco va a ser "
+                "automática -- vas a tener que operar la radio a mano."
+            )
+        respuesta = QMessageBox.question(
+            self, "Modo AUTOMÁTICO", texto,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            self.btn_automatico.setChecked(not activar)
+            return
+        self._toggle_automatico()
+
     def _toggle_automatico(self):
         self._modo_automatico = self.btn_automatico.isChecked()
         if self._modo_automatico:

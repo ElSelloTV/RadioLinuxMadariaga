@@ -5469,18 +5469,63 @@ todo el resto.
     `test_ventana3.py`, más 2 dependientes de la hora real del
     sistema y 2 de contaminación de estado entre scripts corridos en
     lote — todos ya documentados en rondas anteriores, confirmados sin
-    relación con este cambio corriéndolos en aislado). **Sigue sin
-    poder probarse con una descarga real de YouTube** (esta ronda se
-    probó 100% con yt-dlp mockeado, sin tocar la red — el acceso
-    saliente de este entorno a hosts arbitrarios está restringido por
-    política, y de cualquier forma una descarga real de un video
-    concreto no es algo reproducible de forma determinística en un
-    test automatizado): falta que Santiago pegue una URL real (video
-    suelto primero, después una playlist chica) y confirme que
-    aparece la categoría "Descargas YT" con el/los MP3 sin silencios
-    al principio/final, que el mensaje emergente indica bien dónde
-    quedó, y que arrastrarlo desde ahí a la categoría real (Música,
-    Separadores, etc.) funciona con el drag&drop de siempre.
+    relación con este cambio corriéndolos en aislado).
+
+    **CONFIRMADO CON USO REAL**: la primera prueba de Santiago dio el
+    mensaje de "necesito instalar yt-dlp en el entorno virtual" — no
+    era un bug, `requirements.txt` se actualizó pero eso no reinstala
+    solo en un venv ya creado; con `pip install -r requirements.txt`
+    (venv activado) se resolvió. Confirmado después: **"anda todo muy
+    bien"** — descarga real de YouTube funcionando de punta a punta.
+
+54. ~~Confirmación al activar/desactivar el botón AUTOMÁTICO a
+    mano~~ — pedido explícito, el último de una larga tanda de rondas
+    ("lo último por largos días por el momento"): un diálogo Sí/No
+    antes de aplicar el cambio, en los dos sentidos (activar y
+    desactivar) — con una condición clave, textual: "lógicamente
+    cuando inicia no, solo cuando una vez que lo abro al programa".
+
+    **Por qué no alcanzaba con poner la confirmación dentro de
+    `_toggle_automatico()`**: ese método es el que de verdad cambia el
+    estado (texto del botón, color, `lbl_estado`, emite
+    `automatico_cambiado`) — pero es el MISMO método que
+    `MainWindow._inicializar_motores_audio()` llama directo al abrir
+    la app para prender el Automático solo (`btn_automatico.setChecked(True)`
+    + `_toggle_automatico()`, sin pasar por ningún click). Poner la
+    pregunta ahí adentro hubiera interrumpido CADA arranque de la
+    radio con un diálogo — exactamente lo que Santiago pidió evitar.
+
+    **Solución**: `VentanaPublicidad._on_click_automatico()` (nuevo),
+    conectado a `btn_automatico.clicked` en lugar de
+    `_toggle_automatico()` directo. Como el botón es checkable, Qt ya
+    invirtió su estado ANTES de emitir `clicked` — el método lee ese
+    estado ya invertido para armar el texto de la pregunta ("¿Activar
+    el modo AUTOMÁTICO?..." o "¿Desactivar el modo AUTOMÁTICO?...",
+    cada uno con su propia explicación de qué implica) y pide
+    confirmación con `QMessageBox.question`. Si el operador cancela
+    (No), el botón se REVIERTE a mano (`setChecked(not activar)`) SIN
+    llamar a `_toggle_automatico()` — así no se emite ningún cambio
+    real, ni se toca `lbl_estado` ni la señal `automatico_cambiado`.
+    Si confirma (Yes), recién ahí se llama a `_toggle_automatico()`
+    (el método de siempre, sin cambios). El arranque de la app sigue
+    llamando a `_toggle_automatico()` directo, como siempre — nunca
+    pasa por `_on_click_automatico()`, así que nunca pregunta nada al
+    abrir el programa.
+
+    Probado con `test_confirmacion_automatico.py` (nuevo, dedicado): el
+    arranque real de `MainWindow` NO dispara ningún `QMessageBox.question`
+    y el botón queda encendido solo; un click manual SÍ pregunta, con
+    el texto correcto según el sentido (activar/desactivar); cancelar
+    (No) revierte el botón sin cambiar `esta_en_automatico()` ni emitir
+    la señal; confirmar (Yes) aplica el cambio real y emite
+    `automatico_cambiado` con el valor correcto — + suite de regresión
+    completa sin fallos nuevos (mismos 3 fallos preexistentes de
+    siempre: `test_confirmaciones.py`, `test_log_git.py`,
+    `test_ventana3.py`, confirmados en aislado sin relación con este
+    cambio). Falta que Santiago confirme en su notebook real que la
+    pregunta aparece al tocar el botón a mano (en los dos sentidos) y
+    que el arranque de la app sigue sin interrumpirse con ningún
+    diálogo.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
