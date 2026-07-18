@@ -101,13 +101,15 @@ class VentanaConfiguracion(QDialog):
         form.addRow("Salida Master (Emisión / Publicidad):", self.combo_dispositivo_master)
         form.addRow("Volumen Master:", self.slider_volumen_master)
         form.addRow(QLabel(""))
-        form.addRow("Salida Preescucha (reservado a futuro):", self.combo_dispositivo_preescucha)
+        form.addRow("Salida Preescucha (▶ Previo de Ventana 3):", self.combo_dispositivo_preescucha)
         form.addRow("Volumen Preescucha:", self.slider_volumen_preescucha)
 
         nota = QLabel(
             "Nota: por ahora el Auxiliar comparte la salida Master.\n"
-            "La salida de Preescucha queda lista en el motor para\n"
-            "cuando se habilite una previsualización independiente."
+            "La salida de Preescucha es la que usa el botón ▶ Previo\n"
+            "del Explorador (Ventana 3) — pensada para ir a los parlantes\n"
+            "de monitoreo de la PC, separada de la salida Master que va\n"
+            "al aire (ej. un procesador/codificador conectado aparte)."
         )
         nota.setObjectName("lblTituloBloqueActivo")
         form.addRow(nota)
