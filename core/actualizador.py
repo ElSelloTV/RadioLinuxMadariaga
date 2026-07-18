@@ -53,12 +53,46 @@ def commit_actual() -> str:
 
 
 def _rama_remota_disponible() -> str | None:
-    """Detecta si el repo remoto usa 'main' o 'master'."""
+    """Detecta contra qué rama remota hay que comparar/actualizar
+    HEAD. Primero intenta el upstream REAL configurado para la rama
+    actual (`git rev-parse @{u}`) — así funciona sea cual sea la rama
+    que esté efectivamente checkouteada (main en una instalación
+    normal, o una rama de feature mientras se prueba algo puntual en
+    vivo, como durante una sesión de trabajo con Claude Code). Si no
+    hay upstream configurado (clon nuevo sin tracking), cae a buscar
+    'main' u 'origin/master' como antes."""
+    resultado = _ejecutar_git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    if resultado.returncode == 0:
+        upstream = resultado.stdout.strip()
+        if upstream.startswith("origin/"):
+            return upstream[len("origin/"):]
+
     for rama in ("main", "master"):
         resultado = _ejecutar_git("rev-parse", "--verify", f"origin/{rama}")
         if resultado.returncode == 0:
             return rama
     return None
+
+
+def _evaluar_version(local: str, remoto: str, rama: str) -> tuple[bool, str]:
+    """Decide si hay una actualización REAL para traer — no alcanza
+    con `local != remoto`: si el local está ADELANTE o DIVERGIDO de la
+    rama remota (ej. ya se hizo `git pull` a mano desde otra rama, o
+    el checkout quedó sobre una rama de feature ya adelantada respecto
+    de origin/main), un `git pull --ff-only` ahí es un no-op que
+    "tiene éxito" sin cambiar nada — informar `True` en ese caso deja
+    al operador en un bucle infinito real: actualiza, reinicia, y
+    vuelve a decir "hay actualización" porque nada cambió nunca. Solo
+    cuenta como actualización real si origin/{rama} es descendiente
+    directo de HEAD (fast-forward genuino posible)."""
+    if local == remoto:
+        return False, "Ya tenés la última versión instalada."
+
+    es_ancestro = _ejecutar_git("merge-base", "--is-ancestor", "HEAD", f"origin/{rama}")
+    if es_ancestro.returncode == 0:
+        return True, "Hay una actualización disponible en GitHub."
+
+    return False, "Ya tenés la última versión instalada."
 
 
 def hay_actualizacion_disponible() -> tuple[bool, str]:
@@ -86,10 +120,7 @@ def hay_actualizacion_disponible() -> tuple[bool, str]:
         if not local or not remoto:
             return False, "No se pudo determinar la versión actual o la remota."
 
-        if local == remoto:
-            return False, "Ya tenés la última versión instalada."
-
-        return True, "Hay una actualización disponible en GitHub."
+        return _evaluar_version(local, remoto, rama)
 
     except (subprocess.TimeoutExpired, OSError) as error:
         return False, f"Error consultando actualizaciones: {error}"
@@ -143,10 +174,8 @@ def buscar_actualizacion_async(callback):
             if not local or not remoto:
                 callback(False, "No se pudo determinar la versión actual o la remota.")
                 return
-            if local == remoto:
-                callback(False, "Ya tenés la última versión instalada.")
-                return
-            callback(True, "Hay una actualización disponible en GitHub.")
+            hay_actualizacion, mensaje = _evaluar_version(local, remoto, rama)
+            callback(hay_actualizacion, mensaje)
         except (subprocess.TimeoutExpired, OSError) as error:
             callback(False, f"Error consultando actualizaciones: {error}")
 
