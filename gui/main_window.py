@@ -330,7 +330,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{cantidad} resultado(s) encontrado(s).", 4000)
 
     def _restaurar_disposicion_guardada(self):
-        estado_ui.restaurar_geometria_ventana(self)
+        estado_ui.restaurar_geometria_ventana(self, maximizar_si_es_nueva=True)
         estado_ui.restaurar_splitter("principal", self.splitter_principal)
         estado_ui.restaurar_splitter("explorador", self.ventana_explorador.splitter)
         estado_ui.restaurar_columnas("publicidad", self.ventana_publicidad.tree)
