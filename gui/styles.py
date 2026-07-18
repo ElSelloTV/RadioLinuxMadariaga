@@ -197,6 +197,17 @@ QPushButton[class="btnTransporte"] {{
     font-size: 8pt;
 }}
 
+/* Botones de acción de la Ventana 3 (Explorador) — pedido explícito
+   ("se va de ancho, imposible trabajar así" en una pantalla de
+   1360px): mismo criterio que btnTransporte, padding/fuente más
+   chicos para que las filas de botones (Agregar/Info/Reemplazar/
+   Eliminar, Categoría/Sub/Eliminar categoría) pidan menos ancho
+   mínimo. */
+QPushButton[class="btnCompacto"] {{
+    padding: 3px 5px;
+    font-size: 8pt;
+}}
+
 /* ---------- Grilla de transporte estilo Dinesat (pedido explícito,
    "igualá lo más que pueda... la distribución de las ventanas 1 y 2")
    ----------
