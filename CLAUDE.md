@@ -5583,6 +5583,88 @@ todo el resto.
     historial completo de qué se probó y por qué no prosperó, para no
     tener que redescubrirlo.
 
+56. ~~Bug real, crítico — el maximizado se iba de pantalla en 3
+    computadoras distintas, "no toma el ancho de los display"~~ —
+    pedido explícito, textual: "eso es inaceptable, debemos tener
+    compatibilidad para todo tipo de resolución en monitores... No
+    podemos avanzar si eso sucede... Debemos encontrar la forma de
+    que el programa detecte el tamaño de resolución del display y se
+    ajuste a ello. Sí o sí." Segunda vuelta del bug de la ronda 15
+    (que solo corregía la POSICIÓN de una geometría restaurada de
+    otro monitor) — esta vez la causa era otra, y mucho más grave:
+    afectaba a instalaciones NUEVAS, sin ninguna geometría guardada
+    todavía.
+
+    **Causa real, cuantificada**: `MainWindow` nunca seteaba un
+    `minimumSize()` explícito — `mw.minimumWidth()` daba **0**. Sin
+    ese piso explícito, Qt usa `minimumSizeHint()` (calculado en
+    cascada por todo el árbol de layouts) como el mínimo real que un
+    gestor de ventanas respeta al maximizar/redimensionar — medido
+    con esta misma UI, ese mínimo daba **1517px de ancho**. Cualquier
+    monitor más angosto que eso (1366px es probablemente EL tamaño
+    más común en notebooks, incluida la propia notebook de hardware
+    modesto de Santiago) hacía que maximizar fuera físicamente
+    imposible de encajar: el gestor de ventanas pedía el ancho de la
+    pantalla, Qt se negaba a bajar de 1517px, y la ventana quedaba
+    más ancha que el display. El origen de ese 1517px:
+    `QSplitter.setChildrenCollapsible(False)` en DOS lugares —
+    `splitter_principal` (`main_window.py`, las 3 ventanas
+    Publicidad/Emisión/Explorador) y el splitter interno de Ventana 3
+    (`ventana_explorador.py`, categorías/archivos) — ambos, puestos a
+    propósito en una ronda muy anterior para evitar que un splitter
+    se colapsara sin querer, tienen como efecto secundario que
+    NINGUNO de sus paneles puede bajar de su tamaño "cómodo" natural,
+    y eso se propaga hacia arriba hasta convertirse en el piso de
+    ancho de TODA la ventana principal.
+
+    **Corregido en 3 frentes**:
+    - `splitter_principal.setChildrenCollapsible(True)` y
+      `ventana_explorador.splitter.setChildrenCollapsible(True)` —
+      ahora los paneles SÍ pueden comprimirse más allá de su tamaño
+      cómodo (con scrollbars/controles más apretados) en vez de
+      bloquear el resize entero.
+    - `MainWindow.__init__` ahora llama `self.setMinimumSize(900,
+      550)` explícito — este es el fix de fondo: al haber un mínimo
+      EXPLÍCITO seteado, Qt ya no cae al `minimumSizeHint()` grande
+      del árbol de layouts como piso real para el resize/maximizado
+      manejado por el gestor de ventanas. 900px entra cómodo en
+      prácticamente cualquier notebook real, incluidas las viejas de
+      1024px.
+    - El tamaño INICIAL (`self.resize(...)`, usado la primera vez que
+      no hay geometría guardada) dejó de ser un `1400x800` fijo — 
+      ahora se calcula contra `QApplication.primaryScreen().
+      availableGeometry()`, nunca pidiendo más de lo que la pantalla
+      real tiene disponible, con el mismo `1400x800` como techo si la
+      pantalla es más grande.
+    - `gui/estado_ui.py:_asegurar_dentro_de_pantalla()` (el mecanismo
+      de la ronda 15, que corrige una geometría restaurada de otro
+      monitor) queda sin tocar en su lógica — pero ahora sí puede
+      cumplir lo que ya intentaba hacer, porque el piso que antes se
+      lo impedía en silencio ya no existe.
+
+    Probado con `test_ventana_ajusta_a_pantalla.py` (nuevo, dedicado):
+    ambos splitters confirmados `childrenCollapsible=True`;
+    `mw.resize(1024, 600)` (tamaño tipo notebook chica) ahora sí
+    produce esa medida EXACTA; `minimumWidth()` pasó de 0 (sin
+    protección) a 900 (piso explícito, confirmado con `git stash`
+    contra el código viejo: daba 0 de `minimumWidth()` y 1517x390 de
+    `minimumSizeHint()`); `_asegurar_dentro_de_pantalla()` con una
+    pantalla simulada de 1024x600 encaja correctamente una geometría
+    guardada de un monitor de 1920px, tanto en el caso normal como en
+    el caso "estaba maximizada"; el tamaño inicial de una ventana
+    nueva nunca excede la pantalla disponible — + suite de regresión
+    completa sin fallos nuevos (mismos fallos preexistentes de
+    siempre). **Limitación reconocida de esta prueba**: el backend
+    `offscreen` del sandbox no tiene un gestor de ventanas real, así
+    que un `resize()` llamado directo en Python no reproduce el
+    síntoma EXACTO que describió Santiago (que ocurre específicamente
+    cuando el gestor de ventanas real negocia el tamaño al maximizar)
+    — por eso el test se apoya en la métrica más robusta y
+    verificable en el sandbox (`minimumWidth()` explícito vs. 0), que
+    es la causa raíz confirmada, no un síntoma indirecto. Falta que
+    Santiago confirme en sus 3 computadoras reales que el maximizado
+    ahora sí encaja siempre en el display, sin importar la resolución.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
@@ -5608,6 +5690,20 @@ todo el resto.
   sospechar de una delegación incompleta entre wrapper y panel.
 - La columna que se tapaba al redimensionar (Stretch +
   minimumSectionSize).
+- **Una ventana top-level SIN `setMinimumSize()` explícito hereda como
+  piso real el `minimumSizeHint()` que calcula en cascada TODO su
+  árbol de layouts** (ver roadmap ronda 56, "el maximizado se va de
+  pantalla") — cualquier `QSplitter` con `setChildrenCollapsible(False)`
+  en el medio (puesto para evitar un colapso accidental) hace que
+  NINGÚN panel baje de su tamaño "cómodo" natural, y eso se propaga
+  hacia arriba sin que se note hasta que alguien prueba en una
+  pantalla más chica que esa suma. Regla para cualquier ventana
+  principal nueva: setear siempre un `setMinimumSize()` explícito y
+  chico (que entre en cualquier notebook real, ~900px de ancho o
+  menos) — un mínimo explícito SIEMPRE gana sobre el `minimumSizeHint()`
+  calculado, así que es la forma confiable de evitar este bug de
+  raíz, en vez de perseguir cada widget interno que podría estar
+  empujando el mínimo hacia arriba.
 - **`_avanzar()` e `_iniciar_crossfade()` (Ventana 2) son dos caminos
   de avance PARALELOS que no comparten código** — `_avanzar()` corre
   cuando un ítem termina sin crossfade; `_iniciar_crossfade()` corre

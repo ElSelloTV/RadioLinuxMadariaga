@@ -55,7 +55,22 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(
             "Automatizador Radio Linux - by Santiago M. Escobar - Radio Tuyú Gral. Madariaga"
         )
-        self.resize(1400, 800)
+        # Pedido explícito ("el programa detecte el tamaño de
+        # resolución del display y se ajuste a ello, sí o sí"): el
+        # tamaño de arranque (usado la primera vez, sin geometría
+        # guardada todavía) se calcula CONTRA la pantalla real en vez
+        # de un 1400x800 fijo — en una notebook con display más chico
+        # que eso (ej. 1366x768, hardware modesto tipo el de Santiago),
+        # el tamaño fijo ya arrancaba más grande que la pantalla. Un
+        # piso bajo (900x550) evita que la ventana quede reducida a
+        # una tira inutilizable en un display muy chico.
+        self.setMinimumSize(900, 550)
+        pantalla = QApplication.primaryScreen()
+        disponible = pantalla.availableGeometry() if pantalla else None
+        if disponible is not None:
+            self.resize(min(1400, disponible.width()), min(800, disponible.height()))
+        else:
+            self.resize(1400, 800)
 
         self._ventana_auxiliar = None
         self._gestor_auxiliar = None
@@ -257,7 +272,19 @@ class MainWindow(QMainWindow):
         self.ventana_publicidad.set_ventana_explorador(self.ventana_explorador)
 
         self.splitter_principal = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter_principal.setChildrenCollapsible(False)
+        # Bug real corregido (pedido explícito, "el maximizado se va de
+        # pantalla, no toma el ancho del display" en 3 computadoras
+        # distintas): mismo motivo que el splitter interno de Ventana 3
+        # (ver ventana_explorador.py) — con `childrenCollapsible=False`
+        # este splitter (Publicidad/Emisión/Explorador) nunca deja que
+        # sus 3 paneles bajen de su ancho mínimo natural, y eso fija un
+        # piso de ancho para TODA la ventana principal — en una pantalla
+        # más chica que ese piso, ni maximizar ni ningún resize() podían
+        # angostarla lo suficiente (Qt ignora un tamaño pedido por
+        # debajo del mínimo impuesto). `True` deja que el splitter
+        # comprima sus paneles más allá de su tamaño "cómodo" en vez de
+        # bloquear el resize entero.
+        self.splitter_principal.setChildrenCollapsible(True)
         self.splitter_principal.addWidget(self.ventana_publicidad)
         self.splitter_principal.addWidget(self.ventana_emision)
         self.splitter_principal.addWidget(self.ventana_explorador)

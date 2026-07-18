@@ -103,7 +103,18 @@ def _asegurar_dentro_de_pantalla(widget):
     contra la pantalla ACTUAL, y recién ahí se vuelve a maximizar
     (`showMaximized()`) — así el gestor de ventanas maximiza sobre
     coordenadas válidas de esta sesión, no sobre las que se guardaron
-    la vez anterior (que podían ser de otro monitor/resolución)."""
+    la vez anterior (que podían ser de otro monitor/resolución).
+
+    Segunda vuelta del mismo bug ("el maximizado se va de pantalla, no
+    toma el ancho del display", confirmado en 3 computadoras
+    distintas): el `setGeometry()` de acá abajo SIEMPRE calculaba bien
+    el tamaño que debería tener la ventana para entrar en la pantalla,
+    pero Qt lo ignoraba en silencio si ese tamaño quedaba por debajo
+    del mínimo que el propio layout de la ventana venía imponiendo
+    (heredado de `QSplitter.setChildrenCollapsible(False)` en
+    `main_window.py`/`ventana_explorador.py` — ver esos archivos). Sin
+    ese piso de más (corregido ahí, con `True`), este cálculo ahora sí
+    se aplica de verdad."""
     pantalla = widget.screen() or QApplication.primaryScreen()
     if pantalla is None:
         return
