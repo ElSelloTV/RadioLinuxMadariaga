@@ -148,7 +148,21 @@ class VentanaExplorador(QWidget):
         layout_grupo.addLayout(barra_superior)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter.setChildrenCollapsible(False)
+        # Bug real corregido (pedido explícito, "el maximizado se va de
+        # pantalla, no toma el ancho del display" en 3 computadoras
+        # distintas): con `childrenCollapsible=False`, este splitter
+        # NUNCA deja que sus dos paneles (categorías/archivos) bajen
+        # de su tamaño mínimo natural — eso propaga hacia arriba y
+        # termina fijando un piso de ancho para TODA la ventana
+        # principal más grande que pantallas chicas/laptops, así que
+        # ni maximizar ni ningún resize() podía angostarla lo
+        # suficiente para entrar en el display (Qt directamente
+        # ignora un tamaño pedido por debajo de ese mínimo). Con
+        # `True`, el splitter puede comprimir sus paneles más allá de
+        # su tamaño "cómodo" (aparecen scrollbars/se acomodan los
+        # controles) en vez de bloquear el resize entero — la ventana
+        # ahora SIEMPRE puede achicarse a lo que haga falta.
+        self.splitter.setChildrenCollapsible(True)
 
         # ---------- Columna izquierda: categorías ----------
         panel_categorias = QWidget()
