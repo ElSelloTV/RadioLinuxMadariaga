@@ -2567,7 +2567,11 @@ sudo apt install calf-plugins
 (config del filter-chain: ver `docs/` una vez armado con Santiago
 contra los nombres reales de puertos LV2 de su instalación.)
 
-`requirements.txt` (Python): PySide6, python-vlc, mutagen, pydub.
+`requirements.txt` (Python): PySide6, python-vlc, mutagen, pydub,
+yt-dlp (descargador de YouTube de Ventana 3, ver roadmap ronda 53 —
+conviene actualizarlo de vez en cuando con `pip install --upgrade
+yt-dlp` dentro del venv, ya que YouTube cambia su formato de página
+seguido y yt-dlp saca versiones nuevas para seguirle el paso).
 
 ## Convención de entorno
 
@@ -5301,14 +5305,182 @@ todo el resto.
     depender de cuál sea "el default" del sistema en cualquier
     momento) debería conectarse solo, igual que lo haría VLC.
 
-    **Pendiente**: que Santiago recargue el archivo actualizado
-    (mismo `cp` + `systemctl --user restart` de siempre, sobrescribiendo
-    `~/.config/pipewire/pipewire.conf.d/99-fm-processing.conf`) y
-    confirme con `pw-link -l | grep -B1 -iE "fm_proc|alsa_output"` que
-    esta vez la salida SÍ aparece conectada a `alsa_output...`, y que
-    se escucha el procesamiento — recién ahí se puede evaluar si el
-    preset (compresión/limitador/estéreo) suena como se buscaba, y
-    repetir el despliegue completo en su PC real de transmisión.
+    **CONFIRMADO CON AUDIO REAL — el fix de `media.class` fue la causa
+    de fondo**: Santiago recargó el archivo corregido y confirmó "ahi
+    se escucha!!!" — la cadena StereoTools→Compressor→Limiter ya está
+    procesando de verdad el audio de la radio en su PC de prueba
+    (destinada a terminar siendo la de aire, ver el pedido original de
+    esta ronda). Pendiente de una prueba más específica: confirmar que
+    los plugins realmente están APLICANDO efecto (no un passthrough
+    silencioso) — se le indicó un test de oído con un parámetro
+    extremo (bajar `limit` del Limiter a `0.05` momentáneamente, volver
+    a `0.933` después) más verificación visual opcional con `qpwgraph`
+    (`sudo apt install qpwgraph`) y `pw-top`. Falta la confirmación de
+    ese test puntual, y repetir el despliegue completo (desinstalar
+    EasyEffects + instalar calf-plugins + copiar el `.conf` a
+    `~/.config/pipewire/pipewire.conf.d/`) en la PC real de aire si es
+    distinta de la que se usó para probar.
+
+53. ~~Descargador de YouTube integrado en Ventana 3 (video suelto o
+    playlist completa, MP3 sin silencios, categoría de aterrizaje
+    "Descargas YT")~~ — pedido explícito, 9 puntos, con el criterio
+    de diseño de Santiago repetido dos veces ("esto sí tipo 'módulo'
+    así no rompemos mucho el programa original") — llega justo cuando
+    la app queda lista para la importación real y definitiva de
+    música y programación ("tenemos casi casi todo listo").
+
+    **`core/descargador_youtube.py` (nuevo, sin Qt — mismo espíritu
+    que `core/actualizador.py`/`core/clima_meteo.py`)**: usa la
+    librería `yt-dlp` (pip, agregada a `requirements.txt`) en vez de
+    un binario de sistema aparte — se eligió la librería Python
+    directa (no CLI + parseo de su salida) porque da acceso
+    estructurado a metadata (título, si es playlist, título de la
+    playlist) sin tener que interpretar texto. Degrada limpio si
+    `yt-dlp` no está instalado (mismo patrón que MotorAudio/
+    analizador_audio ante dependencias faltantes) y requiere `ffmpeg`
+    del sistema (dependencia YA existente de esta app) para la
+    conversión — si falta, yt-dlp tira un error claro que se atrapa y
+    se devuelve como mensaje.
+    - `es_url_youtube(url)`: regex que acepta youtube.com/watch,
+      /playlist, /shorts/ y youtu.be, con o sin subdominio www./m./
+      music. — pedido explícito (punto 9), rechaza cualquier otro
+      dominio.
+    - `descargar(url, carpeta_base, ...)`: primero hace un SONDEO sin
+      descargar (`extract_flat`, `skip_download`) para saber si es un
+      video suelto o una playlist y resolver la carpeta destino ANTES
+      de bajar nada — evita bajar todo a medias para recién ahí
+      descubrir dónde tendría que haber quedado. Video suelto →
+      `<biblioteca_musical>/descargas YT/`; playlist →
+      `<biblioteca_musical>/descargas YT/<título de la playlist>/`
+      (pedido explícito, puntos 5 y 7) — `<biblioteca_musical>` es la
+      MISMA ruta que ya existía en Configuración → Rutas → "Biblioteca
+      musical" (punto 4: "el mismo lugar que elijo en
+      configuraciones", sin necesidad de agregar un campo de
+      configuración nuevo).
+    - **Siempre MP3, limpieza automática (punto 8) SIN código propio**:
+      el postprocesador `FFmpegExtractAudio` de yt-dlp (`preferredcodec:
+      "mp3"`) ya borra el archivo intermedio (el que bajó en el
+      formato original de YouTube) apenas termina de convertir — no
+      hizo falta ningún manejo manual de limpieza de archivos, es
+      comportamiento nativo de yt-dlp.
+    - **Detección de qué se descargó, en DOS capas** (nunca confiar en
+      una sola forma de leer el resultado, mismo criterio que ya rige
+      el resto del proyecto ante libVLC/EasyEffects): capa 1, los
+      `postprocessor_hooks` de yt-dlp (dan el título real de cada
+      archivo); capa 2, comparar qué `.mp3` nuevos aparecieron en la
+      carpeta destino (diff de carpeta antes/después) — las dos capas
+      se COMBINAN, no una reemplaza a la otra, para cubrir tanto una
+      playlist donde el hook falla para algunos ítems como un cambio
+      de formato interno de yt-dlp entre versiones donde fallara para
+      todos. Un bug real de esta clase apareció en el primer test
+      (capa 2 nunca se activaba si la capa 1 devolvía AUNQUE SEA un
+      resultado parcial) y quedó cubierto por un test dedicado que
+      simula justo ese caso (un archivo detectado por hook, el otro
+      solo por diff).
+    - **Recorte de silencios (punto 3) reusando el motor YA
+      existente**: cada archivo descargado pasa por
+      `core/analizador_audio.analizar_audio()` (mismo motor no
+      destructivo del resto de la app — nunca reescribe el mp3, solo
+      calcula `punto_inicio_ms`/`punto_fin_ms`/`ganancia_db` como
+      metadata) ANTES de devolver el resultado a la GUI — así el
+      recorte de silencio de una descarga de YouTube es un campo más
+      del registro, igual que cualquier archivo importado a mano,
+      sin lógica paralela.
+    - `ignoreerrors=True` en las opciones de yt-dlp: un video roto o
+      privado dentro de una playlist no frena la descarga de los
+      demás — mismo criterio de "nunca romper el lote por un ítem
+      malo" ya usado en el Musicalizador/reanalizar biblioteca.
+    - `callback_progreso` (opcional): un callable que recibe texto de
+      estado ("Descargando: Tema (43%)", "Convirtiendo a MP3...",
+      "Analizando silencios...") — el módulo lo llama desde los hooks
+      de yt-dlp sin importar Qt para nada; es la GUI la que decide
+      qué hacer con ese texto.
+
+    **GUI (`gui/ventana_explorador.py`)**: un `QGroupBox` nuevo
+    "⬇ Descargar de YouTube" al FINAL de `layout_archivos` (debajo de
+    la lista de archivos, los botones Agregar/Info/Reemplazar/
+    Eliminar, Previo/Stop y la barra de progreso del previo) — la
+    interpretación de "tercio inferior derecho de la ventana 3" que
+    mejor calza con el layout real: el panel de archivos ya ocupa el
+    lado derecho de la ventana (splitter categorías 40% / archivos
+    60%), y esto queda en su tercio inferior. Un `QLineEdit` con
+    placeholder ("Pegá acá el enlace de YouTube...") + botón
+    "⬇ Descargar" (Enter en el campo hace lo mismo que clickear el
+    botón) + una etiqueta de estado chica debajo (gris para progreso,
+    roja para el aviso de URL inválida).
+    - **Validación de URL en la barra, sin diálogo emergente (pedido
+      explícito, punto 9: "avisar como mensaje en la barra de URL")**:
+      si `es_url_youtube()` da `False`, la etiqueta de estado se pone
+      roja con "⚠ Solo se aceptan enlaces de YouTube..." y no se
+      intenta descargar nada — ni siquiera se importa `yt_dlp` para
+      este caso.
+    - **Progreso sin threading (mismo patrón ya establecido, ronda de
+      preload — "esta app nunca usó threading")**: `WaitCursor` +
+      `callback_progreso` que actualiza la etiqueta y llama
+      `QApplication.processEvents()` en cada aviso de yt-dlp — bloquea
+      la UI igual que cualquier descarga real (no hay forma de evitarlo
+      sin `QThread`, decisión de arquitectura ya tomada para toda la
+      app), pero al menos no se ve "colgada": el texto cambia con cada
+      video de una playlist y con el progreso de conversión.
+    - **`_dar_de_alta_descarga_youtube(resultado)`**: arma un
+      `registro` por archivo (mismo formato que cualquier alta manual
+      — título/artista/género/código/ruta/duración/análisis de
+      silencio) con género fijo `"Musica"` y código correlativo con
+      el prefijo `MUS` de siempre, y lo agrega a la categoría "Descargas
+      YT" (o su subcategoría con el título de la playlist) vía el
+      helper nuevo `_obtener_o_crear_categoria_por_ruta()` — como
+      `buscar_categoria_por_ruta()` (ya existía, usado por el
+      Musicalizador) pero CREA los tramos que falten en vez de
+      devolver `None`, así "Descargas YT" se crea sola la primera vez
+      y se reutiliza (nunca se duplica) en cada descarga siguiente.
+      Persiste con `_guardar_biblioteca()` de siempre.
+    - **Aviso post-descarga (pedido explícito, punto 6)**: un
+      `QMessageBox.information` indica a qué categoría exacta
+      aterrizó ("Descargas YT" o "Descargas YT > <playlist>") y que
+      hay que arrastrarlo a la categoría que corresponda — a
+      propósito la app NUNCA intenta adivinar la categoría real
+      (Música/Separadores/etc.), eso queda 100% a criterio del
+      operador.
+    - **Decisión de diseño no preguntada explícitamente, documentada
+      acá por si Santiago la quiere ajustar**: la subcategoría de una
+      playlist queda SIEMPRE anidada bajo "Descargas YT" (nunca como
+      categoría de primer nivel separada) — mismo criterio de "zona de
+      aterrizaje única antes de triage manual" que ya establecían los
+      puntos 5-6 para un video suelto.
+
+    Probado con `test_descargador_youtube.py` (nuevo, sin red real —
+    se mockea `yt_dlp.YoutubeDL` por completo, simulando lo que
+    devolvería yt-dlp de verdad, incluido el caso de detección mixta
+    capa 1/capa 2 mencionado arriba): validación de URL (YouTube en
+    sus variantes vs. Vimeo/texto random/vacío/`None`), degradación
+    limpia sin `yt-dlp` instalado, rechazo de URL no-YouTube sin tocar
+    yt-dlp, descarga de un video suelto de punta a punta (carpeta
+    correcta, título, análisis de silencio adjunto, callback de
+    progreso llamado), descarga de una playlist de 2 temas (carpeta
+    con el título de la playlist, ambos títulos detectados pese a que
+    solo uno pasa por el hook), sanitización de nombre de carpeta,
+    `_obtener_o_crear_categoria_por_ruta()` (crea de cero, reutiliza en
+    vez de duplicar, anida correctamente la subcategoría de playlist),
+    alta completa de un video suelto y de una playlist en la GUI real
+    (géneros/códigos/persistencia en `biblioteca.json` verificados) y
+    el aviso de URL inválida en la barra — + suite de regresión
+    completa sin fallos nuevos (mismos 3 fallos preexistentes de
+    siempre: `test_confirmaciones.py`, `test_log_git.py`,
+    `test_ventana3.py`, más 2 dependientes de la hora real del
+    sistema y 2 de contaminación de estado entre scripts corridos en
+    lote — todos ya documentados en rondas anteriores, confirmados sin
+    relación con este cambio corriéndolos en aislado). **Sigue sin
+    poder probarse con una descarga real de YouTube** (esta ronda se
+    probó 100% con yt-dlp mockeado, sin tocar la red — el acceso
+    saliente de este entorno a hosts arbitrarios está restringido por
+    política, y de cualquier forma una descarga real de un video
+    concreto no es algo reproducible de forma determinística en un
+    test automatizado): falta que Santiago pegue una URL real (video
+    suelto primero, después una playlist chica) y confirme que
+    aparece la categoría "Descargas YT" con el/los MP3 sin silencios
+    al principio/final, que el mensaje emergente indica bien dónde
+    quedó, y que arrastrarlo desde ahí a la categoría real (Música,
+    Separadores, etc.) funciona con el drag&drop de siempre.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

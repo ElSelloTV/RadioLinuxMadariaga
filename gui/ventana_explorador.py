@@ -57,7 +57,8 @@ import shutil
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidget,
     QTreeWidgetItem, QPushButton, QFileDialog, QSplitter, QLineEdit,
-    QMessageBox, QInputDialog, QMenu, QAbstractItemView, QApplication
+    QMessageBox, QInputDialog, QMenu, QAbstractItemView, QApplication,
+    QLabel,
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QProcess
 from PySide6.QtGui import QColor, QBrush, QDesktopServices
@@ -74,6 +75,7 @@ from gui.dialogo_vigencia import DialogoVigencia
 from gui.estado_ui import guardar_columnas, restaurar_columnas
 from core.analizador_audio import analizar_audio
 from core.audio_engine import obtener_duracion_formateada
+from core import descargador_youtube
 from config.settings import (
     cargar_configuracion, cargar_biblioteca, guardar_biblioteca, tolerancia_silencio_para_genero,
 )
@@ -250,6 +252,25 @@ class VentanaExplorador(QWidget):
         self.slider_preview.sliderPressed.connect(self._on_slider_preview_presionado)
         self.slider_preview.sliderReleased.connect(self._on_slider_preview_soltado)
         layout_archivos.addWidget(self.slider_preview)
+
+        # --- Descarga de YouTube (pedido explícito, pensado como
+        # "módulo" autocontenido: solo toca este archivo y
+        # core/descargador_youtube.py, nunca el resto del programa) ---
+        grupo_youtube = QGroupBox("⬇ Descargar de YouTube")
+        layout_youtube = QVBoxLayout(grupo_youtube)
+        fila_url = QHBoxLayout()
+        self.txt_url_youtube = QLineEdit()
+        self.txt_url_youtube.setPlaceholderText("Pegá acá el enlace de YouTube (video o playlist)...")
+        self.txt_url_youtube.returnPressed.connect(self._descargar_de_youtube)
+        self.btn_descargar_youtube = QPushButton("⬇ Descargar")
+        self.btn_descargar_youtube.clicked.connect(self._descargar_de_youtube)
+        fila_url.addWidget(self.txt_url_youtube)
+        fila_url.addWidget(self.btn_descargar_youtube)
+        layout_youtube.addLayout(fila_url)
+        self.lbl_estado_youtube = QLabel("")
+        self.lbl_estado_youtube.setStyleSheet("color: #999; font-size: 8pt;")
+        layout_youtube.addWidget(self.lbl_estado_youtube)
+        layout_archivos.addWidget(grupo_youtube)
 
         self.splitter.addWidget(panel_categorias)
         self.splitter.addWidget(panel_archivos)
@@ -677,6 +698,130 @@ class VentanaExplorador(QWidget):
 
         self._guardar_biblioteca()
         self.archivo_agregado.emit(f"{len(rutas)} archivos")
+
+    # ------------------------------------------------------------------
+    # Descarga de YouTube (pedido explícito, "módulo" autocontenido:
+    # core/descargador_youtube.py hace el trabajo pesado sin Qt, acá
+    # solo se arma la UI y se da de alta lo que devuelve).
+    # ------------------------------------------------------------------
+    def _descargar_de_youtube(self):
+        url = self.txt_url_youtube.text().strip()
+        if not url:
+            return
+
+        if not descargador_youtube.es_url_youtube(url):
+            self.lbl_estado_youtube.setStyleSheet("color: #e57373; font-size: 8pt;")
+            self.lbl_estado_youtube.setText(
+                "⚠ Solo se aceptan enlaces de YouTube (youtube.com o youtu.be)."
+            )
+            return
+
+        config = cargar_configuracion()
+        carpeta_base = config["rutas"]["biblioteca_musical"]
+        tolerancia = tolerancia_silencio_para_genero(config, "Musica")
+        umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
+
+        self.lbl_estado_youtube.setStyleSheet("color: #999; font-size: 8pt;")
+        self.btn_descargar_youtube.setEnabled(False)
+        self.txt_url_youtube.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        def _progreso(texto: str):
+            self.lbl_estado_youtube.setText(texto)
+            QApplication.processEvents()
+
+        self.lbl_estado_youtube.setText("Analizando enlace...")
+        QApplication.processEvents()
+        try:
+            exito, mensaje, resultado = descargador_youtube.descargar(
+                url, carpeta_base,
+                tolerancia_silencio_segundos=tolerancia,
+                umbral_silencio_dbfs=umbral_silencio,
+                callback_progreso=_progreso,
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.btn_descargar_youtube.setEnabled(True)
+            self.txt_url_youtube.setEnabled(True)
+
+        if not exito:
+            self.lbl_estado_youtube.setText("")
+            QMessageBox.warning(self, "Descargar de YouTube", mensaje)
+            return
+
+        self.lbl_estado_youtube.setText("")
+        self.txt_url_youtube.clear()
+        self._dar_de_alta_descarga_youtube(resultado)
+
+    def _dar_de_alta_descarga_youtube(self, resultado: dict):
+        """Sube a la biblioteca lo que bajó `descargador_youtube.descargar()`.
+        Pedido explícito: SIEMPRE aterriza en la categoría "Descargas YT"
+        (subcategoría con el título de la playlist si corresponde) —
+        nunca se elige/adivina la categoría real, eso queda a mano del
+        operador arrastrándolo después (ver el aviso de abajo)."""
+        if resultado["es_playlist"]:
+            ruta_categoria = ["Descargas YT", resultado["titulo_playlist"]]
+        else:
+            ruta_categoria = ["Descargas YT"]
+
+        item_categoria = self._obtener_o_crear_categoria_por_ruta(ruta_categoria)
+
+        registros = item_categoria.data(0, ROL_ARCHIVOS) or []
+        siguiente_numero = len(registros) + 1
+        prefijo = GENERO_PREFIJOS_CODIGO.get("Musica", "MUS")
+
+        for archivo in resultado["archivos"]:
+            registro = {
+                "titulo": archivo["titulo"],
+                "artista": "",
+                "genero": "Musica",
+                "codigo": f"{prefijo}{siguiente_numero:05d}",
+                "ruta": archivo["ruta"],
+                "duracion": archivo["duracion"],
+                "punto_inicio_ms": archivo["punto_inicio_ms"],
+                "punto_fin_ms": archivo["punto_fin_ms"],
+                "ganancia_db": archivo["ganancia_db"],
+                "analizado": archivo["analizado"],
+                "fecha_inicio": None,
+                "fecha_fin": None,
+            }
+            registros.append(registro)
+            siguiente_numero += 1
+
+        item_categoria.setData(0, ROL_ARCHIVOS, registros)
+        if item_categoria is self._categoria_actual() and not self._en_busqueda:
+            self._on_categoria_seleccionada(item_categoria, None)
+
+        self._guardar_biblioteca()
+        self.archivo_agregado.emit(f"{len(resultado['archivos'])} descarga(s) de YouTube")
+
+        nombre_categoria = " > ".join(ruta_categoria)
+        QMessageBox.information(
+            self, "Descarga completa",
+            f"Se descargaron {len(resultado['archivos'])} archivo(s) a la categoría "
+            f"\"{nombre_categoria}\".\n\n"
+            "Quedaron ahí en espera — arrastralos a la categoría que "
+            "corresponda cuando quieras.",
+        )
+
+    def _obtener_o_crear_categoria_por_ruta(self, ruta_nombres: list) -> QTreeWidgetItem:
+        """Como `buscar_categoria_por_ruta()`, pero CREA los tramos que
+        falten en vez de devolver None -- usado por la descarga de
+        YouTube para asegurar que "Descargas YT" (y la subcategoría de
+        la playlist, si aplica) existan siempre."""
+        item_padre = None
+        for nombre in ruta_nombres:
+            cantidad = item_padre.childCount() if item_padre else self.tree_categorias.topLevelItemCount()
+            candidato = None
+            for i in range(cantidad):
+                item = item_padre.child(i) if item_padre else self.tree_categorias.topLevelItem(i)
+                if item.text(0) == nombre:
+                    candidato = item
+                    break
+            if candidato is None:
+                candidato = self._crear_item_categoria(item_padre, nombre)
+            item_padre = candidato
+        return item_padre
 
     # ------------------------------------------------------------------
     # Reemplazar / Eliminar (Eliminar admite selección múltiple)
