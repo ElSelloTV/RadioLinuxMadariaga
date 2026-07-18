@@ -29,14 +29,19 @@ sudo apt install vlc libvlc-dev ffmpeg
 ```
 
 Opcional — si querés procesar el aire de la FM (compresor,
-ecualizador, limitador, etc.) desde el ícono "🎚 FM" del toolbar:
+ecualizador, limitador, etc.), instalá y configurá vos mismo
+EasyEffects (o el procesador que prefieras) por fuera de esta app —
+no hay ninguna integración ni control desde el programa, es 100%
+independiente:
 
 ```bash
 sudo apt install easyeffects
 ```
 
-Sin EasyEffects instalado, ese botón simplemente avisa que no está
-disponible — el resto de la app funciona igual.
+Esta app sí nivela el volumen de cada tema al importarlo (para que no
+haya diferencia de volumen entre canción y canción), sin depender de
+EasyEffects ni de ningún procesador externo — ver
+`core/analizador_audio.py`.
 
 ## Actualizar
 

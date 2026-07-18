@@ -2554,18 +2554,19 @@ fallback).
 sudo apt install vlc libvlc-dev ffmpeg
 ```
 
-Opcional — procesamiento de audio de la FM (Compresor/Limitador/
-Estéreo). EasyEffects se probó a fondo (rondas 37-51) pero se
-descartó — ver roadmap ronda 52 — a favor del módulo nativo
-`filter-chain` de PipeWire con plugins Calf, sin ventana ni proceso
-de por medio:
-
-```bash
-sudo apt install calf-plugins
-```
-
-(config del filter-chain: ver `docs/` una vez armado con Santiago
-contra los nombres reales de puertos LV2 de su instalación.)
+Procesamiento de audio de la FM (Compresor/Limitador/Estéreo): fuera
+del alcance de esta app, a pedido explícito de Santiago (ver roadmap
+ronda 55 — "para mayor compatibilidad... lo manejaré por fuera").
+Historial completo de los dos intentos previos (EasyEffects
+controlado desde acá, rondas 37-51; luego el módulo nativo
+`filter-chain` de PipeWire con plugins Calf, ronda 52) queda
+documentado más abajo por si en algún momento se retoma, pero AMBOS
+se descartaron — Santiago instala y configura EasyEffects a mano,
+totalmente independiente de esta app, sin ningún control ni
+integración desde el programa. Lo único de nivelado de volumen que SÍ
+sigue viviendo en esta app es el nivelado POR TEMA de
+`core/analizador_audio.py` (nunca dependió de EasyEffects ni de
+PipeWire — ver esa sección más abajo).
 
 `requirements.txt` (Python): PySide6, python-vlc, mutagen, pydub,
 yt-dlp (descargador de YouTube de Ventana 3, ver roadmap ronda 53 —
@@ -5526,6 +5527,61 @@ todo el resto.
     pregunta aparece al tocar el botón a mano (en los dos sentidos) y
     que el arranque de la app sigue sin interrumpirse con ningún
     diálogo.
+55. ~~Sacar el procesador de audio nativo de PipeWire (ronda 52) —
+    Santiago vuelve a EasyEffects, manejado por FUERA de la app~~ —
+    pedido explícito: "para mayor compatibilidad, el procesador de
+    audio y demás lo manejaré por fuera, así que instalaré EasyEffects
+    que tenía mayor control por fuera. Saquemos todo procesador de
+    audio, eso que hicimos." Reversión de la ronda 52 (que a su vez
+    había reemplazado la integración de EasyEffects de las rondas
+    37-51) — a esta altura, la app pasó por DOS intentos de resolver
+    el procesamiento de FM (compresor/limitador/estéreo) y en ambos
+    casos Santiago terminó prefiriendo manejarlo él mismo, fuera del
+    programa: primero controlando EasyEffects desde acá (5 rondas de
+    ida y vuelta con la ventana/el pipeline), después con un
+    filter-chain nativo de PipeWire (que sí llegó a sonar, ronda 52) —
+    y ahora decide que ninguno de los dos vale la complejidad, prefiere
+    instalar y configurar EasyEffects él mismo desde su propia
+    interfaz, sin que este programa lo toque para nada.
+
+    Eliminado: `assets/pipewire-fm-processing.conf` (el único archivo
+    que existía de la integración — nunca estuvo wireado en Python, así
+    que sacarlo no toca ni una línea de `core/`/`gui/`, coherente con
+    que desde el principio se armó como una pieza aparte). No había
+    nada más que sacar — `core/easyeffects_control.py` y el botón
+    "🎚 FM" ya se habían eliminado por completo en la propia ronda 52,
+    antes de construir el filter-chain nativo.
+
+    **"Mantené si es posible, la autoganancia de salida para que no
+    haya diferencia de volumen entre canción y canción" — YA estaba,
+    sin relación con nada de esto**: el nivelado de volumen POR TEMA
+    (`core/analizador_audio.py`, sección "Motor de agregado de tema
+    musical" más arriba) es una función mucho más vieja que toda la
+    saga de EasyEffects/PipeWire — calcula, al importar cada archivo,
+    cuánta ganancia en dB hay que sumar o restar para dejarlo nivelado
+    contra un objetivo común (`DBFS_OBJETIVO = -16.0`), y
+    `MotorAudio.reproducir()` aplica esa ganancia (`ganancia_db`) al
+    arrancar cada ítem — así un tema grabado bajito y otro grabado
+    fuerte suenan parejos al aire. Esto NUNCA dependió de EasyEffects
+    ni del filter-chain de PipeWire (son mecanismos completamente
+    independientes) — sacar el procesador de audio de esta ronda no le
+    cambia nada: sigue funcionando exactamente igual, para Música,
+    Publicidad, Separadores, Pisador, Artística y HTH por igual, en
+    Ventana 1, Ventana 2 y la Auxiliar. Es lo más parecido a una
+    "autoganancia de salida" que esta app puede ofrecer sin volver a
+    depender de un procesador de audio externo — no es una función
+    NUEVA de esta ronda, es la confirmación de que ya cumple el pedido.
+
+    No hizo falta ningún test nuevo (la única pieza que se tocó fue un
+    archivo `.conf` sin ningún código que lo importe o lo referencie) —
+    sí se corrió la suite de regresión completa para confirmar que
+    nada más se rompió (mismos fallos preexistentes de siempre, sin
+    relación). Pendiente: que Santiago instale EasyEffects y arme su
+    propia cadena a su gusto, completamente por fuera de esta app —
+    si en algún momento más adelante quiere retomar algún tipo de
+    integración, este archivo (roadmap rondas 37-52 y esta) tiene el
+    historial completo de qué se probó y por qué no prosperó, para no
+    tener que redescubrirlo.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
