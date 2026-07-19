@@ -5765,6 +5765,103 @@ todo el resto.
     el maximizado ya entra en su pantalla de 1360x768, y que el botón
     Actualizar vuelve a funcionar de ahí en más.
 
+58. ~~Rediseño compacto para pantallas chicas (1360x768): sacar la
+    doble fila de menú+toolbar, achicar relojes/Ahora-Luego/título de
+    panel~~ — pedido explícito con captura de pantalla real adjunta:
+    "está muy compacto, debemos rediseñar. Juntar lo que puede estar
+    junto. Lo importante son las listas de ítem." — con libertad
+    explícita para rediseñar el skin siempre que entre en pantalla y
+    se puedan seguir achicando las 3 columnas a gusto.
+
+    **Auditoría antes de tocar nada**: se revisó código por código qué
+    hacía cada botón del `QMenuBar` clásico (Archivo/Edición/Ver/
+    Reproducción/Herramientas) y de la toolbar de abajo — resultado:
+    CASI TODO era decorativo. "Nueva programación"/"Abrir programación"/
+    "Guardar"/"Deshacer"/"Rehacer"/"Pantalla completa"/"Play"/"Stop" del
+    menú, y "Abrir"/"Buscar"/"▶ Play"/"● Grabar"/"Lista"/"＋ Agregar" de
+    la toolbar NUNCA tuvieron un `.triggered.connect(...)` — clickearlos
+    no hacía absolutamente nada, eran relleno visual de rondas muy
+    tempranas del proyecto que nunca se limpió. Los únicos ítems reales
+    del menú eran Salir, Auxiliar, y las 5 pestañas de "Herramientas"
+    (que abren Configuración).
+
+    **Consolidado en UNA sola fila** (`gui/main_window.py`):
+    - `_construir_menu()` ya NO llama a `self.menuBar()` en absoluto —
+      Qt no reserva esa fila si nunca se pide. Los dos ítems reales
+      (Salir/Ctrl+Q, Auxiliar/Ctrl+Shift+A) sobreviven como atajos de
+      teclado invisibles (`self.addAction(...)`, funciona sin pasar
+      por ningún menú visible).
+    - `_construir_toolbar()` se achicó a solo 3 elementos reales:
+      Programador, Musicalizador, y un botón "⚙ Configuración" nuevo
+      —ahora un `QToolButton` con `ToolButtonPopupMode.InstantPopup` y
+      un `QMenu` desplegable con las 5 pestañas (mismo contenido que
+      tenía el viejo menú "Herramientas", un solo click en vez de
+      abrir un menú aparte). Nombre de emisora + reloj siguen a la
+      derecha, sin cambios.
+    - QSS nuevo (`gui/styles.py`, `QToolBar#toolbarPrincipal`/
+      `QToolButton` dentro de ella): padding y fuente reducidos —
+      antes del cambio la toolbar sola sería la única fila de
+      navegación y no debía volver a quedar más alta de lo necesario.
+
+    **Achicado el contenido de cada panel** (relojes, "Ahora"/"Luego",
+    título del `QGroupBox`, medidor de nivel decorativo) — mismos
+    cambios espejados en `panel_reproductor.py` (Ventana 2/Auxiliar) Y
+    `ventana_publicidad.py` (Ventana 1, implementación paralela
+    propia, ver "Cosas ya resueltas" sobre por qué no comparten
+    código):
+    - Relojes (`QLabel#lblTiempoTranscurrido`/`Restante`): 11pt→9pt,
+      padding `1px 4px`→`0px 3px`, ancho máximo 90→76px.
+    - `QFrame#frameAhora`/`frameLuego`: padding `1px 3px`→`0px 2px`,
+      `contentsMargins` del layout interno 2→1px,
+      `QLabel#lblEtiquetaAhoraLuego` ("Ahora:"/"Luego:") 8pt→7pt.
+    - `EtiquetaMarquesina` (el sticker del título): alto mínimo/
+      `sizeHint` 22px→18px.
+    - `MedidorNivelDecorativo`: alto mínimo 40px→26px — este era en
+      la práctica el piso real de toda la fila `fila_info` (clocks +
+      Ahora/Luego), por encima incluso de lo que pedían los relojes
+      ya achicados; sin bajarlo, el resto de las reducciones de esta
+      fila no se notaban.
+    - Título de `QGroupBox` (afecta los 3 paneles + cualquier otro
+      grupo de la app, ej. el panel de descarga de YouTube):
+      `margin-top` 24px→16px, fuente 14pt→11pt.
+    - Botón grande "▶ PLAY/SIG.": alto mínimo 52px→42px, ancho mínimo
+      56px→50px.
+    - `QHeaderView::section` (encabezado de columnas de cualquier
+      árbol): padding 4px→2px.
+
+    Medido: `MainWindow.minimumSizeHint()` bajó de altura (396px →
+    375px) sin perder ningún ancho de margen ya ganado en la ronda
+    anterior (`resize(1360, 768)` sigue aplicando exacto). Se generó
+    una captura real de la app a 1360x768 (`QWidget.render()` sobre un
+    widget con `WA_DontShowOnScreen`, para que el backend `offscreen`
+    del sandbox no la recorte a su pantalla virtual chica) y se le
+    mandó a Santiago para que la compare contra su pantalla real antes
+    de que actualice — confirma visualmente una sola fila de
+    navegación arriba, relojes/Ahora-Luego mucho más chicos, y bastante
+    más alto libre para las listas antes de llegar al borde inferior.
+
+    El splitter de las 3 ventanas (`splitter_principal`, ya
+    `childrenCollapsible=True` desde la ronda 56) sigue sin cambios —
+    el pedido de "poder achicar las columnas de las 3 ventanas a mi
+    gusto" ya estaba resuelto ahí, arrastrando los separadores.
+
+    Probado con `test_rediseño_compacto.py` (nuevo, dedicado): sin
+    `QMenuBar` visible pero con los 2 atajos reales preservados,
+    toolbar con solo los 3 botones reales (los 6 decorativos
+    confirmados ausentes uno por uno), el desplegable de Configuración
+    con las 5 pestañas en el orden correcto, `minimumSizeHint()` más
+    bajo que antes de esta ronda, `resize(1360, 768)` exacto, y los
+    tamaños nuevos de reloj/`EtiquetaMarquesina`/medidor de nivel
+    confirmados por valor — + suite de regresión completa sin fallos
+    nuevos (mismos 3 fallos preexistentes de siempre:
+    `test_confirmaciones.py`, `test_log_git.py`, `test_ventana3.py`).
+    **Sigue sin poder confirmarse "a ojo" en una pantalla real** (el
+    sandbox no tiene un monitor de verdad ni el font-rendering exacto
+    del sistema de Santiago): falta que confirme si el resultado
+    visual (captura enviada) le alcanza, o si quiere ajustar algo más
+    puntual (algún botón, algún texto) una vez que lo vea en su propia
+    pantalla.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que

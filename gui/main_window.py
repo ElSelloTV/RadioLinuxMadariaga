@@ -17,7 +17,7 @@ import os
 
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QWidget, QVBoxLayout, QLabel,
-    QToolBar, QStatusBar, QMenuBar, QSizePolicy,
+    QToolBar, QStatusBar, QSizePolicy, QToolButton, QMenu,
     QMessageBox, QApplication, QInputDialog
 )
 from PySide6.QtCore import Qt, QTimer, QDateTime
@@ -125,61 +125,26 @@ class MainWindow(QMainWindow):
     # Menú superior
     # ------------------------------------------------------------------
     def _construir_menu(self):
-        barra_menu: QMenuBar = self.menuBar()
-
-        menu_archivo = barra_menu.addMenu("&Archivo")
-        menu_archivo.addAction(self._crear_accion("Nueva programación", "Ctrl+N"))
-        menu_archivo.addAction(self._crear_accion("Abrir programación...", "Ctrl+O"))
-        menu_archivo.addAction(self._crear_accion("Guardar", "Ctrl+S"))
-        menu_archivo.addSeparator()
+        # Pedido explícito ("los menú de arriba son también dobles" —
+        # el QMenuBar clásico ocupaba una fila entera aparte de la
+        # toolbar, achicando el espacio real para las listas). Auditado
+        # antes de sacarlo: casi todos sus ítems (Nueva programación/
+        # Abrir/Guardar/Deshacer/Rehacer/Pantalla completa/Play/Stop del
+        # menú) nunca tuvieron un handler conectado — no hacían nada al
+        # clickear. Los DOS ítems reales (Salir, Auxiliar) se preservan
+        # como atajos de teclado sin fila de menú visible
+        # (`self.addAction`, funciona igual con `QMainWindow` sin pasar
+        # por `menuBar()`); el resto de la navegación real (Programador/
+        # Musicalizador/Configuración) vive en una toolbar de una sola
+        # fila — ver `_construir_toolbar`. Nunca se llama a
+        # `self.menuBar()`, así Qt no reserva esa fila en absoluto.
         accion_salir = self._crear_accion("Salir", "Ctrl+Q")
         accion_salir.triggered.connect(self.close)
-        menu_archivo.addAction(accion_salir)
+        self.addAction(accion_salir)
 
-        menu_edicion = barra_menu.addMenu("&Edición")
-        menu_edicion.addAction(self._crear_accion("Deshacer", "Ctrl+Z"))
-        menu_edicion.addAction(self._crear_accion("Rehacer", "Ctrl+Y"))
-
-        menu_ver = barra_menu.addMenu("&Ver")
-        menu_ver.addAction(self._crear_accion("Pantalla completa", "F11"))
-
-        menu_reproduccion = barra_menu.addMenu("&Reproducción")
-        menu_reproduccion.addAction(self._crear_accion("Play", "F5"))
-        menu_reproduccion.addAction(self._crear_accion("Stop", "F6"))
-        menu_reproduccion.addSeparator()
         accion_aux = self._crear_accion("Abrir ventana auxiliar (preescucha)", "Ctrl+Shift+A")
         accion_aux.triggered.connect(self.abrir_ventana_auxiliar)
-        menu_reproduccion.addAction(accion_aux)
-
-        menu_acciones = barra_menu.addMenu("&Acciones")
-        accion_programador = self._crear_accion("Programador...", "Ctrl+P")
-        accion_programador.triggered.connect(self.abrir_programador)
-        menu_acciones.addAction(accion_programador)
-        accion_musicalizador = self._crear_accion("🎵 Musicalizador Avanzado...", "Ctrl+M")
-        accion_musicalizador.triggered.connect(self.abrir_musicalizador)
-        menu_acciones.addAction(accion_musicalizador)
-
-        menu_herramientas = barra_menu.addMenu("&Herramientas")
-
-        accion_audio = self._crear_accion("Configuración de audio...")
-        accion_audio.triggered.connect(lambda: self.abrir_configuracion(0))
-        menu_herramientas.addAction(accion_audio)
-
-        accion_fade = self._crear_accion("Tiempos de Fade...")
-        accion_fade.triggered.connect(lambda: self.abrir_configuracion(1))
-        menu_herramientas.addAction(accion_fade)
-
-        accion_rutas = self._crear_accion("Rutas de archivos...")
-        accion_rutas.triggered.connect(lambda: self.abrir_configuracion(2))
-        menu_herramientas.addAction(accion_rutas)
-
-        accion_reproduccion = self._crear_accion("Reproducción y Automatización...")
-        accion_reproduccion.triggered.connect(lambda: self.abrir_configuracion(3))
-        menu_herramientas.addAction(accion_reproduccion)
-
-        accion_general = self._crear_accion("Preferencias generales...")
-        accion_general.triggered.connect(lambda: self.abrir_configuracion(4))
-        menu_herramientas.addAction(accion_general)
+        self.addAction(accion_aux)
 
     def _crear_accion(self, texto: str, atajo: str | None = None) -> QAction:
         accion = QAction(texto, self)
@@ -191,17 +156,16 @@ class MainWindow(QMainWindow):
     # Toolbar superior (con reloj)
     # ------------------------------------------------------------------
     def _construir_toolbar(self):
+        # Pedido explícito ("rediseño compacto, juntar lo que puede
+        # estar junto"): esta es ahora la ÚNICA fila de navegación de
+        # arriba (ver _construir_menu, que ya no muestra ningún
+        # QMenuBar). Se sacaron los botones "Abrir/Buscar/▶ Play/
+        # ● Grabar/Lista/＋ Agregar" — auditados, ninguno tenía handler
+        # conectado, eran puro relleno decorativo sin función real.
         toolbar = QToolBar("Principal")
+        toolbar.setObjectName("toolbarPrincipal")
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
-
-        toolbar.addAction(self._crear_accion("Abrir"))
-        toolbar.addAction(self._crear_accion("Buscar"))
-        toolbar.addAction(self._crear_accion("▶ Play"))
-        toolbar.addAction(self._crear_accion("● Grabar"))
-        toolbar.addAction(self._crear_accion("Lista"))
-        toolbar.addAction(self._crear_accion("＋ Agregar"))
-        toolbar.addSeparator()
 
         accion_programador = self._crear_accion("📅 Programador")
         accion_programador.triggered.connect(self.abrir_programador)
@@ -212,9 +176,27 @@ class MainWindow(QMainWindow):
         toolbar.addAction(accion_musicalizador_toolbar)
 
         toolbar.addSeparator()
-        accion_config_toolbar = self._crear_accion("⚙ Configuración")
-        accion_config_toolbar.triggered.connect(lambda: self.abrir_configuracion(0))
-        toolbar.addAction(accion_config_toolbar)
+
+        # Configuración: antes un botón simple (siempre abría la
+        # pestaña de Audio) — ahora un desplegable con las 5 pestañas,
+        # reemplazando al viejo menú "Herramientas" que tenía los
+        # mismos 5 accesos (mismo contenido, una fila menos).
+        boton_config = QToolButton()
+        boton_config.setText("⚙ Configuración")
+        boton_config.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu_config = QMenu(boton_config)
+        for texto, indice_tab in (
+            ("Configuración de audio...", 0),
+            ("Tiempos de Fade...", 1),
+            ("Rutas de archivos...", 2),
+            ("Reproducción y Automatización...", 3),
+            ("Preferencias generales...", 4),
+        ):
+            accion_tab = self._crear_accion(texto)
+            accion_tab.triggered.connect(lambda checked=False, i=indice_tab: self.abrir_configuracion(i))
+            menu_config.addAction(accion_tab)
+        boton_config.setMenu(menu_config)
+        toolbar.addWidget(boton_config)
         toolbar.addSeparator()
 
         espaciador = QWidget()

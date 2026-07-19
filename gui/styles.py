@@ -84,19 +84,34 @@ QGroupBox {{
     background-color: {COLOR_FONDO_PANEL};
     border: 1px solid {COLOR_BORDE};
     border-radius: 4px;
-    margin-top: 24px;
+    margin-top: 16px;
     font-weight: bold;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
     left: 8px;
-    padding: 2px 6px;
+    padding: 1px 5px;
     background-color: {COLOR_FONDO_HEADER};
     border: 1px solid {COLOR_BORDE};
     border-radius: 3px;
     color: {COLOR_TEXTO};
-    font-size: 14pt;
+    font-size: 11pt;
+}}
+
+/* Toolbar principal única (pedido explícito, "rediseño compacto":
+   el QMenuBar clásico se sacó del todo — ver main_window.py — así
+   que esta es la ÚNICA fila de navegación de arriba). Padding/fuente
+   más chicos que el QToolButton por defecto de Qt para no repetir el
+   mismo problema de "doble fila" con una sola fila más alta de lo
+   necesario. */
+QToolBar#toolbarPrincipal {{
+    padding: 1px;
+    spacing: 3px;
+}}
+QToolBar#toolbarPrincipal QToolButton {{
+    padding: 3px 7px;
+    font-size: 9pt;
 }}
 
 /* ---------- TreeView / TreeWidget (Publicidad y Explorador) ---------- */
@@ -116,7 +131,7 @@ QTreeWidget::item:selected {{
 QHeaderView::section {{
     background-color: {COLOR_FONDO_HEADER};
     color: {COLOR_TEXTO};
-    padding: 4px;
+    padding: 2px;
     border: 1px solid {COLOR_BORDE};
 }}
 
@@ -289,9 +304,9 @@ QLabel#lblTiempoTranscurrido, QLabel#lblTiempoRestante {{
     border: 1px solid {COLOR_BORDE};
     border-radius: 4px;
     font-family: "DejaVu Sans Mono", monospace;
-    font-size: 11pt;
+    font-size: 9pt;
     font-weight: bold;
-    padding: 1px 4px;
+    padding: 0px 3px;
 }}
 QLabel#lblTituloBloqueActivo {{
     color: {COLOR_TEXTO_SECUNDARIO};
@@ -311,20 +326,23 @@ QLabel#lblEstadoAutomatico[activo="false"] {{
    explícito, más robusto que depender solo del color de fila. */
 QLabel#lblEtiquetaAhoraLuego {{
     color: {COLOR_TEXTO_SECUNDARIO};
-    font-size: 8pt;
+    font-size: 7pt;
     font-weight: bold;
 }}
 /* Contorno rojo/verde alrededor de cada fila "Ahora"/"Luego" — mismo
-   concepto de color que la fila de la lista, pedido explícito. */
+   concepto de color que la fila de la lista, pedido explícito.
+   Padding reducido (pedido explícito, "rediseño compacto": el
+   cartel Ahora/Luego era muy grande) — el contorno de color sigue
+   siendo la misma señal visual de siempre, solo ocupa menos alto. */
 QFrame#frameAhora {{
     border: 2px solid {COLOR_REPRODUCIENDO};
     border-radius: 3px;
-    padding: 1px 3px;
+    padding: 0px 2px;
 }}
 QFrame#frameLuego {{
     border: 2px solid {COLOR_SIGUIENTE};
     border-radius: 3px;
-    padding: 1px 3px;
+    padding: 0px 2px;
 }}
 
 /* ---------- Barra de estado ---------- */
