@@ -76,10 +76,21 @@ def guardar_geometria_ventana(widget, nombre: str = "ventana_principal"):
     _settings().setValue(f"geometria/{nombre}", widget.saveGeometry())
 
 
-def restaurar_geometria_ventana(widget, nombre: str = "ventana_principal"):
+def restaurar_geometria_ventana(widget, nombre: str = "ventana_principal", maximizar_si_es_nueva: bool = False):
+    """Si `maximizar_si_es_nueva` es True y todavía NO hay geometría
+    guardada para este `nombre` (primera vez que se abre en esta
+    máquina/perfil — ej. una instalación nueva en otra PC), arranca
+    maximizada en vez de confiar en el tamaño fijo por defecto del
+    widget (que puede no entrar en la resolución real de esa pantalla,
+    causando que la ventana "se vaya de ancho"). Con geometría YA
+    guardada, se restaura esa igual que siempre — el chequeo de
+    `_asegurar_dentro_de_pantalla` de abajo sigue cubriendo el caso de
+    una geometría vieja que ya no entra en la pantalla actual."""
     valor = _settings().value(f"geometria/{nombre}")
     if valor:
         widget.restoreGeometry(valor)
+    elif maximizar_si_es_nueva:
+        widget.showMaximized()
     _asegurar_dentro_de_pantalla(widget)
 
 

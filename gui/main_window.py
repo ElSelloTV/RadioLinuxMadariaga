@@ -330,7 +330,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{cantidad} resultado(s) encontrado(s).", 4000)
 
     def _restaurar_disposicion_guardada(self):
-        estado_ui.restaurar_geometria_ventana(self)
+        estado_ui.restaurar_geometria_ventana(self, maximizar_si_es_nueva=True)
         estado_ui.restaurar_splitter("principal", self.splitter_principal)
         estado_ui.restaurar_splitter("explorador", self.ventana_explorador.splitter)
         estado_ui.restaurar_columnas("publicidad", self.ventana_publicidad.tree)
@@ -731,6 +731,7 @@ class MainWindow(QMainWindow):
         fade = self._config["fade"]
 
         id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
+        id_dispositivo_preescucha = audio["dispositivo_preescucha"] if audio["dispositivo_preescucha"] != "default" else None
 
         self.gestor_emision = GestorPlaylist(
             self.ventana_emision,
@@ -763,7 +764,13 @@ class MainWindow(QMainWindow):
         self.gestor_emision.set_volumen_base(audio["volumen_master"])
         self.gestor_publicidad.set_volumen_base(audio["volumen_master"])
 
-        self.gestor_explorador = GestorExplorador(self.ventana_explorador, id_dispositivo=id_dispositivo_master)
+        # Pedido explícito: la preescucha de Ventana 3 (▶ Previo) va a
+        # una salida SEPARADA de la Master — la Master alimenta la
+        # cadena de procesamiento (compresor/limitador/EQ) hacia el
+        # equipo que sale al aire, mientras que la Preescucha va a los
+        # parlantes de monitoreo de la PC (más potencia, para
+        # escuchar cómodo mientras se prepara el material).
+        self.gestor_explorador = GestorExplorador(self.ventana_explorador, id_dispositivo=id_dispositivo_preescucha)
 
         # Pedido explícito (robustez de emisión): el botón AUTOMÁTICO
         # arranca SIEMPRE encendido al abrir el programa — la estación
@@ -819,6 +826,7 @@ class MainWindow(QMainWindow):
         reproduccion = self._config["reproduccion"]
         fade = self._config["fade"]
         id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
+        id_dispositivo_preescucha = audio["dispositivo_preescucha"] if audio["dispositivo_preescucha"] != "default" else None
 
         for gestor in (self.gestor_emision, self._gestor_auxiliar):
             if gestor is None:
@@ -845,8 +853,8 @@ class MainWindow(QMainWindow):
             self.gestor_publicidad.motor.set_dispositivo_salida(id_dispositivo_master)
         self.gestor_publicidad.set_volumen_base(audio["volumen_master"])
 
-        if self.gestor_explorador.motor.id_dispositivo() != id_dispositivo_master:
-            self.gestor_explorador.motor.set_dispositivo_salida(id_dispositivo_master)
+        if self.gestor_explorador.motor.id_dispositivo() != id_dispositivo_preescucha:
+            self.gestor_explorador.motor.set_dispositivo_salida(id_dispositivo_preescucha)
 
         self.ventana_explorador.repintar_colores_genero()
 
