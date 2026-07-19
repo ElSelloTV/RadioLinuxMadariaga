@@ -24,12 +24,16 @@ class MedidorNivelDecorativo(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._activo = False
-        self.setMinimumSize(10, 40)
+        # Pedido explícito ("rediseño compacto"): mínimo más bajo —
+        # antes 40px de alto fijaba un piso más alto del necesario
+        # para toda la fila de relojes/Ahora-Luego, aunque el resto
+        # de esos widgets ya se hubiera achicado.
+        self.setMinimumSize(8, 26)
         self.setMaximumWidth(14)
         self.setToolTip("Medidor de nivel (decorativo)")
 
     def sizeHint(self):
-        return QSize(12, 50)
+        return QSize(10, 30)
 
     def set_activo(self, activo: bool):
         if activo != self._activo:

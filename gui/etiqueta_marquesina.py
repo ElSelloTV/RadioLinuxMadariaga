@@ -33,7 +33,10 @@ class EtiquetaMarquesina(QWidget):
         # panel_reproductor.py / ventana_publicidad.py), así el
         # sticker ya no reclama todo el ancho disponible del panel.
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        self.setMinimumHeight(22)
+        # Pedido explícito ("rediseño compacto"): 18px en vez de 22 —
+        # el cartel "Ahora"/"Luego" (frameAhora/frameLuego) era
+        # demasiado grande para pantallas chicas.
+        self.setMinimumHeight(18)
 
         self._timer = QTimer(self)
         self._timer.setInterval(self._INTERVALO_MS)
@@ -55,11 +58,12 @@ class EtiquetaMarquesina(QWidget):
         # Antes 220px: pedido explícito de achicarlo bastante para que
         # el cartel "Ahora"/"Luego" no quede tan grande — con
         # marquesina, un título largo se sigue viendo completo
-        # desplazándose, no hace falta ancho fijo grande.
-        return QSize(130, 22)
+        # desplazándose, no hace falta ancho fijo grande. Alto bajado
+        # de 22 a 18 en la ronda de rediseño compacto.
+        return QSize(120, 18)
 
     def minimumSizeHint(self) -> QSize:
-        return QSize(40, 22)
+        return QSize(40, 18)
 
     def resizeEvent(self, evento):
         super().resizeEvent(evento)

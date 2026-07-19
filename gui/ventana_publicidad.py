@@ -127,18 +127,18 @@ class VentanaPublicidad(QWidget):
         # derecha, en las mismas 2 líneas, van "Ahora"/"Luego" como ya
         # estaban. Ahorra una fila entera de alto de panel. ---
         fila_info = QHBoxLayout()
-        fila_info.setSpacing(6)
+        fila_info.setSpacing(4)
 
         columna_relojes = QVBoxLayout()
-        columna_relojes.setSpacing(2)
+        columna_relojes.setSpacing(1)
         self.lbl_tiempo_transcurrido = QLabel("00:00:00")
         self.lbl_tiempo_transcurrido.setObjectName("lblTiempoTranscurrido")
         self.lbl_tiempo_transcurrido.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_tiempo_transcurrido.setMaximumWidth(90)
+        self.lbl_tiempo_transcurrido.setMaximumWidth(76)
         self.lbl_tiempo_restante = QLabel("00:00:00")
         self.lbl_tiempo_restante.setObjectName("lblTiempoRestante")
         self.lbl_tiempo_restante.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_tiempo_restante.setMaximumWidth(90)
+        self.lbl_tiempo_restante.setMaximumWidth(76)
         columna_relojes.addWidget(self.lbl_tiempo_transcurrido)
         columna_relojes.addWidget(self.lbl_tiempo_restante)
         fila_info.addLayout(columna_relojes)
@@ -150,12 +150,12 @@ class VentanaPublicidad(QWidget):
         # Ventana 2) — pedido explícito, más robusto que depender
         # solo del color de fila en el árbol. ---
         columna_ahora_luego = QVBoxLayout()
-        columna_ahora_luego.setSpacing(2)
+        columna_ahora_luego.setSpacing(1)
 
         frame_ahora = QFrame()
         frame_ahora.setObjectName("frameAhora")
         fila_ahora = QHBoxLayout(frame_ahora)
-        fila_ahora.setContentsMargins(2, 2, 2, 2)
+        fila_ahora.setContentsMargins(1, 1, 1, 1)
         self.indicador_en_vivo = IndicadorEnVivo()
         fila_ahora.addWidget(self.indicador_en_vivo)
         lbl_ahora = QLabel("Ahora:")
@@ -168,7 +168,7 @@ class VentanaPublicidad(QWidget):
         frame_luego = QFrame()
         frame_luego.setObjectName("frameLuego")
         fila_luego = QHBoxLayout(frame_luego)
-        fila_luego.setContentsMargins(2, 2, 2, 2)
+        fila_luego.setContentsMargins(1, 1, 1, 1)
         lbl_luego = QLabel("Luego:")
         lbl_luego.setObjectName("lblEtiquetaAhoraLuego")
         fila_luego.addWidget(lbl_luego)
@@ -197,8 +197,8 @@ class VentanaPublicidad(QWidget):
             "En silencio: reproduce el ítem elegido.\n"
             "Con algo sonando: pasa al ítem en cola (verde) con fundido."
         )
-        self.btn_play.setMinimumHeight(52)
-        self.btn_play.setMinimumWidth(56)
+        self.btn_play.setMinimumHeight(42)
+        self.btn_play.setMinimumWidth(50)
         self.btn_play.clicked.connect(self.solicitud_play.emit)
         barra_botones.addWidget(self.btn_play)
 
