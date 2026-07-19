@@ -64,12 +64,11 @@ class PanelReproductor(QWidget):
     solicitud_buscar_posicion = Signal(int)       # 0-1000 (por mil) — solo si mostrar_barra_progreso
     item_marcado_como_siguiente = Signal(int)
     archivo_soltado = Signal(str, object)
-    solicitud_abrir_auxiliar = Signal()
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)       # fila del tema música
     solicitud_eliminar_definitivo = Signal(str)   # ruta a borrar de TODA la biblioteca
 
-    def __init__(self, titulo_panel: str, mostrar_boton_auxiliar: bool = False,
+    def __init__(self, titulo_panel: str,
                  mostrar_barra_progreso: bool = False, acepta_desde_publicidad: bool = False,
                  parent=None):
         super().__init__(parent)
@@ -79,10 +78,10 @@ class PanelReproductor(QWidget):
         self.slider_progreso = None
         self._stop_bloqueado_por_automatico = False
         self._titulo_panel = titulo_panel
-        self._construir_ui(titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso, acepta_desde_publicidad)
+        self._construir_ui(titulo_panel, mostrar_barra_progreso, acepta_desde_publicidad)
 
     # ------------------------------------------------------------------
-    def _construir_ui(self, titulo_panel, mostrar_boton_auxiliar, mostrar_barra_progreso, acepta_desde_publicidad=False):
+    def _construir_ui(self, titulo_panel, mostrar_barra_progreso, acepta_desde_publicidad=False):
         layout_principal = QVBoxLayout(self)
         layout_principal.setContentsMargins(6, 6, 6, 6)
         layout_principal.setSpacing(6)
@@ -226,12 +225,6 @@ class PanelReproductor(QWidget):
         grilla.addLayout(fila_inferior)
 
         barra_botones.addLayout(grilla)
-
-        if mostrar_boton_auxiliar:
-            self.btn_auxiliar = QPushButton("🎧 Auxiliar")
-            self.btn_auxiliar.setProperty("class", "btnTransporte")
-            self.btn_auxiliar.clicked.connect(self.solicitud_abrir_auxiliar.emit)
-            barra_botones.addWidget(self.btn_auxiliar)
 
         layout_grupo.addLayout(barra_botones)
 

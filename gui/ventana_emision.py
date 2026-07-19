@@ -25,7 +25,6 @@ class VentanaEmision(QWidget):
     solicitud_stop_diferido = Signal()
     item_marcado_como_siguiente = Signal(int)
     archivo_soltado = Signal(str, object)
-    solicitud_abrir_auxiliar = Signal()
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)
     solicitud_eliminar_definitivo = Signal(str)
@@ -37,7 +36,7 @@ class VentanaEmision(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.panel = PanelReproductor(
-            "EMISIÓN", mostrar_boton_auxiliar=True, mostrar_barra_progreso=True
+            "EMISIÓN", mostrar_barra_progreso=True
         )
         layout.addWidget(self.panel)
 
@@ -49,7 +48,6 @@ class VentanaEmision(QWidget):
         self.panel.solicitud_stop_diferido.connect(self.solicitud_stop_diferido.emit)
         self.panel.item_marcado_como_siguiente.connect(self.item_marcado_como_siguiente.emit)
         self.panel.archivo_soltado.connect(self.archivo_soltado.emit)
-        self.panel.solicitud_abrir_auxiliar.connect(self.solicitud_abrir_auxiliar.emit)
         self.panel.item_doble_click.connect(self.item_doble_click.emit)
         self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
         self.panel.solicitud_eliminar_definitivo.connect(self.solicitud_eliminar_definitivo.emit)

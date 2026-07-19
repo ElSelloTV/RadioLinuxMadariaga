@@ -131,20 +131,24 @@ class MainWindow(QMainWindow):
         # antes de sacarlo: casi todos sus ítems (Nueva programación/
         # Abrir/Guardar/Deshacer/Rehacer/Pantalla completa/Play/Stop del
         # menú) nunca tuvieron un handler conectado — no hacían nada al
-        # clickear. Los DOS ítems reales (Salir, Auxiliar) se preservan
-        # como atajos de teclado sin fila de menú visible
-        # (`self.addAction`, funciona igual con `QMainWindow` sin pasar
-        # por `menuBar()`); el resto de la navegación real (Programador/
-        # Musicalizador/Configuración) vive en una toolbar de una sola
-        # fila — ver `_construir_toolbar`. Nunca se llama a
-        # `self.menuBar()`, así Qt no reserva esa fila en absoluto.
+        # clickear. "Salir" se preserva como atajo de teclado sin fila
+        # de menú visible (`self.addAction`, funciona igual con
+        # `QMainWindow` sin pasar por `menuBar()`); "Auxiliar" pasó a
+        # ser un botón visible en la toolbar (pedido explícito, ver
+        # `_construir_toolbar` — antes vivía DENTRO de Ventana 2, "no
+        # hace falta que esté ahí... dará mayor posibilidad de ampliar
+        # la ventana 3 a gusto"), pero la acción se arma acá para que
+        # el atajo Ctrl+Shift+A siga andando en los dos lugares con el
+        # mismo objeto. El resto de la navegación real (Programador/
+        # Musicalizador/Configuración) vive en esa misma toolbar de una
+        # sola fila. Nunca se llama a `self.menuBar()`, así Qt no
+        # reserva esa fila en absoluto.
         accion_salir = self._crear_accion("Salir", "Ctrl+Q")
         accion_salir.triggered.connect(self.close)
         self.addAction(accion_salir)
 
-        accion_aux = self._crear_accion("Abrir ventana auxiliar (preescucha)", "Ctrl+Shift+A")
-        accion_aux.triggered.connect(self.abrir_ventana_auxiliar)
-        self.addAction(accion_aux)
+        self._accion_auxiliar = self._crear_accion("🎧 Auxiliar", "Ctrl+Shift+A")
+        self._accion_auxiliar.triggered.connect(self.abrir_ventana_auxiliar)
 
     def _crear_accion(self, texto: str, atajo: str | None = None) -> QAction:
         accion = QAction(texto, self)
@@ -175,6 +179,16 @@ class MainWindow(QMainWindow):
         accion_musicalizador_toolbar.triggered.connect(self.abrir_musicalizador)
         toolbar.addAction(accion_musicalizador_toolbar)
 
+        toolbar.addSeparator()
+
+        # Auxiliar (pedido explícito: "podría estar arriba al lado de
+        # Configuración... no hace falta que esté ahí [Ventana 2],
+        # eso dará mayor posibilidad de ampliar la ventana 3 a
+        # gusto") — antes era un botón DENTRO del panel de Ventana 2
+        # (`panel_reproductor.py`), ocupando ancho ahí; movido acá no
+        # le pide ancho mínimo a Ventana 2, dejando más margen para
+        # angostarla y agrandar el Explorador.
+        toolbar.addAction(self._accion_auxiliar)
         toolbar.addSeparator()
 
         # Configuración: antes un botón simple (siempre abría la
@@ -499,7 +513,6 @@ class MainWindow(QMainWindow):
         )
 
         self.ventana_emision.archivo_soltado.connect(self._on_archivo_soltado_emision)
-        self.ventana_emision.solicitud_abrir_auxiliar.connect(self.abrir_ventana_auxiliar)
         self.ventana_emision.solicitud_agregar_pisador.connect(
             lambda fila: self._abrir_dialogo_pisador(self.ventana_emision, fila)
         )

@@ -5862,6 +5862,55 @@ todo el resto.
     puntual (algún botón, algún texto) una vez que lo vea en su propia
     pantalla.
 
+59. ~~Mover el botón "🎧 Auxiliar" de adentro de Ventana 2 a la
+    toolbar, junto a Configuración~~ — pedido explícito, continuación
+    directa del rediseño compacto de la ronda anterior: "el botón
+    'auxiliar' en la ventana 2 podría estar arriba al lado de
+    'Configuraciones', no hace falta que esté ahí. Eso dará mayor
+    posibilidad de ampliar la ventana 3 a gusto." El botón vivía
+    DENTRO de `panel_reproductor.py` (parámetro
+    `mostrar_boton_auxiliar=True`, exclusivo de Ventana 2 — la
+    Auxiliar y Ventana 1 nunca lo tuvieron), sumando su ancho mínimo a
+    la fila de transporte de Ventana 2 — sacarlo de ahí le resta ese
+    ancho mínimo a Ventana 2 y deja más margen para angostarla y
+    agrandar el Explorador arrastrando el splitter.
+
+    **Limpieza de código, no solo mover un widget**: se sacó
+    `mostrar_boton_auxiliar` del todo (parámetro de
+    `PanelReproductor.__init__`/`_construir_ui`, ya no tiene sentido
+    con un solo llamador real) y la señal `solicitud_abrir_auxiliar`
+    completa (existía en `PanelReproductor` Y en `VentanaEmision`,
+    reenviándose una a la otra hasta `MainWindow`) — la cadena entera
+    quedaba sin razón de ser una vez que el botón que la disparaba ya
+    no vive ahí. La acción real (`self._accion_auxiliar`, construida
+    en `_construir_menu()` junto con "Salir" — mismo lugar de siempre
+    para las 2 acciones invisibles/reales del viejo menú) se agrega
+    directo a la toolbar en `_construir_toolbar()`, entre Musicalizador
+    y Configuración — el atajo Ctrl+Shift+A sigue funcionando igual
+    (una `QAction` mantiene su shortcut activo con solo estar en el
+    árbol de widgets de la ventana, no hace falta agregarla dos veces).
+
+    Medido: `MainWindow.minimumSizeHint()` bajó de ancho otros 84px
+    (1248px → 1164px) solo por sacar este botón de Ventana 2 — sumado
+    a las rondas 56 y 58, el margen contra los 1360px de la pantalla
+    de Santiago sigue creciendo. Se generó una captura nueva a
+    1360x768 confirmando visualmente el botón en su nueva posición
+    (toolbar: Programador / Musicalizador / Auxiliar / Configuración)
+    y su ausencia en la fila de transporte de Ventana 2 (quedó Stop/
+    Fade arriba, Pausa/Cut/Stop diferido abajo, sin el botón extra).
+
+    Probado (ampliando `test_rediseño_compacto.py`): Ventana 2 ya no
+    tiene `btn_auxiliar` como atributo, `VentanaEmision` ya no tiene
+    la señal `solicitud_abrir_auxiliar`, la Auxiliar no se crea sola
+    al arrancar, el atajo Ctrl+Shift+A sigue en la acción de la
+    toolbar, y clickear (`.trigger()`) el botón "🎧 Auxiliar" de la
+    toolbar abre la ventana Auxiliar de verdad (`mw._ventana_auxiliar`
+    deja de ser `None`) — + suite de regresión completa sin fallos
+    nuevos (mismos 3 fallos preexistentes de siempre). Falta que
+    Santiago confirme en su pantalla real que el botón se ve bien
+    ubicado ahí arriba y que ahora puede ampliar el Explorador más de
+    lo que podía antes.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
