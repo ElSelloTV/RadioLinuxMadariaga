@@ -5665,6 +5665,106 @@ todo el resto.
     Santiago confirme en sus 3 computadoras reales que el maximizado
     ahora sí encaja siempre en el display, sin importar la resolución.
 
+57. ~~Reconciliación de dos ramas divergentes — la PC de escritorio
+    (la definitiva de aire) había quedado en otra rama, con trabajo
+    real de audio que había que evaluar antes de descartar~~ —
+    episodio importante para no repetir: Santiago probó el fix de la
+    ronda 56 en la PC de escritorio (**la que va a ser la de aire
+    definitiva**, según ya había aclarado en la ronda del filter-chain
+    de PipeWire) y seguía viendo el bug en 1360x768. La causa NO era
+    el código: esa PC tenía checkouteada `claude/screen-eq-adjustments-
+    nc529p`, una rama de una sesión de Claude Code DISTINTA de esta
+    conversación (Santiago había ido a esa PC específicamente "porque
+    necesitaba acomodar la salida de audio y sonido", antes de dejarla
+    como la definitiva) — arrancó del mismo punto que esta rama (el
+    commit de "Confirmar antes de activar/desactivar AUTOMÁTICO",
+    ayer) pero se fue para otro lado: en vez de sacar el procesador de
+    PipeWire (lo que se decidió ACÁ, ronda 55), esa sesión lo siguió
+    construyendo (ecualizador de 8 bandas, apuntado al codificador USB
+    real) — y de paso intentó, dos veces, arreglar el mismo bug de
+    pantalla con un enfoque distinto.
+
+    **Por qué el botón "Actualizar" de Configuración decía "ya estás
+    al día" estando desactualizado**: no era un bug nuevo, era un
+    efecto secundario correcto de un fix real hecho en ESA otra rama
+    (`_evaluar_version()`, ver más abajo) — compara HEAD contra el
+    upstream REALMENTE configurado en el checkout local, no siempre
+    contra `main`. Como el checkout de esa PC apuntaba a
+    `claude/screen-eq-adjustments-nc529p`, el botón nunca iba a mirar
+    `main` (donde vivían los fixes de esta conversación) por más que
+    se lo apretara mil veces — no hay forma de que un `git pull`
+    normal cruce a una rama distinta de la que está checkouteada.
+
+    **Reconciliación, comando por comando** (se revisó el diff
+    COMPLETO de las 6 commits de esa rama contra el ancestro común
+    antes de decidir nada — nunca se descartó a ciegas): 2 de las 6
+    tocaban EXCLUSIVAMENTE `assets/pipewire-fm-processing.conf` (el
+    ecualizador de 8 bandas y el apuntado al codificador USB) —
+    descartadas sin más trámite, ese archivo ya no existe en esta rama
+    desde la ronda 55, coherente con la decisión de Santiago. Las
+    otras 4 SÍ eran válidas e independientes del procesador de audio,
+    y se sumaron acá con `git cherry-pick` (las 4 aplicaron limpio,
+    sin conflictos):
+    - **"Arrancar maximizada en una PC/perfil nuevo"**: en una
+      instalación sin `ui_state.ini` todavía (máquina nueva),
+      `restaurar_geometria_ventana()` ahora arranca directamente
+      `showMaximized()` en vez de confiar en un tamaño calculado —
+      complementa (no reemplaza) el fix de la ronda 56, que sigue
+      siendo el que garantiza que ESE maximizado realmente entre en
+      la pantalla.
+    - **"Separar la salida de Preescucha de la Master"**: bug real
+      independiente, sin relación con PipeWire — el campo "Salida
+      Preescucha" de Configuración → Audio existía desde hacía mucho
+      pero estaba documentado como "reservado a futuro" y nunca se
+      aplicaba de verdad (`GestorExplorador` siempre usaba el
+      dispositivo Master). Ahora sí usa `dispositivo_preescucha` —
+      pensado para que el ▶ Previo de Ventana 3 salga por los
+      parlantes de monitoreo de la PC, separado de la salida Master
+      que va al equipo que sale al aire.
+    - **"Corregir bucle infinito de 'hay actualización disponible'"**
+      (`core/actualizador.py`): el bug real explicado arriba —
+      `_rama_remota_disponible()` pasó de asumir siempre `main`/
+      `master` a usar el upstream configurado de verdad (`git
+      rev-parse @{u}`), y `_evaluar_version()` (nueva, compartida
+      entre la versión síncrona y la asíncrona) solo reporta
+      actualización real si el remoto es descendiente directo de HEAD
+      (`git merge-base --is-ancestor`) — un local adelantado o
+      DIVERGIDO ya no dispara ni un falso positivo (el bug original:
+      bucle actualizar→reiniciar→"hay actualización" de nuevo) ni,
+      como efecto colateral en el caso de Santiago, deja de avisar
+      cuando corresponde SI el checkout apunta a la rama correcta.
+    - **"Achicar el ancho mínimo de Ventana 3"**: fix COMPLEMENTARIO al
+      de la ronda 56, no redundante — mientras el `setMinimumSize()`
+      de esa ronda le permite a la ventana bajar de su mínimo natural
+      a la fuerza (paneles se comprimen), esta reduce el mínimo
+      NATURAL en sí: las filas de botones de Ventana 3 (Categoría/Sub/
+      Eliminar, Agregar/Info/Reemplazar/Eliminar) pasan de 1 fila a 2
+      (clase QSS nueva `btnCompacto`, mismo criterio que `btnTransporte`
+      de Ventana 1/2) — cambia ancho por alto, que sobra en pantallas
+      anchas pero bajas como 1360x768. Medido: `minimumSizeHint()` de
+      `MainWindow` bajó de 1517px (ronda 56) a **1260px** con este fix
+      sumado — casi 100px de margen real contra los 1360px de
+      Santiago, en vez de estar clavado casi al límite.
+
+    Probado: suite de regresión completa tras las 4 cherry-picks sin
+    fallos nuevos (mismos fallos preexistentes de siempre — confirmado
+    que 2 fallos vistos en esta corrida puntual, `test_ciclo_automatico.py`
+    y `test_play_bloque_y_hora.py`, son los ya documentados
+    dependientes de la hora real del sistema, no relacionados: la
+    corrida cayó a las 00:26 UTC, la franja horaria que ya rompía estos
+    dos tests en rondas anteriores) + re-medido `minimumSizeHint()`
+    combinado (1260x396) y `resize(1360, 768)` aplicado exacto, sin
+    clamping. **Regla para el futuro, importante**: si Santiago dice
+    que algo "no se actualiza" o el comportamiento no coincide con lo
+    último de esta conversación, preguntar primero en qué máquina/rama
+    está parado (`git log -1`, `git status`) antes de asumir que el
+    código de acá está mal — puede haber otra sesión de Claude Code
+    trabajando en paralelo sobre la misma PC. Pendiente: que Santiago,
+    una vez mergeado esto a `main`, cambie el checkout de la PC de
+    escritorio a `main` (comandos exactos en el chat) y confirme que
+    el maximizado ya entra en su pantalla de 1360x768, y que el botón
+    Actualizar vuelve a funcionar de ahí en más.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
