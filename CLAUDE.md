@@ -5911,6 +5911,86 @@ todo el resto.
     ubicado ahí arriba y que ahora puede ampliar el Explorador más de
     lo que podía antes.
 
+60. ~~Dos bugs reales de fondo en la selección de dispositivo de audio
+    (Configuración → Audio)~~ — pedido explícito, con diagnóstico
+    propio de Santiago: "sin importar lo que yo elija, siempre sale
+    por la principal de parlantes... tengo una salida analógica y otra
+    por el monitor Arzopa por HDMI, no tengo forma gráfica de elegir
+    la salida." Preguntó si había que cambiar KMix por otro mezclador
+    — aclarado en el chat: KMix es solo la applet de volumen de Plasma
+    (frontend de PulseAudio/ALSA), no decide el ruteo — el bug real
+    estaba en cómo esta app habla con libVLC, nada que ver con KMix.
+
+    **Bug A — el combo de Configuración no listaba las salidas reales
+    (ej. la HDMI nunca aparecía)**: `listar_dispositivos()` usaba
+    `MediaPlayer.audio_output_device_enum()`, que por diseño de libVLC
+    solo enumera los dispositivos del output QUE YA ESTÁ EN USO por
+    ESE reproductor puntual — pero `VentanaConfiguracion.
+    _listar_dispositivos_disponibles()` arma un `MotorAudio()` de
+    mentira SOLO para listar, sin reproducir nada nunca — con un
+    reproductor que nunca arrancó, esa llamada devuelve una lista
+    vacía o incompleta, sin las salidas reales del hardware.
+    Reemplazado por la API a nivel de `Instance`
+    (`audio_output_list_get()` — lista los MÓDULOS de audio del
+    sistema, pulse/alsa/etc. — + `audio_output_device_list_get()` por
+    cada uno), disponible desde libVLC 2.1.0, que NO depende de que
+    haya una salida activa: recorre todos los módulos y sus
+    dispositivos reales sin necesitar reproducir nada primero.
+
+    **Bug B — la selección elegida nunca se mantenía ("siempre sale
+    por la principal")**: `reproducir()` hace un `self._player.stop()`
+    justo antes de cada `play()` (fix de una ronda mucho anterior, para
+    que un Pisador reusado no quede mudo tras el fin natural de un
+    media) — pero cada `stop()` DESARMA la salida de audio (aout) del
+    reproductor, que se reconstruye de cero en el siguiente `play()`.
+    La selección de dispositivo, aplicada UNA sola vez al elegirla en
+    Configuración, se perdía en el primer stop()/play() que pasara
+    después (que es CONSTANTEMENTE, con cada tema nuevo) — libVLC
+    volvía a la salida por defecto del sistema cada vez. Es el MISMO
+    patrón de bug ya resuelto hace rondas para el volumen
+    (`_volumen_deseado`, re-aplicado en cada arranque) — nunca se le
+    había aplicado el mismo criterio al dispositivo de salida.
+    Corregido con `_aplicar_dispositivo_salida()` (nuevo, punto único
+    de aplicación), llamado en el constructor, en
+    `set_dispositivo_salida()`, e INMEDIATO + en el diferido de 150ms
+    de cada `reproducir()` — mismas dos capas de seguridad que ya usa
+    el volumen.
+
+    **Detalle técnico que conecta ambos bugs**: `audio_output_device_set()`
+    necesita DOS datos para aplicar la selección de verdad — el MÓDULO
+    de audio (ej. `"pulse"`) y el ID del dispositivo dentro de ese
+    módulo — pero el código viejo siempre pasaba `module=None`, que
+    solo funciona de casualidad si el id resulta ser único entre
+    módulos. Como el fix de listado (Bug A) ahora SÍ conoce el módulo
+    de cada dispositivo real, el id que se guarda en
+    `config_general.json` pasó a ser compuesto
+    (`"{modulo}||{device}"`) — `MotorAudio._modulo_y_dispositivo()`
+    lo separa de nuevo al aplicar. Compatible con instalaciones viejas:
+    un id SIN el separador `||` (guardado por una versión anterior, o
+    el sentinel `"default"`) se interpreta como dispositivo solo, sin
+    módulo — mismo comportamiento de siempre, no rompe una config ya
+    guardada.
+
+    Probado con `test_dispositivo_salida.py` (nuevo, dedicado — usa
+    estructuras `ctypes` REALES de `vlc.py`, no mocks livianos, para
+    reproducir con fidelidad cómo libVLC arma sus listas enlazadas):
+    `listar_dispositivos()` recorre 2 módulos con 3 dispositivos
+    reales sin haber reproducido nada; `_modulo_y_dispositivo()` separa
+    bien el id compuesto y degrada limpio ante un id viejo sin
+    separador; `set_dispositivo_salida()` aplica módulo+dispositivo
+    por separado; `reproducir()` re-aplica el dispositivo tanto
+    inmediato como en el diferido de 150ms, Y en un SEGUNDO
+    `reproducir()` consecutivo (simulando pasar de tema en tema, el
+    caso real que rompía la selección) — + suite de regresión completa
+    sin fallos nuevos (mismos 3 fallos preexistentes de siempre:
+    `test_confirmaciones.py`, `test_log_git.py`, `test_ventana3.py`).
+    **Sigue sin poder confirmarse con audio/hardware real** (el sandbox
+    no tiene libVLC ni tarjeta de sonido): falta que Santiago confirme
+    que ahora el combo de Configuración → Audio SÍ muestra la salida
+    HDMI del Arzopa como opción separada de los parlantes analógicos,
+    y que elegirla de verdad saca el audio por ahí de forma persistente
+    (no solo la primera vez).
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
