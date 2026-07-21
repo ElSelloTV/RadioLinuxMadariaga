@@ -23,6 +23,8 @@ en vez de lanzar una excepción no controlada.
 import vlc
 from PySide6.QtCore import QObject, Signal, QTimer
 
+from config.settings import registrar_evento
+
 MENSAJE_VLC_NO_DISPONIBLE = (
     "VLC no está instalado o no se encontró libvlc. "
     "Instalalo con: sudo apt install vlc libvlc-dev"
@@ -73,6 +75,13 @@ class MotorAudio(QObject):
         # re-aplica solo (en el arranque diferido y en cada tick de
         # posición) hasta que el reproductor lo tome de verdad.
         self._volumen_deseado = 100
+        # Diagnóstico (pedido explícito, "sigue sin reproducir por
+        # donde lo selecciono"): recuerda el último device por el que
+        # se logueó, para no spamear log_aplicacion.txt en cada
+        # reproducir() -- pero SÍ dejar un rastro claro de qué string
+        # exacto se le manda a libVLC, comparable a mano contra
+        # `pactl list sinks short` en la PC real.
+        self._ultimo_dispositivo_logueado = "___sin_loguear_todavia___"
 
         try:
             self._instancia = vlc.Instance(ARGUMENTOS_VLC)
@@ -360,10 +369,24 @@ class MotorAudio(QObject):
         (el uso recomendado por la propia librería) — el módulo
         codificado en el id compuesto (`"{modulo}||{device}"`) se
         sigue usando para LISTAR (evita duplicados/ambigüedad entre
-        módulos) pero se descarta al momento de aplicar."""
+        módulos) pero se descarta al momento de aplicar.
+
+        Log de diagnóstico (pedido explícito, "sigue sin reproducir
+        por donde lo selecciono... no toma control sobre la placa"):
+        deja un rastro en `log_aplicacion.txt` con el string EXACTO
+        que se le pasa a libVLC, para comparar a mano contra `pactl
+        list sinks short` en la PC real — dedupeado (una vez por
+        device distinto, no en cada reproducir()) para no saturar el
+        log."""
         if not self._disponible or not self._id_dispositivo:
             return
         _, device = self._modulo_y_dispositivo(self._id_dispositivo)
+        if device != self._ultimo_dispositivo_logueado:
+            registrar_evento(
+                f"MotorAudio: aplicando audio_output_device_set(None, '{device}') "
+                f"(id guardado en config: '{self._id_dispositivo}')"
+            )
+            self._ultimo_dispositivo_logueado = device
         self._player.audio_output_device_set(None, device)
 
     def listar_dispositivos(self):
