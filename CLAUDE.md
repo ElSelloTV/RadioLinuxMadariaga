@@ -5990,6 +5990,85 @@ todo el resto.
     HDMI del Arzopa como opción separada de los parlantes analógicos,
     y que elegirla de verdad saca el audio por ahí de forma persistente
     (no solo la primera vez).
+61. ~~Selección de dispositivo de audio: LA CAUSA DE FONDO real, tras
+    confirmar que el listado (ronda 60) ya andaba perfecto~~ — Santiago
+    probó la ronda 60 y confirmó el listado ("Aparecen TODOS los
+    dispositivos, por ese lado correcto... no lo cambies") pero
+    reportó que la selección seguía sin aplicarse: "al pasar el master
+    a ARZOPA no se cambia, sigue saliendo por los parlantes... no veo
+    ningun cambio, falta algo más?"
+
+    **Causa real, encontrada leyendo el propio docstring de
+    `python-vlc`** (no adivinada — `inspect.getsource(vlc.MediaPlayer.
+    audio_output_device_set)` en el venv real de este proyecto):
+    ```
+    If the module parameter is not None, the device parameter of the
+    corresponding audio output, if it exists, will be set to the
+    specified string. Note that some audio output modules do not have
+    such a parameter (notably MMDevice and PulseAudio).
+    ...
+    If the module paramater is None, audio output will be moved to
+    the device specified by the device identifier string immediately.
+    This is the recommended usage.
+    ```
+    El propio fix de la ronda 60 (Bug B) pasaba SIEMPRE un módulo
+    explícito (`"pulse"`, `"alsa"`, etc., extraído del id compuesto)
+    porque hacía falta para poder LISTAR sin haber reproducido nada
+    (Bug A) — pero para APLICAR la selección, ese mismo módulo
+    explícito es EXACTAMENTE el caso que la librería documenta como
+    "sin efecto" en PulseAudio — el motor de audio casi universal en
+    escritorios Linux modernos (Debian/Q4OS de Santiago incluido,
+    vía PulseAudio o el compat layer de PipeWire). Como el propio
+    docstring aclara, "Errors are ignored (this is a design bug)" — la
+    llamada no fallaba ni avisaba nada, simplemente no hacía nada, así
+    que el fix de la ronda 60 quedó funcionalmente inerte en la
+    práctica para el caso real de Santiago, a pesar de estar bien
+    armado en todo lo demás (listado, re-aplicación en cada
+    `reproducir()`, etc.).
+
+    **Corrección**: `MotorAudio._aplicar_dispositivo_salida()`
+    (`core/audio_engine.py`) ahora llama SIEMPRE
+    `self._player.audio_output_device_set(None, device)` — `module`
+    fijo en `None` (el "uso recomendado" documentado por la propia
+    librería para mover la salida de inmediato), descartando el
+    módulo del id compuesto en este punto puntual. El módulo sigue
+    viajando en el id guardado (`"{modulo}||{device}"`) y se sigue
+    usando exactamente igual que antes en `listar_dispositivos()` —
+    **sin tocar el listado**, tal cual pidió Santiago explícitamente
+    ("no lo cambies") — el módulo ahí evita duplicados/ambigüedad
+    entre módulos al armar el combo, simplemente ya no se le pasa a
+    libVLC al momento de aplicar la selección.
+
+    Probado extendiendo `test_dispositivo_salida.py`: todas las
+    aserciones de aplicación (`set_dispositivo_salida()` directo,
+    `reproducir()` inmediato, el diferido de 150ms, y un segundo
+    `reproducir()` simulando cambio de tema) confirman que la llamada
+    real a `audio_output_device_set()` ahora siempre lleva
+    `module=None` con el `device` correcto — más un caso nuevo
+    dedicado a un id VIEJO sin separador `||` (de una instalación
+    anterior a la ronda 60), que también aplica con `module=None` sin
+    romperse — + regresión de las aserciones de LISTADO (Bug A, sin
+    tocar) sin cambios + suite de regresión completa sin fallos nuevos
+    (mismos 3 fallos preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py`). **Sigue sin poder
+    confirmarse con audio/hardware real** (el sandbox no tiene libVLC
+    ni PulseAudio/PipeWire real — este fix se basa en la documentación
+    oficial de la librería, no en una prueba contra el propio motor de
+    audio): falta que Santiago confirme que ahora sí, al elegir la
+    salida HDMI del Arzopa (o cualquier otra) en Configuración → Audio
+    y guardar, el audio efectivamente sale por ahí — tanto al empezar
+    un tema nuevo como (si prueba) mientras algo ya está sonando.
+    **Nota para el futuro sobre el caso "ya está sonando"**:
+    `MainWindow._aplicar_configuracion_en_vivo()` llama a
+    `motor.set_dispositivo_salida()` directo sobre un motor que puede
+    estar reproduciendo en ese mismo instante, asumiendo (según su
+    propio comentario) que "libVLC tolera cambiar de dispositivo sin
+    cortar la reproducción" — con `module=None` esto debería funcionar
+    de verdad ahora (es justamente el caso que la documentación llama
+    "immediately"), pero si Santiago reporta que el cambio en vivo
+    sigue sin notarse mientras algo suena (y solo se nota recién en el
+    próximo tema), la costura a revisar es esa: forzar un
+    stop()/replay() ahí en vez de confiar en el hot-swap in-place.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
