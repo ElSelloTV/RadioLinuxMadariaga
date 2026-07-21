@@ -6069,6 +6069,82 @@ todo el resto.
     sigue sin notarse mientras algo suena (y solo se nota recién en el
     próximo tema), la costura a revisar es esa: forzar un
     stop()/replay() ahí en vez de confiar en el hot-swap in-place.
+62. ~~Selección de dispositivo: log de diagnóstico agregado — el fix de
+    la ronda 61 (`module=None`) SIGUE sin funcionar en la PC real de
+    Santiago~~ — reportó, tras probar la ronda 61: "sigue sin
+    reproducir por donde lo selecciono... no toma control sobre la
+    placa y no hace caso a lo que selecciono... no importa que
+    seleccione, siempre sale por la analógica de parlantes."
+
+    Este es ya el SEGUNDO fix basado 100% en documentación de
+    `python-vlc` que no resuelve el problema en su hardware real — el
+    patrón (dos rondas seguidas de fixes "correctos según el manual"
+    que no cambian nada en la práctica) es la señal de que hace falta
+    DATOS REALES de su sistema antes de seguir adivinando, mismo
+    criterio que ya destrabó la investigación de EasyEffects/PipeWire
+    en su momento (ahí también costó varias rondas a ciegas hasta que
+    un `pw-link -l` real reveló la causa exacta). No se hizo un tercer
+    cambio de código a ciegas.
+
+    **Agregado en esta ronda, mientras se espera el diagnóstico**: log
+    de diagnóstico en `MotorAudio._aplicar_dispositivo_salida()`
+    (`core/audio_engine.py`, vía `config.settings.registrar_evento()`)
+    — cada vez que se aplica un dispositivo DISTINTO al último
+    logueado, deja una línea en `config/data/log_aplicacion.txt` con
+    el string EXACTO que la app le manda a libVLC (`audio_output_
+    device_set(None, '<device>')`) junto con el id completo guardado
+    en la config — dedupeado para no saturar el log en cada
+    `reproducir()`. Esto permite comparar a mano, sin adivinar, si el
+    string que la app cree que está mandando coincide EXACTO (mayúsculas,
+    guiones, todo) con el nombre real del sink que devuelve `pactl`.
+
+    **Pedido a Santiago para la próxima ronda** (mismo espíritu que la
+    investigación de PipeWire/EasyEffects — "ground truth de tu
+    máquina real" antes de seguir tocando código a ciegas), con la
+    radio reproduciendo algo:
+    ```bash
+    pactl info | grep "Server Name"
+    pactl list sinks short
+    pactl list sink-inputs
+    ```
+    y en Configuración → Diagnóstico → "Ver log", copiar la línea más
+    reciente que empiece con "MotorAudio: aplicando audio_output_
+    device_set". Con esos tres datos se puede comparar el nombre del
+    sink que la app cree que eligió contra el nombre real que
+    PulseAudio/PipeWire conoce, y ver a qué sink está conectado el
+    stream de la app AHORA MISMO (buscar la entrada de `sink-inputs`
+    con `application.name` tipo "vlc"/vlc process, o el PID de la
+    app).
+
+    **La prueba más importante, el litmus test real**: de la salida de
+    `pactl list sink-inputs`, anotar el número de índice del stream de
+    la app (línea `Sink Input #<N>`) y probar moverlo A MANO:
+    ```bash
+    pactl move-sink-input <N> <nombre_del_sink_deseado_de_arriba>
+    ```
+    Esto separa las dos causas posibles de una vez: **si ese comando
+    manual TAMBIÉN falla en mover el audio**, el problema es 100%
+    externo a esta app — una política de ruteo de WirePlumber/PipeWire
+    en su sistema que fuerza todo de vuelta al sink por defecto, algo
+    que este programa no puede arreglar desde Python (haría falta
+    tocar la configuración de WirePlumber en su PC, fuera del alcance
+    de este repo). **Si el `pactl move-sink-input` manual SÍ mueve el
+    audio correctamente**, entonces el problema es específicamente que
+    la llamada de libVLC (`audio_output_device_set`) no está
+    ejecutando ese mismo movimiento pese a la documentación — y la
+    solución pasaría por que esta app haga el `pactl move-sink-input`
+    ella misma (shell-out directo, mismo patrón ya usado en el
+    proyecto para `wmctrl`/`git`/`yt-dlp`), identificando su propio
+    stream por PID (`os.getpid()`, ya que python-vlc corre in-process,
+    no como proceso aparte) en vez de confiar en el mecanismo interno
+    de libVLC.
+
+    No se tocó nada más de la lógica de aplicación en esta ronda —
+    solo se agregó el log, sin cambiar el comportamiento real (mismo
+    `module=None` de la ronda 61) hasta tener el diagnóstico real.
+    Probado: suite de regresión completa sin fallos nuevos (mismos 3
+    preexistentes de siempre) + confirmado que el log nuevo se escribe
+    correctamente con el formato esperado.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
