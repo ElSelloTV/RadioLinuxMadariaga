@@ -323,24 +323,48 @@ class MotorAudio(QObject):
 
     def _aplicar_dispositivo_salida(self):
         """Bug real corregido ("sin importar lo que yo elija, siempre
-        sale por la salida principal"): `reproducir()` hace un
-        `stop()` antes de cada `play()` (necesario para el bug de
-        libVLC de Pisadores reusados, ver más arriba) — y cada
-        `stop()` DESARMA la salida de audio (aout) del reproductor,
-        que se vuelve a crear de cero en el próximo `play()`. La
-        selección de dispositivo, aplicada UNA sola vez al elegirla en
-        Configuración, se perdía en el primer stop()/play() siguiente
-        (que pasa todo el tiempo en el uso normal de la radio) y
-        libVLC volvía a la salida por defecto del sistema — el mismo
-        patrón de bug ya resuelto para el volumen (`_volumen_deseado`,
-        re-aplicado en cada arranque). Esta función es el punto único
-        de aplicación, llamada tanto al elegir el dispositivo como en
-        cada `reproducir()` (inmediato y en el diferido de 150ms) —
-        nunca confiar en que UNA sola llamada alcance."""
+        sale por la salida principal"): dos causas, una encima de la
+        otra.
+
+        (1) `reproducir()` hace un `stop()` antes de cada `play()`
+        (necesario para el bug de libVLC de Pisadores reusados, ver
+        más arriba) — y cada `stop()` DESARMA la salida de audio
+        (aout) del reproductor, que se vuelve a crear de cero en el
+        próximo `play()`. La selección de dispositivo, aplicada UNA
+        sola vez al elegirla en Configuración, se perdía en el primer
+        stop()/play() siguiente (que pasa todo el tiempo en el uso
+        normal de la radio) — mismo patrón de bug ya resuelto para el
+        volumen (`_volumen_deseado`, re-aplicado en cada arranque).
+        Esta función es el punto único de aplicación, llamada tanto al
+        elegir el dispositivo como en cada `reproducir()` (inmediato y
+        en el diferido de 150ms) — nunca confiar en que UNA sola
+        llamada alcance.
+
+        (2) Segunda causa, más de fondo, encontrada tras el primer
+        fix: `MediaPlayer.audio_output_device_set(module, device_id)`
+        documenta textualmente (docstring real de python-vlc) que
+        pasar un MÓDULO explícito (ej. "pulse") "no tiene efecto en
+        algunos módulos de audio, notablemente MMDevice y
+        **PulseAudio**" — y que "si el parámetro module es None, la
+        salida de audio se mueve al dispositivo indicado
+        INMEDIATAMENTE. Este es el uso recomendado." Como la inmensa
+        mayoría de instalaciones Linux de escritorio (la de Santiago
+        incluida) corren sobre PulseAudio o el compat layer de
+        PipeWire, pasar el módulo explícito (necesario para
+        `listar_dispositivos()`, que si necesita recorrer módulo por
+        módulo para poder listar SIN haber reproducido nada — ver esa
+        función, NO tocar esa parte) hacía que la selección se
+        aplicara en silencio a nada — libVLC ni siquiera tira error
+        ("Errors are ignored (this is a design bug)", literal del
+        propio docstring). Corregido pasando SIEMPRE `module=None` acá
+        (el uso recomendado por la propia librería) — el módulo
+        codificado en el id compuesto (`"{modulo}||{device}"`) se
+        sigue usando para LISTAR (evita duplicados/ambigüedad entre
+        módulos) pero se descarta al momento de aplicar."""
         if not self._disponible or not self._id_dispositivo:
             return
-        modulo, device = self._modulo_y_dispositivo(self._id_dispositivo)
-        self._player.audio_output_device_set(modulo, device)
+        _, device = self._modulo_y_dispositivo(self._id_dispositivo)
+        self._player.audio_output_device_set(None, device)
 
     def listar_dispositivos(self):
         """[(id, descripcion), ...] de las salidas de audio reales del
