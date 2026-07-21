@@ -78,7 +78,7 @@ class MotorAudio(QObject):
             self._instancia = vlc.Instance(ARGUMENTOS_VLC)
             self._player = self._instancia.media_player_new()
             if id_dispositivo:
-                self._player.audio_output_device_set(None, id_dispositivo)
+                self._aplicar_dispositivo_salida()
 
             eventos = self._player.event_manager()
             eventos.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_fin_reproduccion)
@@ -160,6 +160,12 @@ class MotorAudio(QObject):
         self._player.play()
         self._timer_posicion.start()
 
+        # Re-aplica el dispositivo de salida elegido — ver
+        # _aplicar_dispositivo_salida(): el stop() de arriba desarma la
+        # salida de audio, así que la selección hecha en Configuración
+        # se pierde si no se refuerza acá en cada arranque.
+        self._aplicar_dispositivo_salida()
+
         volumen_final = volumen_base
         if ganancia_db:
             from core.analizador_audio import volumen_ajustado_por_ganancia
@@ -188,6 +194,7 @@ class MotorAudio(QObject):
                 return
             self._player.set_time(max(0, punto_inicio_ms))
             self._player.audio_set_volume(self._volumen_deseado)
+            self._aplicar_dispositivo_salida()
         QTimer.singleShot(150, _tras_arranque)
 
     def pausar(self):
@@ -292,27 +299,96 @@ class MotorAudio(QObject):
 
     def set_dispositivo_salida(self, id_dispositivo: str):
         self._id_dispositivo = id_dispositivo
-        if self._disponible:
-            self._player.audio_output_device_set(None, id_dispositivo)
+        self._aplicar_dispositivo_salida()
 
     def id_dispositivo(self) -> str:
         return self._id_dispositivo
 
+    @staticmethod
+    def _modulo_y_dispositivo(id_dispositivo: str):
+        """Separa el id compuesto que arma `listar_dispositivos()`
+        (`"{modulo}||{device}"`) en (modulo, device) —
+        `audio_output_device_set()` necesita el módulo (ej. "pulse",
+        "alsa") para aplicar la selección de verdad, no alcanza con el
+        id del dispositivo solo (ver nota en `listar_dispositivos()`).
+        Si no tiene el separador (un id "viejo" guardado por una
+        versión anterior de la app, o algo tipeado a mano en el combo
+        editable de Configuración), se interpreta como dispositivo
+        solo, sin módulo — mismo comportamiento de siempre, sigue
+        funcionando para no romper una config ya guardada."""
+        if id_dispositivo and "||" in id_dispositivo:
+            modulo, _, device = id_dispositivo.partition("||")
+            return modulo, device
+        return None, id_dispositivo
+
+    def _aplicar_dispositivo_salida(self):
+        """Bug real corregido ("sin importar lo que yo elija, siempre
+        sale por la salida principal"): `reproducir()` hace un
+        `stop()` antes de cada `play()` (necesario para el bug de
+        libVLC de Pisadores reusados, ver más arriba) — y cada
+        `stop()` DESARMA la salida de audio (aout) del reproductor,
+        que se vuelve a crear de cero en el próximo `play()`. La
+        selección de dispositivo, aplicada UNA sola vez al elegirla en
+        Configuración, se perdía en el primer stop()/play() siguiente
+        (que pasa todo el tiempo en el uso normal de la radio) y
+        libVLC volvía a la salida por defecto del sistema — el mismo
+        patrón de bug ya resuelto para el volumen (`_volumen_deseado`,
+        re-aplicado en cada arranque). Esta función es el punto único
+        de aplicación, llamada tanto al elegir el dispositivo como en
+        cada `reproducir()` (inmediato y en el diferido de 150ms) —
+        nunca confiar en que UNA sola llamada alcance."""
+        if not self._disponible or not self._id_dispositivo:
+            return
+        modulo, device = self._modulo_y_dispositivo(self._id_dispositivo)
+        self._player.audio_output_device_set(modulo, device)
+
     def listar_dispositivos(self):
-        """[(id, descripcion), ...] de las salidas de audio disponibles."""
+        """[(id, descripcion), ...] de las salidas de audio reales del
+        sistema (ej. parlantes analógicos Y salida HDMI de un monitor,
+        como dos entradas separadas).
+
+        Bug real corregido ("no tengo forma gráfica de elegir la
+        salida" — el combo de Configuración no mostraba las salidas
+        reales, ej. una HDMI): antes usaba
+        `MediaPlayer.audio_output_device_enum()`, que por diseño de
+        libVLC solo enumera los dispositivos del output QUE YA ESTÁ EN
+        USO — con un reproductor que TODAVÍA NO reprodujo nada (el
+        caso real acá: Configuración arma un `MotorAudio()` de mentira
+        solo para listar, sin reproducir nada), esa llamada devuelve
+        una lista vacía o incompleta, sin las salidas reales del
+        hardware. Reemplazado por la API a nivel de `Instance`
+        (`audio_output_list_get()` + `audio_output_device_list_get()`
+        por cada módulo de audio del sistema — pulse, alsa, etc.),
+        disponible desde libVLC 2.1.0, que NO depende de que haya una
+        salida activa: recorre TODOS los módulos y sus dispositivos
+        reales sin necesitar reproducir nada primero.
+
+        El id devuelto codifica el módulo junto con el dispositivo —
+        ver `_modulo_y_dispositivo()`, que lo separa de nuevo al
+        aplicar la selección."""
         if not self._disponible:
             return []
         dispositivos = []
-        lista = self._player.audio_output_device_enum()
-        nodo = lista
-        while nodo:
-            contenido = nodo.contents
-            dispositivo_id = contenido.device.decode("utf-8", errors="ignore")
-            descripcion = contenido.description.decode("utf-8", errors="ignore")
-            dispositivos.append((dispositivo_id, descripcion))
-            nodo = contenido.next
-        if lista:
-            vlc.libvlc_audio_output_device_list_release(lista)
+        modulos = self._instancia.audio_output_list_get()
+        nodo_modulo = modulos
+        while nodo_modulo:
+            contenido_modulo = nodo_modulo.contents
+            nombre_modulo = contenido_modulo.name.decode("utf-8", errors="ignore")
+
+            lista_dispositivos = self._instancia.audio_output_device_list_get(nombre_modulo)
+            nodo = lista_dispositivos
+            while nodo:
+                contenido = nodo.contents
+                device_id = contenido.device.decode("utf-8", errors="ignore")
+                descripcion = contenido.description.decode("utf-8", errors="ignore")
+                dispositivos.append((f"{nombre_modulo}||{device_id}", descripcion))
+                nodo = contenido.next
+            if lista_dispositivos:
+                vlc.libvlc_audio_output_device_list_release(lista_dispositivos)
+
+            nodo_modulo = contenido_modulo.next
+        if modulos:
+            vlc.libvlc_audio_output_list_release(modulos)
         return dispositivos
 
     # ------------------------------------------------------------------
