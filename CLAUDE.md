@@ -6716,6 +6716,103 @@ todo el resto.
     ahora sí encadena ciclos nuevos sin fin — tanto en uso continuo
     normal como en el escenario puntual de abrir la app y retomar a
     mano el último ítem de una lista restaurada.
+69. ~~Autoscroll de Ventana 2 al llenarse + compresor de salida
+    configurable~~ — dos pedidos independientes:
+
+    **a) Autoscroll de Emisión con "aire" (pedido explícito: "una vez
+    que se va llenando la ventana 2... me gustaría ir viendo siempre
+    hacia abajo de manera automática... dejando un aire de espacio")**:
+    `PanelReproductor.agregar_item()` (`gui/panel_reproductor.py`)
+    ahora llama a `_scroll_al_final_con_aire()` (nuevo) después de cada
+    alta — mueve la barra vertical al máximo y le resta el alto de UNA
+    fila (`tree.sizeHintForRow(0)`), así el último ítem agregado queda
+    a la vista sin quedar pegado al borde inferior. Como `agregar_item()`
+    es el ÚNICO punto de alta compartido por el drag&drop manual y por
+    `_generar_serie_musicalizador()` (el refill del FMT), cubre "se van
+    cargando los ciclos de FMT" de una sola vez, sin tocar nada del
+    motor. Aplica igual a Ventana 2 y a la Auxiliar (mismo
+    `PanelReproductor` compartido) — nunca borra ítems anteriores,
+    solo mueve el scroll.
+
+    **b) Compresor de salida configurable (pedido explícito: "incluí
+    un compresor... Entrada de Audio, Ratio, Ataque, Release, Salida
+    (Ganancia de Compensación)")**: a diferencia de los DOS intentos
+    previos de procesar el audio de salida (control remoto de
+    EasyEffects, rondas 37-51; filter-chain nativo de PipeWire, ronda
+    52) — ambos DESCARTADOS a pedido explícito de Santiago en la ronda
+    55 porque prefería manejar el procesamiento por FUERA de esta
+    app — este compresor vive DENTRO de cada `MotorAudio`, usando el
+    filtro de audio NATIVO que ya trae libVLC de fábrica (módulo
+    `"compressor"`), sin depender de ningún proceso externo ni tocar
+    la configuración del sistema — no contradice la decisión de la
+    ronda 55 porque no es un procesador de sistema, es parte del motor
+    de audio que esta app ya usa. `core/audio_engine.py` ganó
+    `_argumentos_compresor(audio_cfg)`, que arma
+    `--audio-filter=compressor` + los 5 flags reales del módulo
+    (`--compressor-threshold`, `--compressor-ratio`,
+    `--compressor-attack`, `--compressor-release`,
+    `--compressor-makeup-gain`) SOLO si `compresor_activado` está en
+    `True` — mapeo 1 a 1 con lo pedido: "Entrada de Audio" = umbral
+    (threshold, dB), Ratio, Ataque (ms), Release (ms), "Salida
+    (Ganancia de Compensación)" = makeup-gain (dB). `_argumentos_vlc()`
+    los concatena con los argumentos ya existentes de buffer/`--no-video`.
+    Mismo criterio ya establecido para `duracion_buffer_caching_ms`
+    (ronda de la PR #2): es un argumento de INSTANCIA de libVLC, fijo
+    al crear cada `MotorAudio` — cambiar un valor en Configuración
+    requiere reabrir la app para aplicar, avisado explícitamente en la
+    UI. Nueva sección `compresor_*` en `config_general.json → audio`
+    (desactivado por defecto — una instalación existente nunca empieza
+    a comprimir sola) y un `QGroupBox` nuevo en Configuración → Audio
+    con el checkbox + los 5 campos, rangos acotados a los límites
+    reales del módulo de libVLC (threshold -30/0 dB, ratio 1-20,
+    ataque 1.5-400ms, release 2-800ms, makeup-gain 0-24dB).
+
+    **Bug real encontrado y corregido en el camino, mientras se
+    probaba el compresor**: `cargar_configuracion()` (`config/settings.py`)
+    devolvía `dict(CONFIG_POR_DEFECTO)` en una instalación TOTALMENTE
+    nueva (sin `config_general.json` todavía) — una copia SOMERA, no
+    profunda. Como las secciones anidadas (`audio`, `fade`, etc.) son
+    diccionarios, `dict(CONFIG_POR_DEFECTO)` copia el diccionario de
+    NIVEL SUPERIOR pero cada sección sigue siendo el MISMO objeto que
+    `CONFIG_POR_DEFECTO["audio"]` — cualquier código que haga `cfg =
+    cargar_configuracion(); cfg["audio"][clave] = valor` (exactamente
+    lo que hace `VentanaConfiguracion._guardar_y_cerrar()`) en el
+    primerísimo arranque de una instalación nueva terminaba mutando el
+    propio `CONFIG_POR_DEFECTO` global EN MEMORIA, silenciosamente,
+    para el resto del proceso — sin romper nada visible de inmediato
+    (el archivo en disco quedaba bien escrito igual), pero corrompiendo
+    los valores "de fábrica" en memoria. Corregido con
+    `copy.deepcopy(CONFIG_POR_DEFECTO)` en los dos lugares que
+    devuelven los valores por defecto tal cual (instalación nueva, y
+    el fallback ante un JSON corrupto).
+
+    Probado con `test_autoscroll_y_compresor.py` (nuevo, dedicado):
+    `_scroll_al_final_con_aire()` deja el scroll exactamente a un
+    "aire" de una fila del fondo (nunca pegado), con clamp a 0 en el
+    caso límite de un rango más chico que una fila, y `agregar_item()`
+    la dispara siempre; `_argumentos_compresor()`/`_argumentos_vlc()`
+    arman los flags correctos con el compresor activado y desactivado,
+    con defaults de libVLC ante una clave faltante, y sin romper el
+    caso ya existente sin compresor; `MotorAudio()` sigue degradando
+    limpio con el compresor activado en config (sin libVLC en el
+    sandbox); una instalación nueva tiene el compresor desactivado por
+    defecto (confirma el fix de `cargar_configuracion()`); los 5
+    campos + el checkbox existen en la UI y el round-trip de
+    guardar/recargar refleja los valores editados — + suite de
+    regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre + 4 tests locales ya diagnosticados como
+    desactualizados desde la ronda 63, sin relación con este cambio) +
+    smoke test de arranque limpio. **Sigue sin poder probarse con
+    audio/VLC real** (el sandbox no tiene libVLC instalado, y menos
+    aún el módulo de filtro "compressor" compilado): falta que
+    Santiago confirme (1) que el autoscroll de Ventana 2 se siente
+    natural al ir llenándose con ciclos del Musicalizador, sin resultar
+    molesto, y (2) que al activar el compresor y reabrir la app,
+    escucha el efecto esperado en el aire — si algún valor de los 5
+    campos no tiene efecto audible, la primera sospecha debería ser el
+    nombre exacto del flag de libVLC (`--compressor-*`), verificable
+    con `cvlc --longhelp --advanced | grep -A2 compressor` en su
+    notebook real.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

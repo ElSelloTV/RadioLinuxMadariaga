@@ -114,6 +114,54 @@ class VentanaConfiguracion(QDialog):
         nota.setObjectName("lblTituloBloqueActivo")
         form.addRow(nota)
 
+        form.addRow(QLabel(""))
+        grupo_compresor = QGroupBox("Compresor de salida (filtro nativo de VLC)")
+        form_compresor = QFormLayout(grupo_compresor)
+
+        self.chk_compresor_activado = QCheckBox("Activar compresor")
+        form_compresor.addRow(self.chk_compresor_activado)
+
+        self.spin_compresor_umbral = QDoubleSpinBox()
+        self.spin_compresor_umbral.setRange(-30.0, 0.0)
+        self.spin_compresor_umbral.setSingleStep(0.5)
+        self.spin_compresor_umbral.setSuffix(" dB")
+        form_compresor.addRow("Entrada de Audio (umbral):", self.spin_compresor_umbral)
+
+        self.spin_compresor_ratio = QDoubleSpinBox()
+        self.spin_compresor_ratio.setRange(1.0, 20.0)
+        self.spin_compresor_ratio.setSingleStep(0.5)
+        self.spin_compresor_ratio.setSuffix(" : 1")
+        form_compresor.addRow("Ratio:", self.spin_compresor_ratio)
+
+        self.spin_compresor_ataque = QDoubleSpinBox()
+        self.spin_compresor_ataque.setRange(1.5, 400.0)
+        self.spin_compresor_ataque.setSingleStep(1.0)
+        self.spin_compresor_ataque.setSuffix(" ms")
+        form_compresor.addRow("Ataque:", self.spin_compresor_ataque)
+
+        self.spin_compresor_release = QDoubleSpinBox()
+        self.spin_compresor_release.setRange(2.0, 800.0)
+        self.spin_compresor_release.setSingleStep(5.0)
+        self.spin_compresor_release.setSuffix(" ms")
+        form_compresor.addRow("Release:", self.spin_compresor_release)
+
+        self.spin_compresor_ganancia_salida = QDoubleSpinBox()
+        self.spin_compresor_ganancia_salida.setRange(0.0, 24.0)
+        self.spin_compresor_ganancia_salida.setSingleStep(0.5)
+        self.spin_compresor_ganancia_salida.setSuffix(" dB")
+        form_compresor.addRow("Salida (Ganancia de Compensación):", self.spin_compresor_ganancia_salida)
+
+        nota_compresor = QLabel(
+            "Requiere reabrir la aplicación para aplicarse (es un\n"
+            "argumento de instancia de libVLC, igual que el buffer de\n"
+            "Reproducción y Automatización) — afecta Publicidad, Emisión,\n"
+            "el Auxiliar, el Pisador y el Previo por igual."
+        )
+        nota_compresor.setObjectName("lblTituloBloqueActivo")
+        form_compresor.addRow(nota_compresor)
+
+        form.addRow(grupo_compresor)
+
         return widget
 
     def _crear_slider_volumen(self) -> QSlider:
@@ -713,6 +761,12 @@ class VentanaConfiguracion(QDialog):
         self._seleccionar_en_combo(self.combo_dispositivo_preescucha, audio["dispositivo_preescucha"])
         self.slider_volumen_master.setValue(audio["volumen_master"])
         self.slider_volumen_preescucha.setValue(audio["volumen_preescucha"])
+        self.chk_compresor_activado.setChecked(audio["compresor_activado"])
+        self.spin_compresor_umbral.setValue(audio["compresor_umbral_db"])
+        self.spin_compresor_ratio.setValue(audio["compresor_ratio"])
+        self.spin_compresor_ataque.setValue(audio["compresor_ataque_ms"])
+        self.spin_compresor_release.setValue(audio["compresor_release_ms"])
+        self.spin_compresor_ganancia_salida.setValue(audio["compresor_ganancia_salida_db"])
 
         fade = self._config["fade"]
         self.chk_crossfade.setChecked(fade["crossfade_activado"])
@@ -773,6 +827,12 @@ class VentanaConfiguracion(QDialog):
             or self.combo_dispositivo_preescucha.currentText()
         self._config["audio"]["volumen_master"] = self.slider_volumen_master.value()
         self._config["audio"]["volumen_preescucha"] = self.slider_volumen_preescucha.value()
+        self._config["audio"]["compresor_activado"] = self.chk_compresor_activado.isChecked()
+        self._config["audio"]["compresor_umbral_db"] = self.spin_compresor_umbral.value()
+        self._config["audio"]["compresor_ratio"] = self.spin_compresor_ratio.value()
+        self._config["audio"]["compresor_ataque_ms"] = self.spin_compresor_ataque.value()
+        self._config["audio"]["compresor_release_ms"] = self.spin_compresor_release.value()
+        self._config["audio"]["compresor_ganancia_salida_db"] = self.spin_compresor_ganancia_salida.value()
 
         self._config["fade"]["crossfade_activado"] = self.chk_crossfade.isChecked()
         self._config["fade"]["duracion_fade_in_v2_ms"] = self.spin_fade_in_v2.value()

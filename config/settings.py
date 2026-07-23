@@ -8,6 +8,7 @@ fade y dispositivos de audio sin depender del motor todavía.
 --------------------------------------------------------
 """
 
+import copy
 import json
 import os
 from datetime import date
@@ -30,6 +31,19 @@ CONFIG_POR_DEFECTO = {
         "dispositivo_preescucha": "default",
         "volumen_master": 100,
         "volumen_preescucha": 100,
+        # Compresor de salida (pedido explícito): filtro NATIVO de
+        # libVLC (módulo "compressor"), no un procesador externo — ver
+        # core/audio_engine.py:_argumentos_compresor(). Desactivado por
+        # defecto, así una instalación existente no empieza a comprimir
+        # sola. Requiere reabrir la app para aplicar (argumento de
+        # instancia de libVLC, fijo al crear cada MotorAudio — mismo
+        # criterio ya establecido para duracion_buffer_caching_ms).
+        "compresor_activado": False,
+        "compresor_umbral_db": -11.0,
+        "compresor_ratio": 8.0,
+        "compresor_ataque_ms": 25.0,
+        "compresor_release_ms": 100.0,
+        "compresor_ganancia_salida_db": 7.0,
     },
     "fade": {
         "crossfade_activado": True,
@@ -162,18 +176,30 @@ def _fusionar_con_defecto(config_guardada: dict) -> dict:
 
 
 def cargar_configuracion() -> dict:
-    """Carga config_general.json o crea uno con valores por defecto."""
+    """Carga config_general.json o crea uno con valores por defecto.
+
+    Bug real corregido (trampa clásica de Python): `dict(CONFIG_POR_DEFECTO)`
+    es una copia SOMERA — las secciones anidadas (`audio`, `fade`,
+    etc.) seguían siendo el MISMO objeto que `CONFIG_POR_DEFECTO`. Todo
+    código que hace `cfg = cargar_configuracion(); cfg["audio"][clave]
+    = valor` (ej. `VentanaConfiguracion._guardar_y_cerrar()`) en una
+    instalación TOTALMENTE nueva (sin `config_general.json` todavía)
+    terminaba mutando el propio `CONFIG_POR_DEFECTO` global en memoria
+    — silencioso, sin romper nada visible de inmediato, pero
+    corrompiendo los valores por defecto para el resto del proceso.
+    `copy.deepcopy()` evita esto: cada llamada devuelve secciones
+    anidadas 100% independientes."""
     _asegurar_directorio()
     if not os.path.exists(ARCHIVO_CONFIG_GENERAL):
         guardar_configuracion(CONFIG_POR_DEFECTO)
-        return dict(CONFIG_POR_DEFECTO)
+        return copy.deepcopy(CONFIG_POR_DEFECTO)
 
     try:
         with open(ARCHIVO_CONFIG_GENERAL, "r", encoding="utf-8") as f:
             return _fusionar_con_defecto(json.load(f))
     except (json.JSONDecodeError, OSError) as error:
         registrar_error(f"Error leyendo config general: {error}")
-        return dict(CONFIG_POR_DEFECTO)
+        return copy.deepcopy(CONFIG_POR_DEFECTO)
 
 
 def guardar_configuracion(config: dict):

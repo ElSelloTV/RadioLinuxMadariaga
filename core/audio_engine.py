@@ -36,7 +36,48 @@ BUFFER_CACHING_MS_POR_DEFECTO = 1000
 RETARDO_ARRANQUE_MS_POR_DEFECTO = 150
 
 
-def _argumentos_vlc(duracion_buffer_caching_ms: int) -> list:
+# Defaults del filtro "compressor" nativo de libVLC (módulo
+# modules/audio_filter/compressor.c) — usados si config_general.json
+# todavía no tiene estas claves (instalación vieja) o si el operador
+# no tocó un campo puntual del formulario.
+COMPRESOR_UMBRAL_DB_POR_DEFECTO = -11.0
+COMPRESOR_RATIO_POR_DEFECTO = 8.0
+COMPRESOR_ATAQUE_MS_POR_DEFECTO = 25.0
+COMPRESOR_RELEASE_MS_POR_DEFECTO = 100.0
+COMPRESOR_GANANCIA_SALIDA_DB_POR_DEFECTO = 7.0
+
+
+def _argumentos_compresor(audio_cfg: dict) -> list:
+    """Compresor de salida (pedido explícito, "incluí un compresor en
+    configuraciones de salida de audio, configurable y personalizable")
+    — usa el filtro de audio NATIVO de libVLC ("compressor", el mismo
+    módulo que trae VLC de fábrica), no un procesador externo — a
+    diferencia de los intentos previos con EasyEffects/PipeWire
+    filter-chain (ver roadmap rondas 37-55, ambos DESCARTADOS a pedido
+    explícito de Santiago porque prefería manejar el procesamiento por
+    fuera de esta app), este vive DENTRO de cada MotorAudio, sin
+    depender de ningún proceso ni configuración del sistema operativo.
+    Los 5 parámetros expuestos en Configuración → Audio son los que
+    pidió Santiago, mapeados 1 a 1 a las opciones reales del módulo:
+    "Entrada de Audio" -> --compressor-threshold (dB, umbral a partir
+    del cual empieza a comprimir), Ratio -> --compressor-ratio,
+    Ataque -> --compressor-attack (ms), Release -> --compressor-release
+    (ms), "Salida (Ganancia de Compensación)" -> --compressor-makeup-gain
+    (dB). Desactivado por defecto (`compresor_activado=False`) — una
+    instalación existente nunca empieza a comprimir sola."""
+    if not audio_cfg.get("compresor_activado", False):
+        return []
+    return [
+        "--audio-filter=compressor",
+        f"--compressor-threshold={float(audio_cfg.get('compresor_umbral_db', COMPRESOR_UMBRAL_DB_POR_DEFECTO))}",
+        f"--compressor-ratio={float(audio_cfg.get('compresor_ratio', COMPRESOR_RATIO_POR_DEFECTO))}",
+        f"--compressor-attack={float(audio_cfg.get('compresor_ataque_ms', COMPRESOR_ATAQUE_MS_POR_DEFECTO))}",
+        f"--compressor-release={float(audio_cfg.get('compresor_release_ms', COMPRESOR_RELEASE_MS_POR_DEFECTO))}",
+        f"--compressor-makeup-gain={float(audio_cfg.get('compresor_ganancia_salida_db', COMPRESOR_GANANCIA_SALIDA_DB_POR_DEFECTO))}",
+    ]
+
+
+def _argumentos_vlc(duracion_buffer_caching_ms: int, audio_cfg: dict = None) -> list:
     """Argumentos de la instancia de libVLC (pedido explícito, "para
     robustecer el sistema"):
     - "--no-video": esta app es 100% de audio — si un archivo cargado
@@ -56,8 +97,10 @@ def _argumentos_vlc(duracion_buffer_caching_ms: int) -> list:
       → Reproducción y Automatización (pedido explícito, ronda
       posterior) — OJO: es un argumento de instancia de libVLC, un
       cambio solo aplica a los MotorAudio creados DESPUÉS de guardar
-      (en la práctica, tras reabrir la app), no a los ya en curso."""
-    return ["--no-video", f"--file-caching={max(0, int(duracion_buffer_caching_ms))}"]
+      (en la práctica, tras reabrir la app), no a los ya en curso.
+    - Compresor (`_argumentos_compresor()` — ver esa función): mismo
+      criterio, argumento de instancia fijo al crear el MotorAudio."""
+    return ["--no-video", f"--file-caching={max(0, int(duracion_buffer_caching_ms))}"] + _argumentos_compresor(audio_cfg or {})
 
 
 class MotorAudio(QObject):
@@ -95,7 +138,9 @@ class MotorAudio(QObject):
         # `pactl list sinks short` en la PC real.
         self._ultimo_dispositivo_logueado = "___sin_loguear_todavia___"
 
-        reproduccion = cargar_configuracion().get("reproduccion", {})
+        config_actual = cargar_configuracion()
+        reproduccion = config_actual.get("reproduccion", {})
+        audio_cfg = config_actual.get("audio", {})
         self._retardo_arranque_ms = reproduccion.get(
             "retardo_arranque_ms", RETARDO_ARRANQUE_MS_POR_DEFECTO
         )
@@ -104,7 +149,7 @@ class MotorAudio(QObject):
         )
 
         try:
-            self._instancia = vlc.Instance(_argumentos_vlc(duracion_buffer_caching_ms))
+            self._instancia = vlc.Instance(_argumentos_vlc(duracion_buffer_caching_ms, audio_cfg))
             self._player = self._instancia.media_player_new()
             if id_dispositivo:
                 self._aplicar_dispositivo_salida()

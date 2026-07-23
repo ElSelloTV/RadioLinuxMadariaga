@@ -295,7 +295,22 @@ class PanelReproductor(QWidget):
             "punto_inicio_ms": punto_inicio_ms, "punto_fin_ms": punto_fin_ms, "ganancia_db": ganancia_db,
         })
         self.tree.addTopLevelItem(item)
+        self._scroll_al_final_con_aire()
         return item
+
+    def _scroll_al_final_con_aire(self):
+        """Autoscroll de la lista al agregar un ítem (pedido explícito:
+        "ir viendo siempre hacia abajo de manera automática... dejando
+        un aire de espacio") — mueve el scroll al final para que lo
+        recién agregado (típicamente un ciclo nuevo del Musicalizador
+        llenando Emisión) quede a la vista sin que el operador tenga
+        que bajarlo a mano, pero sin pegar el último ítem al borde
+        inferior — se deja un pequeño margen (una fila) debajo."""
+        barra = self.tree.verticalScrollBar()
+        barra.setValue(barra.maximum())
+        alto_fila = self.tree.sizeHintForRow(0)
+        if alto_fila > 0:
+            barra.setValue(max(0, barra.value() - alto_fila))
 
     def limpiar_items(self):
         """Vacía la lista por completo (pedido explícito: un Comando
