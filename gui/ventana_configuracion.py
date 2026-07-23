@@ -1,14 +1,11 @@
 """
 gui/ventana_configuracion.py
 --------------------------------------------------------
-Configuración general de la aplicación, en pestañas:
-  1. Audio            -> dispositivos Master / Preescucha, volúmenes.
-  2. Fade/Transiciones -> crossfade on/off y duración.
-  3. Rutas            -> bibliotecas de música/publicidad y logs.
-  4. Reproducción      -> automatización: avanzar en error,
-                          reintentos, repetir lista, modo automático
-                          al iniciar.
-  5. General           -> confirmaciones, reloj, tema.
+Configuración general de la aplicación, en pestañas: Audio (dispositivos
+Master/Preescucha, volúmenes), Procesador (compresor y, a futuro, otros
+efectos de audio — ver `_crear_tab_procesador()`), Fade/Transiciones,
+Rutas, Reproducción y Automatización, General, Apariencia,
+Actualizaciones, Diagnóstico.
 
 Todo se persiste en config/data/config_general.json vía
 config/settings.py. No hay nada de satelital/RDS: es justo lo
@@ -22,7 +19,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget, QWidget,
     QComboBox, QSlider, QCheckBox, QDoubleSpinBox, QSpinBox, QLineEdit,
     QPushButton, QLabel, QDialogButtonBox, QFileDialog, QApplication,
-    QMessageBox, QColorDialog, QGroupBox
+    QMessageBox, QColorDialog, QGroupBox, QScrollArea
 )
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
@@ -61,6 +58,7 @@ class VentanaConfiguracion(QDialog):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._crear_tab_audio(), "Audio")
+        self.tabs.addTab(self._crear_tab_procesador(), "Procesador")
         self.tabs.addTab(self._crear_tab_fade(), "Fade / Transiciones")
         self.tabs.addTab(self._crear_tab_rutas(), "Rutas")
         self.tabs.addTab(self._crear_tab_reproduccion(), "Reproducción y Automatización")
@@ -114,8 +112,22 @@ class VentanaConfiguracion(QDialog):
         nota.setObjectName("lblTituloBloqueActivo")
         form.addRow(nota)
 
-        form.addRow(QLabel(""))
-        grupo_compresor = QGroupBox("Compresor de salida (filtro nativo de VLC)")
+        return widget
+
+    # ------------------------------------------------------------------
+    # Tab: Procesador (pedido explícito: "en una pestaña nueva de
+    # Configuraciones que se llame 'Procesador'") — compresor +, a
+    # futuro, los efectos incorporados desde el preset de EasyEffects
+    # de Santiago. Envuelto en QScrollArea (pedido explícito: "agregá
+    # las barras para hacer scroll hacia abajo y arriba") para que
+    # sumar más efectos más adelante nunca obligue a agrandar el
+    # diálogo entero.
+    # ------------------------------------------------------------------
+    def _crear_tab_procesador(self) -> QWidget:
+        contenido = QWidget()
+        form = QFormLayout(contenido)
+
+        grupo_compresor = QGroupBox("Compresor (filtro nativo de VLC)")
         form_compresor = QFormLayout(grupo_compresor)
 
         self.chk_compresor_activado = QCheckBox("Activar compresor")
@@ -155,14 +167,19 @@ class VentanaConfiguracion(QDialog):
             "Requiere reabrir la aplicación para aplicarse (es un\n"
             "argumento de instancia de libVLC, igual que el buffer de\n"
             "Reproducción y Automatización) — afecta Publicidad, Emisión,\n"
-            "el Auxiliar, el Pisador y el Previo por igual."
+            "el Auxiliar, el Pisador y el Previo por igual. Se aplica\n"
+            "SIEMPRE sobre la Salida Master elegida en la pestaña Audio\n"
+            "(vive dentro del mismo MotorAudio que ya usa ese dispositivo)."
         )
         nota_compresor.setObjectName("lblTituloBloqueActivo")
         form_compresor.addRow(nota_compresor)
 
         form.addRow(grupo_compresor)
 
-        return widget
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(contenido)
+        return scroll
 
     def _crear_slider_volumen(self) -> QSlider:
         slider = QSlider(Qt.Orientation.Horizontal)

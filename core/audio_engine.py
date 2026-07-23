@@ -109,9 +109,20 @@ class MotorAudio(QObject):
     finalizo_item = Signal()
     error_reproduccion = Signal(str)
 
-    def __init__(self, id_dispositivo: str = None, parent=None):
+    def __init__(self, id_dispositivo: str = None, parent=None, aplicar_compresor: bool = True):
         super().__init__(parent)
         self._id_dispositivo = id_dispositivo
+        # Pedido explícito ("verificá que el compresor se aplique
+        # sobre la salida de audio master"): el compresor es un
+        # argumento de INSTANCIA de libVLC (ver _argumentos_compresor),
+        # así que se decide acá, al crear el motor — nunca por
+        # dispositivo elegido en runtime. `False` SOLO en
+        # GestorExplorador (el Previo de Ventana 3, que usa la salida
+        # de Preescucha, no la Master que va al aire) — todos los
+        # demás motores (Publicidad, Emisión, Auxiliar, Pisador, y el
+        # motor "entrante" de un crossfade) están ligados a la salida
+        # Master y sí lo reciben.
+        self._aplicar_compresor = aplicar_compresor
         self._ruta_actual = ""
         self._disponible = True
         self._instancia = None
@@ -140,7 +151,7 @@ class MotorAudio(QObject):
 
         config_actual = cargar_configuracion()
         reproduccion = config_actual.get("reproduccion", {})
-        audio_cfg = config_actual.get("audio", {})
+        audio_cfg = config_actual.get("audio", {}) if aplicar_compresor else {}
         self._retardo_arranque_ms = reproduccion.get(
             "retardo_arranque_ms", RETARDO_ARRANQUE_MS_POR_DEFECTO
         )
@@ -149,7 +160,19 @@ class MotorAudio(QObject):
         )
 
         try:
-            self._instancia = vlc.Instance(_argumentos_vlc(duracion_buffer_caching_ms, audio_cfg))
+            argumentos_finales = _argumentos_vlc(duracion_buffer_caching_ms, audio_cfg)
+            if audio_cfg.get("compresor_activado", False):
+                # Diagnóstico (pedido explícito, "verificá que el
+                # compresor se aplique"): deja en el log el string
+                # EXACTO que se le manda a libVLC al crear este motor
+                # — comparable a mano contra `cvlc --audio-filter=
+                # compressor ...` corrido suelto en la PC real, para
+                # aislar si el problema es esta app o el propio filtro
+                # de libVLC en esa instalación.
+                registrar_evento(
+                    f"MotorAudio: compresor activado, argumentos de instancia libVLC: {argumentos_finales}"
+                )
+            self._instancia = vlc.Instance(argumentos_finales)
             self._player = self._instancia.media_player_new()
             if id_dispositivo:
                 self._aplicar_dispositivo_salida()
@@ -548,7 +571,7 @@ class MotorAudio(QObject):
         # con el deseado como respaldo si libVLC devuelve 0/-1 espurio.
         volumen_inicial_saliente = self.obtener_volumen() or self._volumen_deseado
 
-        entrante = motor_entrante or MotorAudio(self._id_dispositivo)
+        entrante = motor_entrante or MotorAudio(self._id_dispositivo, aplicar_compresor=self._aplicar_compresor)
         entrante.reproducir(
             ruta_siguiente, punto_inicio_ms=punto_inicio_ms, punto_fin_ms=punto_fin_ms,
             ganancia_db=ganancia_db, volumen_base=volumen_base,

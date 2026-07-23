@@ -6813,6 +6813,93 @@ todo el resto.
     nombre exacto del flag de libVLC (`--compressor-*`), verificable
     con `cvlc --longhelp --advanced | grep -A2 compressor` en su
     notebook real.
+70. ~~Compresor: confirmar que se aplica sobre la salida Master +
+    pestaña "Procesador" nueva (en curso, esperando el preset de
+    EasyEffects)~~ — Santiago probó la ronda anterior ("No noto ningún
+    cambio") y pidió dos cosas: (a) verificar que el compresor se
+    aplique sobre la salida Master configurada, y (b) incorporar los 2
+    efectos reales de su preset de EasyEffects "Radio Tuyú" a una
+    pestaña nueva "Procesador" (o la misma Audio, con scroll).
+
+    **a) Bug real de alcance encontrado y corregido**: el compresor
+    (argumento de INSTANCIA de libVLC, ver ronda anterior) se aplicaba
+    de forma IDÉNTICA a TODOS los `MotorAudio` del programa —
+    Publicidad, Emisión, Auxiliar, Pisador, **Y TAMBIÉN el Previo de
+    Ventana 3** (`GestorExplorador`, que usa la salida de Preescucha,
+    pensada para los parlantes de monitoreo de la PC, no la que va al
+    aire) — nunca estuvo realmente acotado a "la salida Master", pese
+    a que el pedido original ya decía "compresor de salida de audio".
+    Corregido con un parámetro nuevo, `aplicar_compresor: bool = True`
+    en `MotorAudio.__init__` (`core/audio_engine.py`) — `True` por
+    defecto, así que Publicidad/Emisión/Auxiliar/Pisador y el motor
+    "entrante" de un crossfade (que hereda el criterio del motor que
+    lo originó, vía `self._aplicar_compresor`) siguen recibiéndolo sin
+    tocar nada; `GestorExplorador.__init__` (`core/playlist_manager.py`)
+    es el ÚNICO llamador que ahora pasa `aplicar_compresor=False`
+    explícito. **Diagnóstico agregado** (mismo criterio ya usado para
+    la selección de dispositivo de audio en rondas anteriores): con el
+    compresor activado, cada `MotorAudio` nuevo deja una línea en
+    `log_aplicacion.txt` con el string EXACTO que se le manda a
+    libVLC (`MotorAudio: compresor activado, argumentos de instancia
+    libVLC: [...]`) — comparable a mano contra un `cvlc
+    --audio-filter=compressor --compressor-threshold=... archivo.mp3`
+    corrido suelto en la terminal, para aislar si el problema es esta
+    app o el propio filtro de libVLC en su instalación. **Este
+    diagnóstico es la pieza clave pendiente**: como el sandbox no
+    tiene libVLC instalado, no hay forma de confirmar acá si el filtro
+    realmente produce un efecto audible — la sospecha más probable
+    de "no noto ningún cambio" sigue siendo que haga falta REABRIR la
+    app después de activar el compresor en Configuración (es un
+    argumento de instancia, fijo al crear cada motor, no se aplica en
+    caliente) — pendiente que Santiago confirme si ya lo había hecho.
+
+    **b) Pestaña "Procesador" nueva, compresor mudado ahí**: se creó
+    `_crear_tab_procesador()` (`gui/ventana_configuracion.py`), una
+    pestaña nueva entre Audio y Fade/Transiciones, con el grupo del
+    Compresor MUDADO desde Audio (mismos widgets/nombres de atributo,
+    solo cambió qué pestaña los contiene) — pensada como el lugar
+    único para todo el procesamiento de audio de esta app, incluidos
+    los 2 efectos del preset de EasyEffects que Santiago pidió sumar.
+    Envuelta en `QScrollArea` (`setWidgetResizable(True)`, pedido
+    explícito: "agregá las barras para hacer scroll hacia abajo y
+    arriba") — deja margen para sumar más efectos más adelante sin
+    tener que agrandar el diálogo. **Pendiente, bloqueado por falta de
+    datos reales**: Santiago pidió leer su archivo de preset de
+    EasyEffects llamado "Radio Tuyú" (2 efectos) e incorporarlos con
+    sus valores reales — ese archivo vive en SU máquina (típicamente
+    `~/.config/easyeffects/output/Radio Tuyú.json`), no accesible
+    desde este sandbox ni pegado en el chat todavía. Se le pidió
+    explícitamente el contenido del archivo (pegado como texto, o los
+    valores desde la propia interfaz de EasyEffects) para poder leer
+    QUÉ 2 efectos son y con qué valores reales, en vez de adivinar —
+    ninguna función nueva de UI se agregó a ciegas para esto, a
+    propósito (mismo criterio de "nunca inventar parámetros/nombres
+    de control sin confirmarlos contra la fuente real" ya aplicado en
+    la investigación de Calf/PipeWire de la ronda del filter-chain).
+
+    Probado con `test_compresor_scope_master.py` (nuevo, dedicado):
+    `MotorAudio()` por defecto aplica el compresor,
+    `GestorExplorador` (Previo) NO lo aplica, el motor "entrante" de
+    un crossfade hereda el criterio de su origen, el log se escribe
+    con los argumentos EXACTOS solo cuando el compresor está activado
+    (nunca de más) — + regresión de `test_autoscroll_y_compresor.py`
+    (los `hasattr()` sobre los widgets del compresor siguen pasando
+    igual, sin importar en qué pestaña viven ahora) + actualización de
+    `test_fade_config_reagrupado.py` (ronda 65), que asumía índices de
+    pestaña FIJOS (`tabs.widget(1)`/`tabs.widget(3)`) — robustecido a
+    una búsqueda por TEXTO de pestaña en vez de índice, para que
+    agregar una pestaña nueva en el futuro no vuelva a romperlo — +
+    suite de regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre + 4 tests locales ya diagnosticados como
+    desactualizados desde la ronda 63, sin relación con este cambio) +
+    smoke test de arranque limpio. **Sigue sin poder confirmarse con
+    audio/VLC real**: falta (1) que Santiago pegue el contenido del
+    preset "Radio Tuyú" de EasyEffects (los 2 efectos + sus valores)
+    para poder incorporarlos de verdad a la pestaña Procesador, y (2)
+    que, tras reabrir la app con el compresor activado, confirme si
+    ahora sí escucha el efecto — con el diagnóstico del log ya puesto,
+    la próxima vuelta debería poder aislar mucho más rápido si el
+    problema está en esta app o en la instalación de libVLC.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
