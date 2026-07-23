@@ -572,17 +572,25 @@ class VentanaPublicidad(QWidget):
     # Ventana 2, ver core/playlist_manager.py:GestorPublicidad).
     # ------------------------------------------------------------------
     def _on_doble_click_item(self, item):
-        if item is not None and not item.data(0, Qt.ItemDataRole.UserRole):
-            # Nodo de bloque (pedido explícito: "doble click en el
-            # título... se marque en rojo y cargue listo para
-            # reproducir el primer item del bloque"): en vez de no
-            # hacer nada, se redirige al primer hijo — la validación
-            # real (vigencia, etc.) la sigue haciendo GestorPublicidad
-            # ._on_doble_click() con el ítem ya resuelto, mismo camino
-            # que cualquier otro doble click.
-            if item.childCount() == 0:
-                return
-            item = item.child(0)
+        # Nodo de bloque (pedido explícito: "doble click en el
+        # título... se marque en rojo y cargue listo para reproducir
+        # el primer item del bloque"): se emite el bloque TAL CUAL,
+        # sin resolver nada acá — GestorPublicidad._on_doble_click()
+        # es quien decide qué hacer con un nodo de bloque, delegando en
+        # _reproducir_primero_del_bloque() (mismo camino que ya usa el
+        # botón Play sobre un bloque seleccionado).
+        #
+        # Bug real corregido: acá antes se agarraba `item.child(0)` a
+        # ciegas, el hijo LITERAL en la posición 0 sin importar si era
+        # reproducible — con la mayoría de los archivos con ruta
+        # válida esto pasaba desapercibido, pero en cuanto el primer
+        # hijo de un bloque queda marcado con error (archivo faltante,
+        # ver ROL_ITEM_CON_ERROR), GestorPublicidad._on_doble_click()
+        # rechazaba ese ítem puntual y no hacía NADA — ni saltear al
+        # siguiente hijo válido, ni avisar. Delegar en
+        # _reproducir_primero_del_bloque() reutiliza la MISMA lógica
+        # que ya sabe saltear ítems inválidos dentro de un bloque
+        # (_primer_item_valido_de), en vez de duplicarla acá.
         self.item_doble_click.emit(item)
 
     # ------------------------------------------------------------------

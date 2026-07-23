@@ -6522,6 +6522,81 @@ todo el resto.
     el árbol para corregirlo cuando pueda), y que el último FMT
     efectivamente retoma un ciclo nuevo al reabrir la app en vez de
     quedarse en silencio al agotar la lista restaurada.
+67. ~~Bug real, encontrado en la práctica apenas 5 minutos después de
+    la ronda anterior: doble click en el título de un bloque dejó de
+    arrancar cuando el primer ítem está roto~~ — reporte textual de
+    Santiago: "cuando selecciono el bloque de la ventana 1, ya no
+    marca en rojo el primer item y reproduce automaticamente... hay
+    item marcados como error con la cruz, deberia dejar al menos
+    poder seleccionarlo, saltear ellos, e ir reproduciendo uno a uno
+    todo los item (que se puedan) del bloque horario".
+
+    **Causa real**: `VentanaPublicidad._on_doble_click_item()` (doble
+    click en el TÍTULO de un bloque, agregado en la ronda 63)
+    resolvía `item.child(0)` a ciegas — el hijo LITERAL en la
+    posición 0 del bloque, sin pasar por ninguna validación — y
+    emitía ESE ítem puntual. `GestorPublicidad._on_doble_click()`
+    hacía `if not self._item_valido(item): return` sin ningún intento
+    de saltear al siguiente — si ese primer hijo resultaba ser el que
+    la ronda anterior (66) recién empezó a poder marcar como "archivo
+    faltante" (X roja), doble click en el título del bloque no hacía
+    absolutamente NADA, ni sonaba, ni saltaba, ni avisaba. Antes de la
+    ronda 66 esto pasaba desapercibido porque casi cualquier ruta no
+    vacía se consideraba "válida" (no había chequeo de existencia en
+    disco) — la ronda 66 no introdujo el bug, lo hizo VISIBLE por
+    primera vez, exactamente el patrón "esto ya estaba mal, recién
+    ahora se nota" que motivó revisar a fondo en vez de asumir una
+    regresión aislada.
+
+    **Corregido centralizando en el lugar que YA sabía saltear ítems
+    inválidos dentro de un bloque** (`_primer_item_valido_de()` /
+    `_reproducir_primero_del_bloque()`, usado desde antes por el botón
+    Play sobre un bloque seleccionado) en vez de mantener una segunda
+    implementación paralela sin ese salteo — mismo espíritu que la
+    regla ya documentada en este archivo sobre `_avanzar()`/
+    `_iniciar_crossfade()` de Ventana 2 ("caminos paralelos que no
+    comparten código" es una clase de bug recurrente en este
+    proyecto). `_on_doble_click_item()` (GUI) ya NO resuelve nada —
+    emite el nodo de bloque tal cual; `GestorPublicidad._on_doble_click()`
+    (core) detecta `item.parent() is None` (nodo de bloque) y delega
+    en `_reproducir_primero_del_bloque(item)`.
+
+    **Mismo defecto de fondo encontrado y corregido en dos lugares más
+    que comparten la causa raíz** (`primer_item_reproducible()`,
+    `gui/ventana_publicidad.py` — devuelve el hijo LITERAL en la
+    posición 0 del primer bloque con hijos, sin validar nada, usado
+    como fallback en dos puntos de `core/playlist_manager.py`):
+    - `_asegurar_rojo_y_verde()`: si el primer ítem "reproducible" que
+      encuentra está roto, ahora avanza con `tree.itemBelow()` hasta
+      el próximo VÁLIDO antes de armarlo en rojo (en vez de armar
+      directamente un ítem que nunca va a sonar).
+    - `_reproducir_seleccion_o_actual()` (botón Play): mismo salteo,
+      pero ACOTADO a propósito al caso "no hay nada armado NI
+      seleccionado" (el fallback genuino de arrancar desde cero) — si
+      el operador armó o seleccionó a mano un ítem roto en particular,
+      Play sigue sin hacer nada sobre ESE ítem puntual, mismo criterio
+      ya establecido en `_on_doble_click` (una elección explícita del
+      operador sobre un ítem inválido no debe "adivinar" otra cosa
+      distinta a lo que pidió).
+
+    Probado con `test_bloque_saltea_primero_roto.py` (nuevo, dedicado,
+    reproduce el reporte EXACTO de Santiago con un bloque de 3 tandas
+    donde la primera tiene ruta inexistente): doble click en el título
+    del bloque saltea la tanda rota y arranca en la segunda (con T1
+    intacto en el árbol, nunca tocado); el botón Play sin nada armado
+    ni seleccionado hace lo mismo; `_asegurar_rojo_y_verde()` arma el
+    primer ítem VÁLIDO (no el literal primero) y deja el verde en el
+    siguiente después de ese — + suite de regresión completa sin
+    fallos nuevos (mismos 3 fallos preexistentes de siempre + los 4
+    tests locales ya diagnosticados como desactualizados en rondas
+    anteriores, sin relación con este cambio) + smoke test de arranque
+    limpio. **Sigue sin poder probarse con audio/VLC real**: falta que
+    Santiago confirme que ahora, con su biblioteca real (que puede
+    tener archivos faltantes en cualquier posición de un bloque,
+    incluida la primera), seleccionar/doble-clickear un bloque siempre
+    encuentra y arranca desde el primer ítem realmente reproducible,
+    saltando cualquier ítem marcado con la X en el camino, sin importar
+    en qué posición esté.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

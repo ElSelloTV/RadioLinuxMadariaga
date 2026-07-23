@@ -621,8 +621,19 @@ class GestorPublicidad:
         # (armado en rojo), reanuda/dispara ese; si no, usa la
         # selección del árbol; si tampoco hay selección, arranca por
         # el primer ítem reproducible.
-        item = self.ventana.item_reproduciendo() or self.ventana.tree.currentItem() \
-            or self.ventana.primer_item_reproducible()
+        item = self.ventana.item_reproduciendo() or self.ventana.tree.currentItem()
+        if item is None:
+            item = self.ventana.primer_item_reproducible()
+            # Mismo bug de fondo que el doble click en el título de un
+            # bloque: primer_item_reproducible() da el hijo LITERAL en
+            # la posición 0, sin importar si es reproducible — saltear
+            # hasta el próximo VÁLIDO antes de intentar reproducirlo.
+            # A propósito, esto NO se aplica si el operador ya armó o
+            # seleccionó algo a mano (arriba) — ahí Play sigue sin
+            # hacer nada sobre un ítem roto elegido explícitamente,
+            # mismo criterio que _on_doble_click.
+            while item is not None and not self._item_valido(item):
+                item = self.ventana.tree.itemBelow(item)
 
         if item is not None and item.parent() is None:
             # Es el TÍTULO de un bloque (nodo de nivel superior), no
@@ -749,8 +760,20 @@ class GestorPublicidad:
     # — mismo comportamiento que GestorPlaylist en core/gestor_emision.py.
     # ------------------------------------------------------------------
     def _on_doble_click(self, item):
+        if item is not None and item.parent() is None:
+            # Nodo de bloque (título, "TANDA - Rotativa"), no una
+            # tanda — pedido explícito: doble click en el título arma
+            # el primer ítem REPRODUCIBLE del bloque, saltando
+            # cualquier ítem marcado con error (archivo faltante) en
+            # el camino, nunca solo "el hijo en la posición 0" a
+            # ciegas. Reutiliza el mismo camino que ya usa el botón
+            # Play sobre un bloque seleccionado, en vez de duplicar la
+            # lógica de saltear ítems inválidos acá también.
+            registrar_evento(f"Publicidad: doble click sobre el bloque '{item.text(0)}'")
+            self._reproducir_primero_del_bloque(item)
+            return
         if not self._item_valido(item):
-            return  # nodo de bloque (sin ruta), no es reproducible
+            return  # ítem inválido (vigencia vencida, archivo faltante, etc.)
         if self._bloque_automatico_actual is not None:
             # El operador toma control manual: se da por terminado el
             # bloque automático (y se reanuda Emisión) en vez de
@@ -855,6 +878,14 @@ class GestorPublicidad:
         rojo = self.ventana.item_reproduciendo()
         if rojo is None:
             rojo = self.ventana.primer_item_reproducible()
+            # Bug real corregido (mismo tipo que el del doble click en
+            # el título de un bloque): primer_item_reproducible() da
+            # el hijo LITERAL en la posición 0 del primer bloque con
+            # hijos, sin importar si es reproducible — si ese primer
+            # ítem quedó marcado con error (archivo faltante), hay que
+            # saltear hasta el próximo VÁLIDO antes de armarlo en rojo.
+            while rojo is not None and not self._item_valido(rojo):
+                rojo = self.ventana.tree.itemBelow(rojo)
             if rojo is None:
                 return
             self.ventana.marcar_reproduciendo_item(rojo)
