@@ -6981,6 +6981,81 @@ todo el resto.
     limpio. Pendiente: la respuesta de Santiago sobre Stereo Tools, y
     que confirme (con el compresor ya en valores más cercanos a su
     preset real) si ahora sí nota el efecto al reabrir la app.
+72. ~~Stereo Enhancer nativo de VLC (segundo efecto) + pregunta de
+    Santiago sobre un filtro "Upward" en VLC~~ — Santiago eligió, vía
+    `AskUserQuestion` con 3 opciones concretas, "Agregar el Stereo
+    Enhancer real de VLC" para el efecto sin equivalente ("Stereo
+    Tools") — implementado con el mismo criterio ya establecido para
+    el compresor: filtro NATIVO de libVLC (módulo `stereo_widen`, un
+    ensanchador estéreo por delay/feedback/crossfeed — algoritmo
+    TOTALMENTE distinto de un procesador Mid/Side como Stereo Tools,
+    nunca presentado como un port), configurable en Configuración →
+    Procesador con sus 4 parámetros reales (Delay ms, Feedback %,
+    Crossfeed %, Dry Mix %), desactivado por defecto con los valores
+    de fábrica de libVLC (20/30/30/70 — acá no hay nada que "portear"
+    de un preset real, a diferencia del compresor).
+
+    **Refactor necesario para combinar DOS filtros de audio en libVLC
+    correctamente**: `_argumentos_compresor()` y la nueva
+    `_argumentos_estereo_ancho()` (`core/audio_engine.py`) ya NO arman
+    su propio `--audio-filter=...` — devuelven solo sus flags
+    `--compressor-*`/`--stereo-widen-*` — porque libVLC NO acumula
+    varios `--audio-filter=` sueltos (el último pisa a los anteriores,
+    no se combinan solos). `_argumentos_vlc()` es ahora el ÚNICO lugar
+    que decide el nombre del filtro, combinando los activos en una
+    sola cadena (`--audio-filter=compressor:stereo_widen` si los dos
+    están prendidos, o solo uno de los dos nombres si es el único
+    activo). El parámetro `aplicar_compresor` de `MotorAudio.__init__`
+    se renombró a `aplicar_procesador` (y `self._aplicar_compresor` a
+    `self._aplicar_procesador`) porque ahora gatea AMBOS efectos, no
+    solo uno — mismo alcance de siempre (`True` por defecto en
+    Publicidad/Emisión/Auxiliar/Pisador/crossfade-entrante, `False`
+    únicamente en `GestorExplorador`, el Previo de Preescucha). El
+    mensaje de diagnóstico en el log pasó de "compresor activado" a
+    "procesador de audio activado", disparándose si CUALQUIERA de los
+    dos filtros está activo. De paso se corrigió una nota de UI que
+    había quedado desactualizada desde la ronda del alcance-Master
+    ("afecta... el Previo por igual" — ya no es cierto desde esa
+    ronda).
+
+    **Pregunta directa de Santiago, respondida en el chat**: "¿Qué
+    filtro podemos aplicar para tener el efecto 'levanta lo que está
+    bajo el umbral' en VLC?" — respuesta honesta: **libVLC no tiene
+    ningún filtro de compresión Upward verdadero** (threshold+ratio
+    aplicado a lo que está POR DEBAJO de un umbral, como el
+    `compressor#0` real de su preset). Lo más parecido que existe de
+    verdad en libVLC es el filtro **`normvol`** (Volume Normalizer) —
+    pero es un algoritmo distinto: calcula un promedio de nivel en una
+    ventana móvil y aplica una ganancia continua para acercar la señal
+    a un nivel objetivo (más parecido a un AGC/auto-nivelador que a un
+    compresor paramétrico con threshold/ratio/attack/release). Sus
+    únicos 2 parámetros reales son `norm-buff-size` (tamaño de la
+    ventana de promediado) y `norm-max-level` (techo de amplificación).
+    **No se implementó todavía** — quedó como respuesta informativa a
+    la pregunta puntual de Santiago, pendiente de que él confirme si
+    quiere sumarlo como una TERCERA función honesta (mismo criterio
+    que el Stereo Enhancer: distinta técnica, jamás un "port" de
+    Upward compression).
+
+    Probado con `test_stereo_enhancer.py` (nuevo, dedicado — mismo
+    patrón que `test_compresor_scope_master.py`: defaults de fábrica
+    en instalación nueva, `MotorAudio()` lo aplica por defecto,
+    `GestorExplorador` NO lo aplica, diagnóstico en el log con el
+    valor exacto configurado) + actualización de
+    `test_autoscroll_y_compresor.py` (los `_argumentos_compresor()`/
+    `_argumentos_estereo_ancho()` ya no incluyen su propio
+    `--audio-filter=`, más 4 checks nuevos de combinación: solo
+    compresor, solo Stereo Enhancer, ambos combinados en una cadena,
+    nunca dos flags `--audio-filter=` sueltos) + actualización de
+    `test_compresor_scope_master.py` (rename `_aplicar_compresor` →
+    `_aplicar_procesador`, mensaje de log actualizado) + suite de
+    regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre + 4 tests locales ya diagnosticados como
+    desactualizados desde la ronda 63) + smoke test de arranque
+    limpio. **Sigue sin poder probarse con audio/VLC real**: falta que
+    Santiago confirme que el Stereo Enhancer se escucha al activarlo
+    (mismo requisito de reabrir la app que el compresor), y que decida
+    si quiere sumar el Volume Normalizer como tercera función.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

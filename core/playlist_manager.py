@@ -1443,11 +1443,11 @@ class GestorExplorador:
 
     def __init__(self, ventana_explorador, id_dispositivo: str = None):
         self.ventana = ventana_explorador
-        # aplicar_compresor=False: el Previo usa la salida de
+        # aplicar_procesador=False: el Previo usa la salida de
         # Preescucha (monitoreo de la PC), no la Master que va al aire
-        # -- el compresor de Configuración -> Procesador es "de salida
-        # MASTER" a propósito (pedido explícito).
-        self.motor = MotorAudio(id_dispositivo, aplicar_compresor=False)
+        # -- el compresor/Stereo Enhancer de Configuración -> Procesador
+        # son "de salida MASTER" a propósito (pedido explícito).
+        self.motor = MotorAudio(id_dispositivo, aplicar_procesador=False)
         self.motor.error_reproduccion.connect(self._on_error)
         self.motor.posicion_cambiada.connect(self._actualizar_indicador)
         self.motor.restante_ms_cambio.connect(self._actualizar_progreso)

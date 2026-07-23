@@ -167,14 +167,59 @@ class VentanaConfiguracion(QDialog):
             "Requiere reabrir la aplicación para aplicarse (es un\n"
             "argumento de instancia de libVLC, igual que el buffer de\n"
             "Reproducción y Automatización) — afecta Publicidad, Emisión,\n"
-            "el Auxiliar, el Pisador y el Previo por igual. Se aplica\n"
-            "SIEMPRE sobre la Salida Master elegida en la pestaña Audio\n"
-            "(vive dentro del mismo MotorAudio que ya usa ese dispositivo)."
+            "el Auxiliar y el Pisador (SIEMPRE sobre la Salida Master\n"
+            "elegida en la pestaña Audio), nunca el Previo de Ventana 3\n"
+            "(usa la salida de Preescucha, no la que va al aire)."
         )
         nota_compresor.setObjectName("lblTituloBloqueActivo")
         form_compresor.addRow(nota_compresor)
 
         form.addRow(grupo_compresor)
+
+        # Pedido explícito (ronda posterior al compresor): el segundo
+        # efecto del preset de EasyEffects de Santiago, "Stereo Tools",
+        # no tiene NINGÚN equivalente en libVLC — en vez de fingir un
+        # port inexistente, se agrega el Stereo Enhancer REAL de VLC
+        # (ensanchado por delay/feedback/crossfeed, algoritmo
+        # completamente distinto), como una función aparte y
+        # honestamente etiquetada como tal.
+        grupo_estereo = QGroupBox("Stereo Enhancer (filtro nativo de VLC)")
+        form_estereo = QFormLayout(grupo_estereo)
+
+        self.chk_estereo_ancho_activado = QCheckBox("Activar Stereo Enhancer")
+        form_estereo.addRow(self.chk_estereo_ancho_activado)
+
+        self.spin_estereo_ancho_delay = QSpinBox()
+        self.spin_estereo_ancho_delay.setRange(1, 100)
+        self.spin_estereo_ancho_delay.setSuffix(" ms")
+        form_estereo.addRow("Delay:", self.spin_estereo_ancho_delay)
+
+        self.spin_estereo_ancho_feedback = QSpinBox()
+        self.spin_estereo_ancho_feedback.setRange(0, 100)
+        self.spin_estereo_ancho_feedback.setSuffix(" %")
+        form_estereo.addRow("Feedback:", self.spin_estereo_ancho_feedback)
+
+        self.spin_estereo_ancho_crossfeed = QSpinBox()
+        self.spin_estereo_ancho_crossfeed.setRange(0, 100)
+        self.spin_estereo_ancho_crossfeed.setSuffix(" %")
+        form_estereo.addRow("Crossfeed:", self.spin_estereo_ancho_crossfeed)
+
+        self.spin_estereo_ancho_dry_mix = QSpinBox()
+        self.spin_estereo_ancho_dry_mix.setRange(0, 100)
+        self.spin_estereo_ancho_dry_mix.setSuffix(" %")
+        form_estereo.addRow("Dry Mix:", self.spin_estereo_ancho_dry_mix)
+
+        nota_estereo = QLabel(
+            "NO es un port de 'Stereo Tools' de EasyEffects (que no\n"
+            "tiene equivalente en libVLC) — es el Stereo Enhancer\n"
+            "propio de VLC, un algoritmo de ensanchado distinto.\n"
+            "Mismo criterio que el Compresor: requiere reabrir la\n"
+            "app, y se aplica sobre la Salida Master, nunca el Previo."
+        )
+        nota_estereo.setObjectName("lblTituloBloqueActivo")
+        form_estereo.addRow(nota_estereo)
+
+        form.addRow(grupo_estereo)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -784,6 +829,11 @@ class VentanaConfiguracion(QDialog):
         self.spin_compresor_ataque.setValue(audio["compresor_ataque_ms"])
         self.spin_compresor_release.setValue(audio["compresor_release_ms"])
         self.spin_compresor_ganancia_salida.setValue(audio["compresor_ganancia_salida_db"])
+        self.chk_estereo_ancho_activado.setChecked(audio["estereo_ancho_activado"])
+        self.spin_estereo_ancho_delay.setValue(audio["estereo_ancho_delay_ms"])
+        self.spin_estereo_ancho_feedback.setValue(audio["estereo_ancho_feedback_pct"])
+        self.spin_estereo_ancho_crossfeed.setValue(audio["estereo_ancho_crossfeed_pct"])
+        self.spin_estereo_ancho_dry_mix.setValue(audio["estereo_ancho_dry_mix_pct"])
 
         fade = self._config["fade"]
         self.chk_crossfade.setChecked(fade["crossfade_activado"])
@@ -850,6 +900,11 @@ class VentanaConfiguracion(QDialog):
         self._config["audio"]["compresor_ataque_ms"] = self.spin_compresor_ataque.value()
         self._config["audio"]["compresor_release_ms"] = self.spin_compresor_release.value()
         self._config["audio"]["compresor_ganancia_salida_db"] = self.spin_compresor_ganancia_salida.value()
+        self._config["audio"]["estereo_ancho_activado"] = self.chk_estereo_ancho_activado.isChecked()
+        self._config["audio"]["estereo_ancho_delay_ms"] = self.spin_estereo_ancho_delay.value()
+        self._config["audio"]["estereo_ancho_feedback_pct"] = self.spin_estereo_ancho_feedback.value()
+        self._config["audio"]["estereo_ancho_crossfeed_pct"] = self.spin_estereo_ancho_crossfeed.value()
+        self._config["audio"]["estereo_ancho_dry_mix_pct"] = self.spin_estereo_ancho_dry_mix.value()
 
         self._config["fade"]["crossfade_activado"] = self.chk_crossfade.isChecked()
         self._config["fade"]["duracion_fade_in_v2_ms"] = self.spin_fade_in_v2.value()

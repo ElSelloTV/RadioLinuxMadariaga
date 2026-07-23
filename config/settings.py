@@ -56,6 +56,21 @@ CONFIG_POR_DEFECTO = {
         "compresor_ataque_ms": 20.0,
         "compresor_release_ms": 100.0,
         "compresor_ganancia_salida_db": 2.0,
+        # Stereo Enhancer de salida (pedido explícito, ronda posterior
+        # al compresor): filtro NATIVO de libVLC (módulo "stereo_widen")
+        # — el segundo efecto del preset "Radio Tuyú" de EasyEffects es
+        # "Stereo Tools" (Mid/Side), sin NINGÚN equivalente en libVLC;
+        # Santiago eligió agregar en su lugar este Stereo Enhancer real
+        # (ensanchado por delay/feedback/crossfeed) como una función
+        # distinta y honestamente etiquetada, no un port. Ver
+        # core/audio_engine.py:_argumentos_estereo_ancho(). Desactivado
+        # por defecto, con los valores de fábrica de libVLC (no hay
+        # nada que "portear" acá, a diferencia del compresor).
+        "estereo_ancho_activado": False,
+        "estereo_ancho_delay_ms": 20,
+        "estereo_ancho_feedback_pct": 30,
+        "estereo_ancho_crossfeed_pct": 30,
+        "estereo_ancho_dry_mix_pct": 70,
     },
     "fade": {
         "crossfade_activado": True,

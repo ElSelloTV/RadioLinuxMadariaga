@@ -47,6 +47,23 @@ COMPRESOR_RELEASE_MS_POR_DEFECTO = 100.0
 COMPRESOR_GANANCIA_SALIDA_DB_POR_DEFECTO = 7.0
 
 
+# Defaults del filtro "stereo_widen" nativo de libVLC ("Stereo
+# Enhancer", módulo modules/audio_filter/stereo_widen.c) — pedido
+# explícito, ronda posterior al compresor: el preset real de
+# EasyEffects de Santiago ("Radio Tuyú") tiene un segundo efecto,
+# "Stereo Tools" (procesador Mid/Side con balance/nivel/fase por
+# canal) — libVLC NO tiene ningún filtro con ese mismo concepto, así
+# que en vez de fingir un port inexistente, Santiago eligió agregar
+# el Stereo Enhancer REAL de libVLC (un algoritmo de ensanchado
+# estéreo por delay/feedback/crossfeed, técnica completamente
+# distinta) como una función aparte y honestamente distinta — no un
+# reemplazo de Stereo Tools.
+ESTEREO_ANCHO_DELAY_MS_POR_DEFECTO = 20
+ESTEREO_ANCHO_FEEDBACK_PCT_POR_DEFECTO = 30
+ESTEREO_ANCHO_CROSSFEED_PCT_POR_DEFECTO = 30
+ESTEREO_ANCHO_DRY_MIX_PCT_POR_DEFECTO = 70
+
+
 def _argumentos_compresor(audio_cfg: dict) -> list:
     """Compresor de salida (pedido explícito, "incluí un compresor en
     configuraciones de salida de audio, configurable y personalizable")
@@ -57,23 +74,50 @@ def _argumentos_compresor(audio_cfg: dict) -> list:
     explícito de Santiago porque prefería manejar el procesamiento por
     fuera de esta app), este vive DENTRO de cada MotorAudio, sin
     depender de ningún proceso ni configuración del sistema operativo.
-    Los 5 parámetros expuestos en Configuración → Audio son los que
-    pidió Santiago, mapeados 1 a 1 a las opciones reales del módulo:
-    "Entrada de Audio" -> --compressor-threshold (dB, umbral a partir
-    del cual empieza a comprimir), Ratio -> --compressor-ratio,
+    Los 5 parámetros expuestos en Configuración → Procesador son los
+    que pidió Santiago, mapeados 1 a 1 a las opciones reales del
+    módulo: "Entrada de Audio" -> --compressor-threshold (dB, umbral a
+    partir del cual empieza a comprimir), Ratio -> --compressor-ratio,
     Ataque -> --compressor-attack (ms), Release -> --compressor-release
     (ms), "Salida (Ganancia de Compensación)" -> --compressor-makeup-gain
     (dB). Desactivado por defecto (`compresor_activado=False`) — una
-    instalación existente nunca empieza a comprimir sola."""
+    instalación existente nunca empieza a comprimir sola.
+
+    Devuelve solo los flags `--compressor-*` — el nombre del filtro en
+    sí (`--audio-filter=...`) lo arma `_argumentos_vlc()`, que puede
+    necesitar combinarlo con OTROS filtros activos (ver
+    `_argumentos_estereo_ancho()`) en una sola cadena
+    `--audio-filter=compressor:stereo_widen` — libVLC no acumula
+    varios `--audio-filter=` sueltos, el último pisa a los
+    anteriores."""
     if not audio_cfg.get("compresor_activado", False):
         return []
     return [
-        "--audio-filter=compressor",
         f"--compressor-threshold={float(audio_cfg.get('compresor_umbral_db', COMPRESOR_UMBRAL_DB_POR_DEFECTO))}",
         f"--compressor-ratio={float(audio_cfg.get('compresor_ratio', COMPRESOR_RATIO_POR_DEFECTO))}",
         f"--compressor-attack={float(audio_cfg.get('compresor_ataque_ms', COMPRESOR_ATAQUE_MS_POR_DEFECTO))}",
         f"--compressor-release={float(audio_cfg.get('compresor_release_ms', COMPRESOR_RELEASE_MS_POR_DEFECTO))}",
         f"--compressor-makeup-gain={float(audio_cfg.get('compresor_ganancia_salida_db', COMPRESOR_GANANCIA_SALIDA_DB_POR_DEFECTO))}",
+    ]
+
+
+def _argumentos_estereo_ancho(audio_cfg: dict) -> list:
+    """Stereo Enhancer nativo de libVLC (módulo "stereo_widen") —
+    pedido explícito ("agregá el Stereo Enhancer real de VLC... una
+    función de ensanchado estéreo distinta"). Los 4 parámetros reales
+    del módulo: Delay (ms, tiempo de retardo entre canales), Feedback
+    (%), Crossfeed (%, cuánto se filtra un canal al otro), Dry Mix (%,
+    proporción de señal sin procesar). Desactivado por defecto, mismo
+    criterio que el compresor. Devuelve solo los flags
+    `--stereo-widen-*`, ver la nota de `_argumentos_compresor()` sobre
+    por qué el nombre del filtro se arma aparte."""
+    if not audio_cfg.get("estereo_ancho_activado", False):
+        return []
+    return [
+        f"--stereo-widen-delay={int(audio_cfg.get('estereo_ancho_delay_ms', ESTEREO_ANCHO_DELAY_MS_POR_DEFECTO))}",
+        f"--stereo-widen-feedback={int(audio_cfg.get('estereo_ancho_feedback_pct', ESTEREO_ANCHO_FEEDBACK_PCT_POR_DEFECTO))}",
+        f"--stereo-widen-crossfeed={int(audio_cfg.get('estereo_ancho_crossfeed_pct', ESTEREO_ANCHO_CROSSFEED_PCT_POR_DEFECTO))}",
+        f"--stereo-widen-dry-mix={int(audio_cfg.get('estereo_ancho_dry_mix_pct', ESTEREO_ANCHO_DRY_MIX_PCT_POR_DEFECTO))}",
     ]
 
 
@@ -98,9 +142,24 @@ def _argumentos_vlc(duracion_buffer_caching_ms: int, audio_cfg: dict = None) -> 
       posterior) — OJO: es un argumento de instancia de libVLC, un
       cambio solo aplica a los MotorAudio creados DESPUÉS de guardar
       (en la práctica, tras reabrir la app), no a los ya en curso.
-    - Compresor (`_argumentos_compresor()` — ver esa función): mismo
-      criterio, argumento de instancia fijo al crear el MotorAudio."""
-    return ["--no-video", f"--file-caching={max(0, int(duracion_buffer_caching_ms))}"] + _argumentos_compresor(audio_cfg or {})
+    - Compresor + Stereo Enhancer (Configuración → Procesador): los
+      DOS filtros activos se combinan en UNA sola cadena
+      `--audio-filter=compressor:stereo_widen` — nunca dos flags
+      `--audio-filter=` sueltos, que se pisarían entre sí."""
+    argumentos = ["--no-video", f"--file-caching={max(0, int(duracion_buffer_caching_ms))}"]
+    audio_cfg = audio_cfg or {}
+    filtros_activos = []
+    parametros_filtros = []
+    if audio_cfg.get("compresor_activado", False):
+        filtros_activos.append("compressor")
+        parametros_filtros += _argumentos_compresor(audio_cfg)
+    if audio_cfg.get("estereo_ancho_activado", False):
+        filtros_activos.append("stereo_widen")
+        parametros_filtros += _argumentos_estereo_ancho(audio_cfg)
+    if filtros_activos:
+        argumentos.append(f"--audio-filter={':'.join(filtros_activos)}")
+        argumentos += parametros_filtros
+    return argumentos
 
 
 class MotorAudio(QObject):
@@ -109,20 +168,21 @@ class MotorAudio(QObject):
     finalizo_item = Signal()
     error_reproduccion = Signal(str)
 
-    def __init__(self, id_dispositivo: str = None, parent=None, aplicar_compresor: bool = True):
+    def __init__(self, id_dispositivo: str = None, parent=None, aplicar_procesador: bool = True):
         super().__init__(parent)
         self._id_dispositivo = id_dispositivo
         # Pedido explícito ("verificá que el compresor se aplique
-        # sobre la salida de audio master"): el compresor es un
-        # argumento de INSTANCIA de libVLC (ver _argumentos_compresor),
-        # así que se decide acá, al crear el motor — nunca por
-        # dispositivo elegido en runtime. `False` SOLO en
-        # GestorExplorador (el Previo de Ventana 3, que usa la salida
-        # de Preescucha, no la Master que va al aire) — todos los
-        # demás motores (Publicidad, Emisión, Auxiliar, Pisador, y el
-        # motor "entrante" de un crossfade) están ligados a la salida
-        # Master y sí lo reciben.
-        self._aplicar_compresor = aplicar_compresor
+        # sobre la salida de audio master"): el compresor y el Stereo
+        # Enhancer (Configuración → Procesador) son argumentos de
+        # INSTANCIA de libVLC (ver _argumentos_compresor/
+        # _argumentos_estereo_ancho), así que se deciden acá, al crear
+        # el motor — nunca por dispositivo elegido en runtime. `False`
+        # SOLO en GestorExplorador (el Previo de Ventana 3, que usa la
+        # salida de Preescucha, no la Master que va al aire) — todos
+        # los demás motores (Publicidad, Emisión, Auxiliar, Pisador, y
+        # el motor "entrante" de un crossfade) están ligados a la
+        # salida Master y sí lo reciben.
+        self._aplicar_procesador = aplicar_procesador
         self._ruta_actual = ""
         self._disponible = True
         self._instancia = None
@@ -151,7 +211,7 @@ class MotorAudio(QObject):
 
         config_actual = cargar_configuracion()
         reproduccion = config_actual.get("reproduccion", {})
-        audio_cfg = config_actual.get("audio", {}) if aplicar_compresor else {}
+        audio_cfg = config_actual.get("audio", {}) if aplicar_procesador else {}
         self._retardo_arranque_ms = reproduccion.get(
             "retardo_arranque_ms", RETARDO_ARRANQUE_MS_POR_DEFECTO
         )
@@ -161,16 +221,16 @@ class MotorAudio(QObject):
 
         try:
             argumentos_finales = _argumentos_vlc(duracion_buffer_caching_ms, audio_cfg)
-            if audio_cfg.get("compresor_activado", False):
+            if audio_cfg.get("compresor_activado", False) or audio_cfg.get("estereo_ancho_activado", False):
                 # Diagnóstico (pedido explícito, "verificá que el
                 # compresor se aplique"): deja en el log el string
                 # EXACTO que se le manda a libVLC al crear este motor
                 # — comparable a mano contra `cvlc --audio-filter=
-                # compressor ...` corrido suelto en la PC real, para
-                # aislar si el problema es esta app o el propio filtro
-                # de libVLC en esa instalación.
+                # compressor:stereo_widen ...` corrido suelto en la PC
+                # real, para aislar si el problema es esta app o el
+                # propio filtro de libVLC en esa instalación.
                 registrar_evento(
-                    f"MotorAudio: compresor activado, argumentos de instancia libVLC: {argumentos_finales}"
+                    f"MotorAudio: procesador de audio activado, argumentos de instancia libVLC: {argumentos_finales}"
                 )
             self._instancia = vlc.Instance(argumentos_finales)
             self._player = self._instancia.media_player_new()
@@ -571,7 +631,7 @@ class MotorAudio(QObject):
         # con el deseado como respaldo si libVLC devuelve 0/-1 espurio.
         volumen_inicial_saliente = self.obtener_volumen() or self._volumen_deseado
 
-        entrante = motor_entrante or MotorAudio(self._id_dispositivo, aplicar_compresor=self._aplicar_compresor)
+        entrante = motor_entrante or MotorAudio(self._id_dispositivo, aplicar_procesador=self._aplicar_procesador)
         entrante.reproducir(
             ruta_siguiente, punto_inicio_ms=punto_inicio_ms, punto_fin_ms=punto_fin_ms,
             ganancia_db=ganancia_db, volumen_base=volumen_base,
