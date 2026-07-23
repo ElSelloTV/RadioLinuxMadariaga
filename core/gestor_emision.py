@@ -1013,12 +1013,20 @@ class GestorPlaylist:
             "items": self.serializar_items(),
             "fila_armada": self.panel.fila_reproduciendo(),
             "fila_siguiente": self.panel.fila_siguiente(),
+            "formato_musicalizador_activo": self._formato_musicalizador_activo,
         })
 
     def _restaurar_desde_disco(self):
         self._restaurando = True
         try:
             datos = cargar_playlist_emision()
+            # Bug real corregido ("no lee el último FMT... llega al
+            # final de la lista y no carga otro ciclo, se detiene"):
+            # restaurar el nombre del formato ANTES de marcar rojo/
+            # verde, para que el refill (ver _marcar_siguiente_con_refill,
+            # más abajo) ya sepa que esta lista sigue viva y hay que
+            # seguir generando ciclos nuevos al agotarse.
+            self._formato_musicalizador_activo = datos.get("formato_musicalizador_activo")
             for registro in datos.get("items", []):
                 fila = self.panel.cantidad_items()
                 self.panel.agregar_item(
@@ -1051,7 +1059,12 @@ class GestorPlaylist:
                 self.panel.marcar_reproduciendo(0)
             fila_siguiente = datos.get("fila_siguiente", -1)
             if 0 <= fila_siguiente < total and fila_siguiente != fila_armada:
-                self.panel.marcar_siguiente(fila_siguiente)
+                # _marcar_siguiente_con_refill(), no panel.marcar_siguiente()
+                # directo: si el verde restaurado resulta ser el ÚLTIMO
+                # ítem de la lista y hay un formato activo, el refill
+                # tiene que dispararse YA, acá mismo al reabrir la app
+                # — no recién la próxima vez que algo se marque verde.
+                self._marcar_siguiente_con_refill(fila_siguiente)
             else:
                 # Pedido explícito: si no había un "siguiente" guardado
                 # (o quedó inválido), igual debe quedar un verde

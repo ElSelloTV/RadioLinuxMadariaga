@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QFrame, QAbstractItemView, QMenu, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QBrush
+from PySide6.QtGui import QColor, QBrush, QIcon
 
 from gui.common_widgets import ArbolPublicidadConDrop, SliderBusqueda
 from gui.etiqueta_marquesina import EtiquetaMarquesina
@@ -44,6 +44,7 @@ from gui.styles import (
     ROL_YA_REPRODUCIDO, icono_reproducido, ROL_VIGENCIA,
     ROL_ES_COMANDO, ROL_TIPO_COMANDO, ROL_PARAMETRO_COMANDO, COLOR_COMANDO,
     ROL_ES_ALEATORIO, ROL_CATEGORIA_ALEATORIO, ROL_RECURSIVO_ALEATORIO, COLOR_ALEATORIO,
+    ROL_ITEM_CON_ERROR, icono_error,
 )
 from config.settings import cargar_configuracion, titulo_bloque_sin_prefijo_hora, registrar_reproduccion
 
@@ -872,6 +873,28 @@ class VentanaPublicidad(QWidget):
             if bloque.childCount() > 0:
                 return bloque.child(0)
         return None
+
+    def marcar_item_con_error(self, item, con_error: bool):
+        """Pedido explícito ("cuando encuentra un item que no está en
+        el explorador... marque con una X roja"): pinta/saca el ícono
+        de error a la izquierda del título — se llama desde
+        GestorPublicidad._item_valido() cada vez que se detecta (o se
+        deja de detectar) que el archivo del ítem no existe en disco.
+        Puramente visual, nunca toca el ítem ni la biblioteca. Si el
+        error se saca (el archivo reapareció) y el ítem ya se había
+        marcado "ya reproducido" antes de romperse, restaura ESE
+        ícono en vez de dejarlo en blanco — no pisa una marca ajena."""
+        if item is None:
+            return
+        if item.data(0, ROL_ITEM_CON_ERROR) == con_error:
+            return  # ya está en ese estado, no hace falta repintar
+        item.setData(0, ROL_ITEM_CON_ERROR, con_error)
+        if con_error:
+            item.setIcon(0, icono_error())
+        elif item.data(0, ROL_YA_REPRODUCIDO):
+            item.setIcon(0, icono_reproducido())
+        else:
+            item.setIcon(0, QIcon())
 
     def _pintar_item(self, item, estado: int):
         """Pinta rojo/verde/normal. Bug real corregido ("el ícono

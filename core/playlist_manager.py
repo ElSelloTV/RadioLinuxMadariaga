@@ -36,6 +36,7 @@ Reglas de negocio implementadas acá (a pedido explícito):
 --------------------------------------------------------
 """
 
+import os
 from datetime import date
 
 from PySide6.QtCore import Qt, QTimer, QTime, QDate
@@ -300,15 +301,37 @@ class GestorPublicidad:
         pero se ejecuta al llegarle el turno (ver _reproducir_item). Un
         ítem ALEATORIO también es válido estructuralmente — no tiene
         ruta fija, recién se resuelve (y se puede saltear si la
-        categoría está vacía) al llegarle el turno."""
+        categoría está vacía) al llegarle el turno.
+
+        Bug real corregido (pedido explícito: "cuando encuentra un
+        item que no está en el explorador, se detiene y pasa a la
+        ventana 2... quiero que avance al item siguiente, marque con
+        una X roja... no elimine el item de la biblioteca"): antes un
+        archivo faltante recién se detectaba REACTIVAMENTE, cuando
+        MotorAudio ya había intentado reproducirlo y fallaba
+        (error_reproduccion -> _on_error) — si eso pasaba varias veces
+        seguidas, la cascada de reintentos_maximos podía agotarse y
+        terminar cortando el aire hacia Emisión, exactamente el
+        síntoma reportado. Ahora se detecta ACÁ, ANTES de intentar
+        reproducir nada — un archivo faltante nunca cuenta como
+        "fallo de reproducción" ni consume presupuesto de reintentos,
+        se saltea siempre de inmediato como cualquier otro ítem
+        inválido (mismo criterio que vigencia). El ícono de error se
+        sincroniza en vivo con el estado real del archivo en disco —
+        se pone O se saca acá mismo, cada vez que se evalúa el ítem."""
         if item is None:
             return False
         if self.ventana.es_comando(item):
             return True
         if self.ventana.es_aleatorio(item):
             return True
-        if not item.data(0, Qt.ItemDataRole.UserRole):
+        ruta = item.data(0, Qt.ItemDataRole.UserRole)
+        if not ruta:
             return False
+        if not os.path.exists(ruta):
+            self.ventana.marcar_item_con_error(item, True)
+            return False
+        self.ventana.marcar_item_con_error(item, False)
         return vigencia_activa(self.ventana.vigencia_de_item(item))
 
     def _bloque_ya_disponible(self, item_bloque) -> bool:

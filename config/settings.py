@@ -519,11 +519,26 @@ def reanalizar_biblioteca(config: dict) -> int:
 # ----------------------------------------------------------------------
 # Estructura de config/data/playlist_emision.json:
 #   {"items": [{"titulo", "duracion", "codigo", "ruta", "pisador_ruta"}, ...],
-#    "fila_armada": int, "fila_siguiente": int}
+#    "fila_armada": int, "fila_siguiente": int,
+#    "formato_musicalizador_activo": str|None}
 # Se guarda ante cada alta/baja/reordenada/marcado, igual que la
 # biblioteca — no solo al cerrar la app.
+#
+# "formato_musicalizador_activo" (pedido explícito, bug real
+# corregido: "no lee el ultimo FMT... llega al final de la lista y no
+# carga otro ciclo, se detiene"): antes de esto, reabrir la app
+# restauraba los ÍTEMS de una serie generada por el Musicalizador,
+# pero NO el hecho de que esa lista estaba siendo alimentada por un
+# formato activo — GestorPlaylist._formato_musicalizador_activo volvía
+# a None, así que el refill (ver core/gestor_emision.py:
+# _marcar_siguiente_con_refill) nunca se disparaba una vez que la
+# lista restaurada se agotaba. Ahora el nombre del formato activo se
+# persiste junto con los ítems y se restaura de punta a punta.
 
-PLAYLIST_EMISION_VACIA = {"items": [], "fila_armada": -1, "fila_siguiente": -1}
+PLAYLIST_EMISION_VACIA = {
+    "items": [], "fila_armada": -1, "fila_siguiente": -1,
+    "formato_musicalizador_activo": None,
+}
 
 
 def cargar_playlist_emision() -> dict:

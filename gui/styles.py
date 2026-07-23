@@ -437,6 +437,15 @@ ROL_CATEGORIA_ALEATORIO = 1010    # list[str]: camino de nombres (ver VentanaExp
 ROL_RECURSIVO_ALEATORIO = 1011    # bool: suma también las subcategorías
 COLOR_ALEATORIO = "#16a085"       # verde azulado, distinto de COLOR_COMANDO y del rojo/verde de estado
 
+# Marca "archivo no encontrado" (pedido explícito, Ventana 1: "que no
+# se detenga, sino que avance al item siguiente, marque con una X roja
+# como error... no elimine el item de la biblioteca"). Se recalcula en
+# vivo cada vez que GestorPublicidad._item_valido() evalúa el ítem — no
+# se persiste a disco a propósito, es un reflejo del estado REAL del
+# archivo en disco en este instante, se saca solo si el archivo
+# reaparece (ej. el operador reconecta la unidad/corrige la ruta).
+ROL_ITEM_CON_ERROR = 1012
+
 # Colores por género, usados en la Ventana 3 (Explorador) para pintar
 # el fondo de cada fila según el tipo de material (pedido explícito).
 GENERO_COLORES = {
@@ -517,3 +526,32 @@ def icono_reproducido():
         pintor.end()
         _ICONO_YA_REPRODUCIDO = QIcon(pixmap)
     return _ICONO_YA_REPRODUCIDO
+
+
+_ICONO_ITEM_CON_ERROR = None
+
+
+def icono_error():
+    """X roja "archivo no encontrado" (pedido explícito, Ventana 1) —
+    mismo patrón de icono armado a mano con QPainter que
+    icono_reproducido(), cacheado en un módulo-global por la misma
+    razón (un QPixmap no se puede construir antes de que exista
+    QApplication)."""
+    global _ICONO_ITEM_CON_ERROR
+    if _ICONO_ITEM_CON_ERROR is None:
+        from PySide6.QtGui import QIcon, QPixmap, QPainter, QPen, QColor as _QColor
+        from PySide6.QtCore import Qt as _Qt
+
+        pixmap = QPixmap(14, 14)
+        pixmap.fill(_Qt.GlobalColor.transparent)
+        pintor = QPainter(pixmap)
+        pintor.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        lapiz = QPen(_QColor("#e74c3c"))
+        lapiz.setWidth(2)
+        lapiz.setCapStyle(_Qt.PenCapStyle.RoundCap)
+        pintor.setPen(lapiz)
+        pintor.drawLine(2, 2, 12, 12)
+        pintor.drawLine(12, 2, 2, 12)
+        pintor.end()
+        _ICONO_ITEM_CON_ERROR = QIcon(pixmap)
+    return _ICONO_ITEM_CON_ERROR

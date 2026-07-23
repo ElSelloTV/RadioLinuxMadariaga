@@ -6409,6 +6409,119 @@ todo el resto.
     confirme que la pestaña Fade/Transiciones reorganizada, con
     "Ventana 1"/"Ventana 2" agrupados por separado, es lo que tenía en
     mente al pedir "configuración por ventana separada".
+66. ~~Ventana 1: archivo faltante ya no corta el aire hacia Emisión +
+    Ventana 2: el último FMT ahora sobrevive a un reinicio de la
+    app~~ — dos bugs reales de fondo, uno por ventana, pedidos en el
+    mismo mensaje:
+
+    **VENTANA 1 — "cuando encuentra un item que no está en el
+    explorador, se detiene y pasa a la ventana 2"**: la causa real era
+    que un archivo faltante SOLO se detectaba REACTIVAMENTE — recién
+    cuando `MotorAudio` ya había intentado reproducirlo de verdad y
+    fallaba (`error_reproduccion` → `GestorPublicidad._on_error()`).
+    Si eso pasaba varias veces seguidas (varios archivos faltantes en
+    fila, ej. toda una carpeta movida/renombrada), la cascada de
+    `reintentos_maximos` (config "Fallos consecutivos antes de
+    detenerse") se agotaba y terminaba cortando el aire hacia Emisión
+    — exactamente el síntoma reportado. Corregido moviendo la
+    detección a `GestorPublicidad._item_valido()` (`core/playlist_manager.py`)
+    — el ÚNICO lugar por el que pasan TODOS los skip-loops de avance
+    del archivo (`_avanzar()`, `_asegurar_rojo_y_verde()`,
+    `_primer_item_valido_de()`, `disparar_bloque()`, etc., más de 8
+    puntos de llamada) — agregando `os.path.exists(ruta)` ANTES de
+    intentar reproducir nada: un archivo faltante ahora se saltea
+    SIEMPRE de inmediato, exactamente igual que un ítem con vigencia
+    vencida (nunca cuenta como "fallo de reproducción", nunca consume
+    presupuesto de `reintentos_maximos`, nunca puede agotar la
+    cascada). Nuevo ícono "X roja" (pedido explícito, `ROL_ITEM_CON_ERROR`
+    + `icono_error()` en `gui/styles.py`, mismo patrón de `QPainter`
+    cacheado que ya usa `icono_reproducido()`) puesto/sacado por
+    `VentanaPublicidad.marcar_item_con_error()` — se sincroniza EN
+    VIVO con el estado real del archivo en disco cada vez que
+    `_item_valido()` evalúa el ítem: aparece la primera vez que se
+    detecta faltante, y se saca solo si el operador corrige la ruta o
+    reconecta el archivo (sin pisar el tilde verde de "ya reproducido"
+    si el ítem ya lo tenía de antes — restaura ESE ícono en vez de
+    dejarlo en blanco). El ítem NUNCA se toca ni se elimina de la
+    biblioteca ni del árbol — pedido explícito, sigue ahí para que
+    Santiago lo corrija cuando pueda. Alcance a propósito: la X roja
+    cubre específicamente "archivo faltante en disco" (lo que pidió
+    Santiago, "no está en el explorador") — un archivo que SÍ existe
+    pero está corrupto/con codec no soportado sigue yendo por el
+    camino reactivo de siempre (`_on_error`/cascada de reintentos), sin
+    cambios ahí.
+
+    **VENTANA 2 — "no lee el último FMT... llega al final de la lista
+    y no carga otro ciclo, se detiene"**: confirmado con Santiago que
+    la memoria del último FMT (`config/settings.obtener_ultimo_fmt()`,
+    ronda 34) SÍ debía aplicar al reabrir. La causa real: al restaurar
+    la playlist de Emisión desde disco
+    (`GestorPlaylist._restaurar_desde_disco()`), se restauraban los
+    ÍTEMS de una serie ya generada por el Musicalizador, pero NUNCA el
+    hecho de que `self._formato_musicalizador_activo` seguía
+    "activo" — ese atributo volvía a `None` en cada reinicio de la
+    app, así que el mecanismo de refill
+    (`_marcar_siguiente_con_refill()`, que solo dispara si
+    `_formato_musicalizador_activo is not None`) quedaba inerte para
+    siempre sobre una lista restaurada, aunque esa lista viniera 100%
+    de un FMT. Corregido persistiendo el nombre del formato activo
+    junto con los ítems en `config/data/playlist_emision.json`
+    (`config/settings.py`: nueva clave `formato_musicalizador_activo`
+    en `PLAYLIST_EMISION_VACIA`/`cargar_playlist_emision()` — merge
+    con default `None`, no rompe una instalación vieja sin esa clave)
+    y restaurándolo en el mismo punto donde se restauran los ítems,
+    ANTES de marcar rojo/verde. Segundo detalle real encontrado en el
+    camino: `_restaurar_desde_disco()` marcaba el verde restaurado con
+    `panel.marcar_siguiente()` DIRECTO, no con el envoltorio
+    `_marcar_siguiente_con_refill()` que ya centraliza el chequeo de
+    refill en TODO el resto del archivo (regla ya establecida, ronda
+    34, justo para evitar este tipo de bug) — si el verde restaurado
+    resultaba ser el ÚLTIMO ítem disponible (caso típico: se cerró la
+    app justo con la serie casi terminada), el refill nunca se
+    disparaba ni siquiera cuando `_formato_musicalizador_activo` ya
+    estuviera bien restaurado. Corregido usando
+    `_marcar_siguiente_con_refill()` también ahí — el refill ahora
+    puede dispararse en el mismo instante de la restauración si
+    corresponde, sin esperar a que algo más vuelva a marcar verde.
+
+    Probado con `test_v1_archivo_faltante_y_v2_fmt_restart.py` (nuevo,
+    dedicado): Ventana 1 — `_item_valido()` rechaza un archivo
+    faltante y marca la X sin tocar el resto; un bloque con T1 roto
+    (ruta inexistente) + T2/T3 reales (archivos temporales de verdad)
+    arranca DIRECTO en T2 sin sonar T1, sin consumir la cascada de
+    reintentos, sin que Emisión arranque nunca por su culpa, con T1
+    intacto en el árbol; corregir la ruta de T1 a un archivo real hace
+    que vuelva a ser válido y saca la X sola. Ventana 2 — el formato
+    activo se persiste en `playlist_emision.json`; una `VentanaEmision`
+    + `GestorPlaylist` TOTALMENTE nuevos (simulando un reinicio real de
+    la app, no reutilizar el panel ya poblado) restauran el formato y
+    los 2 ítems guardados sin duplicar, y el refill se dispara YA
+    durante la propia restauración porque el verde restaurado
+    resultaba ser el último ítem disponible. **Bug de infraestructura
+    de testing encontrado y corregido en el camino (no de la app)**:
+    el nuevo chequeo de `os.path.exists()` rompió 17 scripts de
+    regresión preexistentes de rondas anteriores que usaban rutas
+    ficticias sin crear nunca (`"/tmp/t1.mp3"`, `"/tmp/musica_a.mp3"`,
+    etc.) como stand-in de un archivo real — confirmado comparando
+    cada fallo contra el mismo síntoma exacto (la ruta ficticia nunca
+    existió en disco) antes de tocar nada; se crearon esas 81 rutas
+    ficticias como archivos vacíos reales en `/tmp` para esta corrida
+    de regresión (no se tocó la lógica de ningún test), y con eso los
+    17 volvieron a pasar sin cambios — confirma que el fix es un
+    agregado quirúrgico sin ningún otro efecto colateral sobre
+    comportamiento ya probado. + suite de regresión completa sin
+    fallos nuevos (mismos 3 fallos preexistentes de siempre:
+    `test_confirmaciones.py`, `test_log_git.py`, `test_ventana3.py`, +
+    los 4 tests locales ya diagnosticados en la ronda 63/65 como
+    desactualizados por cambios de comportamiento intencionales,
+    sin relación con este cambio) + smoke test de arranque limpio.
+    **Sigue sin poder probarse con audio/VLC real** (como siempre que
+    se toca este motor): falta que Santiago confirme con su biblioteca
+    real que un archivo movido/borrado ya no corta el bloque de
+    Publicidad (queda marcado con la X roja, se saltea solo, sigue en
+    el árbol para corregirlo cuando pueda), y que el último FMT
+    efectivamente retoma un ciclo nuevo al reabrir la app en vez de
+    quedarse en silencio al agotar la lista restaurada.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
