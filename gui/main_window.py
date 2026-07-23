@@ -519,7 +519,6 @@ class MainWindow(QMainWindow):
         self.ventana_emision.solicitud_agregar_pisador.connect(
             lambda fila: self._abrir_dialogo_pisador(self.ventana_emision, fila)
         )
-        self.ventana_emision.solicitud_eliminar_definitivo.connect(self._eliminar_definitivo_de_biblioteca)
 
         self.ventana_explorador.archivo_agregado.connect(self._on_archivo_agregado)
         self.ventana_explorador.archivo_movido.connect(self._on_archivo_movido)
@@ -678,18 +677,6 @@ class MainWindow(QMainWindow):
             registro.get("punto_fin_ms"), registro.get("ganancia_db") or 0.0,
         )
         self.statusBar().showMessage(f"Agregado al azar: {registro.get('titulo', '')}", 3000)
-
-    # ------------------------------------------------------------------
-    # "Eliminar de la biblioteca" del menú contextual de Ventana 2 /
-    # Auxiliar: borra el registro completo del Explorador, no solo el
-    # ítem de esa lista puntual (esa parte ya la maneja el panel).
-    # ------------------------------------------------------------------
-    def _eliminar_definitivo_de_biblioteca(self, ruta: str):
-        eliminado = self.ventana_explorador.eliminar_registro_por_ruta(ruta)
-        if eliminado:
-            self.statusBar().showMessage(f"Eliminado de la biblioteca: {os.path.basename(ruta)}", 4000)
-        else:
-            self.statusBar().showMessage("Ese archivo no estaba registrado en la biblioteca del Explorador.", 4000)
 
     def _on_archivo_soltado_publicidad(self, ruta: str, item_destino):
         registro = self.ventana_explorador.buscar_registro_por_ruta(ruta)
@@ -946,7 +933,6 @@ class MainWindow(QMainWindow):
             self._ventana_auxiliar.solicitud_agregar_pisador.connect(
                 lambda fila: self._abrir_dialogo_pisador(self._ventana_auxiliar, fila)
             )
-            self._ventana_auxiliar.solicitud_eliminar_definitivo.connect(self._eliminar_definitivo_de_biblioteca)
             self._ventana_auxiliar.solicitud_agregar_item_especifico.connect(self._agregar_item_especifico_auxiliar)
             self._ventana_auxiliar.solicitud_agregar_item_aleatorio.connect(self._agregar_item_aleatorio_auxiliar)
             self._ventana_auxiliar.solicitud_guardar_lista.connect(self._guardar_lista_auxiliar)

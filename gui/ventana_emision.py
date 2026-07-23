@@ -27,7 +27,6 @@ class VentanaEmision(QWidget):
     archivo_soltado = Signal(str, object)
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)
-    solicitud_eliminar_definitivo = Signal(str)
     solicitud_buscar_posicion = Signal(int)
 
     def __init__(self, parent=None):
@@ -50,7 +49,6 @@ class VentanaEmision(QWidget):
         self.panel.archivo_soltado.connect(self.archivo_soltado.emit)
         self.panel.item_doble_click.connect(self.item_doble_click.emit)
         self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
-        self.panel.solicitud_eliminar_definitivo.connect(self.solicitud_eliminar_definitivo.emit)
         self.panel.solicitud_buscar_posicion.connect(self.solicitud_buscar_posicion.emit)
 
     # ------------------------------------------------------------------

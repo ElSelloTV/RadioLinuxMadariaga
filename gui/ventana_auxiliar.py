@@ -40,7 +40,6 @@ class VentanaAuxiliar(QDialog):
     archivo_soltado = Signal(str, object)
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)
-    solicitud_eliminar_definitivo = Signal(str)
     solicitud_guardar_lista = Signal()
     solicitud_cargar_lista = Signal()
     solicitud_agregar_item_especifico = Signal()
@@ -93,7 +92,6 @@ class VentanaAuxiliar(QDialog):
         self.panel.archivo_soltado.connect(self.archivo_soltado.emit)
         self.panel.item_doble_click.connect(self.item_doble_click.emit)
         self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
-        self.panel.solicitud_eliminar_definitivo.connect(self.solicitud_eliminar_definitivo.emit)
         self.panel.solicitud_agregar_item_especifico.connect(self.solicitud_agregar_item_especifico.emit)
         self.panel.solicitud_agregar_item_aleatorio.connect(self.solicitud_agregar_item_aleatorio.emit)
 

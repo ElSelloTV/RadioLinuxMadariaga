@@ -6245,6 +6245,99 @@ todo el resto.
     que el resto de los cambios de UX (categorías en mayúsculas,
     mhwaveedit, menú del Auxiliar, bloques siempre expandidos, medidor
     animado) se ven/comportan como esperaba.
+64. ~~3 pedidos chicos: búsqueda del Explorador bloqueaba el árbol de
+    categorías, "Eliminar de la biblioteca" sacada de Ventana 2/
+    Auxiliar (riesgosa), y renovación del ícono de la app~~ — tres
+    pedidos independientes:
+
+    **a) Bug real corregido — buscar en el Explorador bloqueaba elegir
+    categoría/moverse en el árbol**: `_buscar()` deshabilitaba por
+    completo `tree_categorias` (`setEnabled(False)`) mientras había
+    resultados de búsqueda mostrados en `tree_archivos` — un widget
+    deshabilitado en Qt no recibe clicks, así que no había forma de
+    elegir OTRA categoría (ni de usar los 3 botones de abajo con
+    normalidad) hasta limpiar la búsqueda a mano con el botón "✕".
+    Corregido sacando el `setEnabled(False)/(True)` por completo — el
+    árbol queda SIEMPRE clickeable — y agregando
+    `_salir_de_busqueda_si_corresponde()` (nuevo, `gui/ventana_explorador.py`):
+    limpia `_en_busqueda`/el texto de la barra SIN refrescar
+    `tree_archivos` (eso lo hace el llamador a continuación). Se llama
+    desde `_on_categoria_seleccionada()` (antes esa función, mientras
+    se buscaba, simplemente IGNORABA el cambio de categoría con un
+    `return` — ahora sale de la búsqueda sola y muestra la categoría
+    recién elegida con normalidad) y desde el arranque de
+    `_nueva_categoria()`/`_nueva_subcategoria()`/`_eliminar_categoria()`
+    (los "3 botones de abajo" del pedido) — así tocar cualquiera de
+    los cuatro puntos de entrada (clickear una categoría, o cualquiera
+    de esos 3 botones) limpia la búsqueda de forma consistente en vez
+    de dejarla bloqueada o en un estado ambiguo.
+
+    **b) "Eliminar de la biblioteca" sacada del menú contextual de
+    Ventana 2 y el Auxiliar (pedido explícito, "riesgoso")**: Santiago
+    fue explícito en que el menú de la lista de reproducción solo
+    debe poder "Quitar de la lista" — nunca borrar el archivo de TODA
+    la biblioteca desde ahí, ni por accidente. Confirmado con
+    `AskUserQuestion` que el alcance es sacarla de LAS DOS ventanas
+    (Ventana 2 Y Auxiliar comparten `PanelReproductor`, mismo riesgo
+    en cualquiera de las dos). Eliminado de punta a punta: la acción
+    "🗑 Eliminar de la biblioteca..." del menú contextual, el método
+    `PanelReproductor._solicitar_eliminacion_definitiva()`, la señal
+    `solicitud_eliminar_definitivo` (en `PanelReproductor`,
+    `VentanaEmision` y `VentanaAuxiliar`), y el handler
+    `MainWindow._eliminar_definitivo_de_biblioteca()` (ya sin ningún
+    llamador). El menú de Ventana 2/Auxiliar queda con exactamente
+    "✕ Quitar de la lista" / "ℹ Información..." / "🎚 Agregar/Quitar
+    Pisador..." — la eliminación REAL de un archivo de la biblioteca
+    sigue existiendo tal cual, pero solo desde Ventana 3 (Explorador),
+    donde el operador tiene el contexto completo de qué está
+    borrando (categoría, otros usos del mismo archivo, etc.).
+
+    **c) Ícono de la aplicación renovado**: Santiago pasó una imagen
+    de referencia (insignia cuadrada de esquinas redondeadas, degradé
+    naranja, texto "D9" en negro) y pidió incorporarla "como ícono del
+    programa para todo". Como la imagen llegó pegada en el chat (sin
+    quedar accesible como archivo en el filesystem de este entorno),
+    se reconstruyó con Pillow — mismo criterio ya usado en una ronda
+    muy anterior para el ícono anterior ("regenerado con Pillow" — ver
+    encabezado de este archivo) — en vez de aproximarla a mano con
+    herramientas de dibujo: cuadrado redondeado con degradé radial
+    naranja claro→oscuro, borde sutil más claro, brillo glossy
+    translúcido en la mitad superior (estilo ícono de app/botón), y
+    "D9" en negro bold (DejaVu Sans Bold), generado a 512x512 con
+    supersampling 2x para antialiasing prolijo y reducido al tamaño
+    final. Pillow se instaló en el venv SOLO para esta generación
+    puntual y se desinstaló después — nunca fue ni es una dependencia
+    de la app en tiempo de ejecución, no se tocó `requirements.txt`.
+    No hizo falta tocar ningún código: tanto `main.py`
+    (`app.setWindowIcon()` + el pixmap del `QSplashScreen` de
+    arranque) como `assets/radiolinuxmadariaga.desktop` (el lanzador
+    de escritorio) ya apuntaban al mismo archivo único,
+    `assets/icono.png` — sobrescribirlo alcanza para que el ícono
+    nuevo aplique en todos los puntos de la app de una sola vez (barra
+    de tareas, ventana, splash de arranque, ícono del escritorio).
+
+    Probado: `test_busqueda_y_eliminar_v2.py` (nuevo, dedicado — la
+    búsqueda queda activa y el árbol de categorías nunca se
+    deshabilita tras `_buscar()`; elegir otra categoría durante la
+    búsqueda la limpia sola; tocar "＋ Categoría" durante la búsqueda
+    también la limpia, incluso cancelando el diálogo; `PanelReproductor`
+    ya no tiene la señal ni el método de eliminación definitiva;
+    `MainWindow`/`VentanaEmision` ya no los reexponen; el menú
+    contextual de Ventana 2, armado sin llegar a bloquear en
+    `QMenu.exec()` — interceptando `QMenu.addAction()`, técnica más
+    confiable en offscreen que parchear `QMenu.exec()` directamente —
+    queda con exactamente Quitar/Información/Pisador, sin ningún
+    rastro de "biblioteca") + suite de regresión completa sin fallos
+    nuevos (mismos 3 fallos preexistentes de siempre:
+    `test_confirmaciones.py`, `test_log_git.py`, `test_ventana3.py`,
+    más los 4 tests locales ya diagnosticados en la ronda 63 como
+    desactualizados, sin relación con este cambio) + smoke test de
+    arranque limpio con el ícono nuevo cargando sin errores. Falta que
+    Santiago confirme visualmente que el ícono se ve bien en su
+    barra de tareas/escritorio real (la reconstrucción con Pillow es
+    una aproximación fiel a la imagen de referencia, no un archivo
+    idéntico pixel a pixel), y que buscar+navegar categorías y el
+    menú de Ventana 2 se sienten como esperaba en el uso diario.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

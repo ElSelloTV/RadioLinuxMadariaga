@@ -354,8 +354,13 @@ class VentanaExplorador(QWidget):
     # ------------------------------------------------------------------
     # Búsqueda por título/artista (barra debajo del título). Filtra
     # TODA la biblioteca sin importar la categoría, y muestra los
-    # resultados en el mismo tree_archivos — mientras tanto se
-    # deshabilita el árbol de categorías para no mezclar estados.
+    # resultados en el mismo tree_archivos. Bug real corregido
+    # (pedido explícito, "bloquea la opción de elegir una categoría
+    # y/o moverse en ella"): antes el árbol de categorías se
+    # DESHABILITABA por completo mientras se buscaba — en vez de eso,
+    # ahora queda siempre clickeable, y elegir una categoría (o tocar
+    # cualquiera de los 3 botones de abajo) limpia la búsqueda sola,
+    # ver `_salir_de_busqueda_si_corresponde()`.
     # ------------------------------------------------------------------
     def _buscar(self):
         texto = self.txt_busqueda.text().strip().lower()
@@ -375,7 +380,6 @@ class VentanaExplorador(QWidget):
         self._para_cada_categoria(visitar)
 
         self._en_busqueda = True
-        self.tree_categorias.setEnabled(False)
         self.tree_archivos.clear()
         for registro in resultados:
             self._agregar_fila_archivo(registro)
@@ -387,8 +391,19 @@ class VentanaExplorador(QWidget):
             return
         self._en_busqueda = False
         self.txt_busqueda.clear()
-        self.tree_categorias.setEnabled(True)
         self._on_categoria_seleccionada(self._categoria_actual(), None)
+
+    def _salir_de_busqueda_si_corresponde(self):
+        """Pedido explícito: elegir una categoría, o tocar cualquiera
+        de los 3 botones de abajo (＋ Categoría/＋ Sub/✕ Eliminar)
+        mientras se está buscando, ya no queda bloqueado — limpia la
+        búsqueda sola en vez de ignorar el click. A diferencia de
+        `_limpiar_busqueda()`, esta NO refresca `tree_archivos` — el
+        llamador (`_on_categoria_seleccionada` o el handler del botón)
+        ya se encarga de eso a continuación."""
+        if self._en_busqueda:
+            self._en_busqueda = False
+            self.txt_busqueda.clear()
 
     # ------------------------------------------------------------------
     # Persistencia (config/data/biblioteca.json) — ver nota al inicio
@@ -482,8 +497,12 @@ class VentanaExplorador(QWidget):
         return self.tree_categorias.currentItem()
 
     def _on_categoria_seleccionada(self, actual, anterior):
-        if self._en_busqueda:
-            return  # no pisar los resultados de búsqueda con la categoría
+        # Bug real corregido ("bloquea la opción de elegir una
+        # categoría y/o moverse en ella" mientras se busca): antes
+        # este chequeo ignoraba por completo el cambio de categoría —
+        # ahora se sale de la búsqueda sola (si había una en curso) y
+        # sigue mostrando la categoría recién elegida con normalidad.
+        self._salir_de_busqueda_si_corresponde()
         self.tree_archivos.clear()
         if actual is None:
             return
@@ -585,6 +604,7 @@ class VentanaExplorador(QWidget):
     # Gestión de categorías (sin límite de niveles)
     # ------------------------------------------------------------------
     def _nueva_categoria(self):
+        self._salir_de_busqueda_si_corresponde()
         nombre, ok = QInputDialog.getText(self, "Nueva categoría", "Nombre de la categoría:")
         if not ok or not nombre.strip():
             return
@@ -593,6 +613,7 @@ class VentanaExplorador(QWidget):
         self._guardar_biblioteca()
 
     def _nueva_subcategoria(self):
+        self._salir_de_busqueda_si_corresponde()
         padre = self._categoria_actual()
         if padre is None:
             QMessageBox.information(self, "Subcategoría", "Primero seleccioná la categoría dentro de la cual crearla.")
@@ -606,6 +627,7 @@ class VentanaExplorador(QWidget):
         self._guardar_biblioteca()
 
     def _eliminar_categoria(self):
+        self._salir_de_busqueda_si_corresponde()
         item = self._categoria_actual()
         if item is None:
             return

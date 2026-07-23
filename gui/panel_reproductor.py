@@ -21,7 +21,11 @@ La lista soporta:
   del tema mientras suena y restaurarlo al terminar) la maneja
   GestorPlaylist en core/playlist_manager.py.
 - Menú contextual: Quitar de la lista, Información, Agregar/Quitar
-  Pisador, Eliminar de la biblioteca (definitivo, con advertencia).
+  Pisador. "Eliminar de la biblioteca" se sacó a propósito (pedido
+  explícito, "riesgoso"): acá solo se saca el ítem de ESTA lista,
+  nunca se borra el archivo de toda la biblioteca — esa acción sigue
+  existiendo, pero solo desde la Ventana 3 (Explorador), donde el
+  operador tiene el contexto completo de qué está borrando.
 
 Nota de diseño: la fila "reproduciendo"/"siguiente" se rastrea por
 REFERENCIA AL ÍTEM (no por índice entero) precisamente para que
@@ -66,7 +70,6 @@ class PanelReproductor(QWidget):
     archivo_soltado = Signal(str, object)
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)       # fila del tema música
-    solicitud_eliminar_definitivo = Signal(str)   # ruta a borrar de TODA la biblioteca
     solicitud_agregar_item_especifico = Signal()  # pedido explícito: menú contextual del Auxiliar
     solicitud_agregar_item_aleatorio = Signal()   # ídem, elegir un ítem al azar de una categoría
 
@@ -624,13 +627,6 @@ class PanelReproductor(QWidget):
             else:
                 accion_pisador = menu.addAction("🎚 Agregar Pisador...")
 
-        accion_eliminar = None
-        if seleccionados:
-            menu.addSeparator()
-            texto_eliminar = "🗑 Eliminar de la biblioteca..." if item_unico is not None \
-                else f"🗑 Eliminar {len(seleccionados)} de la biblioteca..."
-            accion_eliminar = menu.addAction(texto_eliminar)
-
         if menu.isEmpty():
             return
 
@@ -656,8 +652,6 @@ class PanelReproductor(QWidget):
                 self.quitar_pisador(fila)
             else:
                 self.solicitud_agregar_pisador.emit(fila)
-        elif elegida == accion_eliminar:
-            self._solicitar_eliminacion_definitiva(seleccionados)
 
     def _mostrar_info(self, item: QTreeWidgetItem):
         ruta = item.data(0, Qt.ItemDataRole.UserRole) or ""
@@ -688,46 +682,3 @@ class PanelReproductor(QWidget):
             lineas.append("(el archivo no se encuentra en esa ubicación)")
 
         QMessageBox.information(self, "Información del tema", "\n".join(lineas))
-
-    def _solicitar_eliminacion_definitiva(self, items: list):
-        bloqueados = [
-            item.text(0) for item in items
-            if item.data(0, ROL_ESTADO_ITEM) in (ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE)
-        ]
-        items = [
-            item for item in items
-            if item.data(0, ROL_ESTADO_ITEM) not in (ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE)
-        ]
-        if bloqueados:
-            QMessageBox.information(
-                self, "No se puede eliminar",
-                "Estos ítems están marcados para reproducción (rojo/verde) y no\n"
-                "se pueden eliminar hasta que se liberen:\n\n" + "\n".join(bloqueados),
-            )
-
-        items_con_ruta = [item for item in items if item.data(0, Qt.ItemDataRole.UserRole)]
-        if not items_con_ruta:
-            if not bloqueados:
-                QMessageBox.information(self, "Eliminar", "Ningún ítem seleccionado tiene un archivo asociado.")
-            return
-
-        if len(items_con_ruta) == 1:
-            descripcion = f"'{items_con_ruta[0].text(0)}'"
-        else:
-            descripcion = f"estos {len(items_con_ruta)} archivos"
-
-        respuesta = QMessageBox.warning(
-            self, "Eliminar definitivamente",
-            f"Esto va a borrar {descripcion} de TODA la biblioteca del programa,\n"
-            "no solo de esta lista. Esta acción no se puede deshacer.\n\n"
-            "¿Confirmás que querés eliminarlos por completo?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if respuesta != QMessageBox.StandardButton.Yes:
-            return
-
-        for item in items_con_ruta:
-            ruta = item.data(0, Qt.ItemDataRole.UserRole)
-            self.quitar_item(item)
-            self.solicitud_eliminar_definitivo.emit(ruta)
