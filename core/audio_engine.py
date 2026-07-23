@@ -23,29 +23,41 @@ en vez de lanzar una excepción no controlada.
 import vlc
 from PySide6.QtCore import QObject, Signal, QTimer
 
-from config.settings import registrar_evento
+from config.settings import registrar_evento, cargar_configuracion
 
 MENSAJE_VLC_NO_DISPONIBLE = (
     "VLC no está instalado o no se encontró libvlc. "
     "Instalalo con: sudo apt install vlc libvlc-dev"
 )
 
-# Argumentos globales de la instancia de libVLC (pedido explícito, "para
-# robustecer el sistema"):
-# - "--no-video": esta app es 100% de audio — si un archivo cargado
-#   por error tiene pista de video (ej. un .mp4 importado a la
-#   biblioteca), libVLC NUNCA decodifica ni intenta abrir una ventana
-#   de video para él, solo extrae el audio. Sin esto, decodificar
-#   video de más gasta CPU/memoria en vano en hardware modesto (la
-#   notebook de Santiago, Celeron N2820) y puede ser una causa real de
-#   "tartamudeo".
-# - "--file-caching=1000": sube el buffer de lectura/decodificación de
-#   archivo de libVLC de ~300ms (default) a 1000ms — pedido explícito
-#   ("un sistema de buffer... que otorgue fluidez auditiva"): con más
-#   margen de buffer, una ráfaga de CPU ocupada por otra tarea de la
-#   app (un import pesado, redibujar la UI, etc.) tiene mucho más
-#   espacio antes de que la reproducción llegue a notarse entrecortada.
-ARGUMENTOS_VLC = ["--no-video", "--file-caching=1000"]
+# Defaults si config_general.json todavía no tiene estas claves
+# (instalación vieja) — ver config/settings.py:CONFIG_POR_DEFECTO["reproduccion"].
+BUFFER_CACHING_MS_POR_DEFECTO = 1000
+RETARDO_ARRANQUE_MS_POR_DEFECTO = 150
+
+
+def _argumentos_vlc(duracion_buffer_caching_ms: int) -> list:
+    """Argumentos de la instancia de libVLC (pedido explícito, "para
+    robustecer el sistema"):
+    - "--no-video": esta app es 100% de audio — si un archivo cargado
+      por error tiene pista de video (ej. un .mp4 importado a la
+      biblioteca), libVLC NUNCA decodifica ni intenta abrir una ventana
+      de video para él, solo extrae el audio. Sin esto, decodificar
+      video de más gasta CPU/memoria en vano en hardware modesto (la
+      notebook de Santiago, Celeron N2820) y puede ser una causa real de
+      "tartamudeo".
+    - "--file-caching=N": sube el buffer de lectura/decodificación de
+      archivo de libVLC de ~300ms (default de libVLC) a N ms — pedido
+      explícito ("un sistema de buffer... que otorgue fluidez
+      auditiva"): con más margen de buffer, una ráfaga de CPU ocupada
+      por otra tarea de la app (un import pesado, redibujar la UI,
+      etc.) tiene mucho más espacio antes de que la reproducción
+      llegue a notarse entrecortada. Configurable desde Configuración
+      → Reproducción y Automatización (pedido explícito, ronda
+      posterior) — OJO: es un argumento de instancia de libVLC, un
+      cambio solo aplica a los MotorAudio creados DESPUÉS de guardar
+      (en la práctica, tras reabrir la app), no a los ya en curso."""
+    return ["--no-video", f"--file-caching={max(0, int(duracion_buffer_caching_ms))}"]
 
 
 class MotorAudio(QObject):
@@ -83,8 +95,16 @@ class MotorAudio(QObject):
         # `pactl list sinks short` en la PC real.
         self._ultimo_dispositivo_logueado = "___sin_loguear_todavia___"
 
+        reproduccion = cargar_configuracion().get("reproduccion", {})
+        self._retardo_arranque_ms = reproduccion.get(
+            "retardo_arranque_ms", RETARDO_ARRANQUE_MS_POR_DEFECTO
+        )
+        duracion_buffer_caching_ms = reproduccion.get(
+            "duracion_buffer_caching_ms", BUFFER_CACHING_MS_POR_DEFECTO
+        )
+
         try:
-            self._instancia = vlc.Instance(ARGUMENTOS_VLC)
+            self._instancia = vlc.Instance(_argumentos_vlc(duracion_buffer_caching_ms))
             self._player = self._instancia.media_player_new()
             if id_dispositivo:
                 self._aplicar_dispositivo_salida()
@@ -204,7 +224,7 @@ class MotorAudio(QObject):
             self._player.set_time(max(0, punto_inicio_ms))
             self._player.audio_set_volume(self._volumen_deseado)
             self._aplicar_dispositivo_salida()
-        QTimer.singleShot(150, _tras_arranque)
+        QTimer.singleShot(self._retardo_arranque_ms, _tras_arranque)
 
     def pausar(self):
         if not self._disponible:
@@ -443,7 +463,7 @@ class MotorAudio(QObject):
     # ------------------------------------------------------------------
     def crossfade_a(self, ruta_siguiente: str, duracion_segundos: float = 3.0, motor_entrante=None,
                      punto_inicio_ms: int = 0, punto_fin_ms: int = None, ganancia_db: float = 0.0,
-                     volumen_base: int = 100):
+                     volumen_base: int = 100, duracion_fade_in_ms: int = 0):
         """
         Ejecuta un crossfade hacia `ruta_siguiente`. Usa un segundo
         MotorAudio (motor_entrante) para el archivo que entra, mientras
@@ -466,6 +486,14 @@ class MotorAudio(QObject):
         escala fija 0-100 — antes eso producía un salto audible de
         volumen justo al arrancar el crossfade si el volumen Master
         configurado no era 100.
+
+        `duracion_fade_in_ms` (pedido explícito, ronda posterior:
+        "perfeccioná el fundido... el inicio con un fundido muy breve
+        de 400ms"): reemplaza la decisión de una ronda anterior de NO
+        hacer fade-in en el entrante — ahora el entrante SÍ arranca con
+        una rampa corta (vía `MotorAudio.reproducir(duracion_declick_ms=...)`),
+        en paralelo al fade-out del saliente. 0 = sin fade-in (arranca
+        directo a volumen final, comportamiento de la ronda anterior).
         """
         if not self._disponible:
             self.error_reproduccion.emit(MENSAJE_VLC_NO_DISPONIBLE)
@@ -479,16 +507,13 @@ class MotorAudio(QObject):
         entrante.reproducir(
             ruta_siguiente, punto_inicio_ms=punto_inicio_ms, punto_fin_ms=punto_fin_ms,
             ganancia_db=ganancia_db, volumen_base=volumen_base,
+            duracion_declick_ms=duracion_fade_in_ms,
         )
-        # Pedido explícito ("quitá el fade al inicio, dejá solo el del
-        # final... que los temas suenen más enganchados y con mejor
-        # entrada"): el tema ENTRANTE ya NO hace fade-in — arranca
-        # directo a su volumen final (nivelado por `reproducir()`,
-        # `volumen_deseado()` — nunca una lectura espuria de libVLC
-        # recién arrancado, mismo motivo que ya documentaba el fix
-        # anterior). Solo el SALIENTE sigue con su fundido de salida,
-        # para que la transición no sea un corte seco.
-        entrante.set_volumen(entrante.volumen_deseado())
+        if duracion_fade_in_ms <= 0:
+            # Sin fade-in configurado: arranca directo a volumen final
+            # (nivelado por `reproducir()`/`volumen_deseado()` — nunca
+            # una lectura espuria de libVLC recién arrancado).
+            entrante.set_volumen(entrante.volumen_deseado())
 
         pasos = 30
         intervalo_ms = max(20, int((duracion_segundos * 1000) / pasos))

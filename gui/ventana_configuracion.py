@@ -139,13 +139,18 @@ class VentanaConfiguracion(QDialog):
         form = QFormLayout(widget)
 
         self.chk_crossfade = QCheckBox("Activar crossfade entre temas de la Ventana 2")
-        self.spin_duracion_fade = QDoubleSpinBox()
-        self.spin_duracion_fade.setRange(0.0, 15.0)
-        self.spin_duracion_fade.setSingleStep(0.5)
-        self.spin_duracion_fade.setSuffix(" s")
+        self.spin_fade_in_v2 = QSpinBox()
+        self.spin_fade_in_v2.setRange(0, 3000)
+        self.spin_fade_in_v2.setSingleStep(50)
+        self.spin_fade_in_v2.setSuffix(" ms")
+        self.spin_fade_out_v2 = QSpinBox()
+        self.spin_fade_out_v2.setRange(0, 3000)
+        self.spin_fade_out_v2.setSingleStep(50)
+        self.spin_fade_out_v2.setSuffix(" ms")
 
         form.addRow(self.chk_crossfade)
-        form.addRow("Duración del fade:", self.spin_duracion_fade)
+        form.addRow("Fade IN al entrar un tema (Ventana 2):", self.spin_fade_in_v2)
+        form.addRow("Fade OUT al terminar un tema (Ventana 2):", self.spin_fade_out_v2)
 
         nota = QLabel(
             "El fade se aplica únicamente a las transiciones de música\n"
@@ -249,16 +254,34 @@ class VentanaConfiguracion(QDialog):
         self.spin_fade_out_v1.setSuffix(" ms")
 
         self.spin_fade_in_declick_v1 = QSpinBox()
-        self.spin_fade_in_declick_v1.setRange(0, 500)
+        self.spin_fade_in_declick_v1.setRange(0, 3000)
         self.spin_fade_in_declick_v1.setSingleStep(10)
         self.spin_fade_in_declick_v1.setSuffix(" ms")
         self.spin_fade_in_declick_v1.setToolTip(
-            "Rampa de unos pocos milisegundos al ARRANCAR cada ítem de\n"
-            "Ventana 1 — NO es un fundido musical (eso se sacó a propósito\n"
-            "en una ronda anterior), solo evita el click/tartamudeo de un\n"
-            "salto brusco a volumen final justo al empezar a sonar (más\n"
-            "notorio si el audio pasa por una cadena de efectos como\n"
-            "EasyEffects). 0 = desactivado, salto directo como antes."
+            "Fade-in corto al ARRANCAR cada ítem de Ventana 1 — sin\n"
+            "silencio inicial, rampa breve (400ms recomendado) en vez de\n"
+            "un salto brusco a volumen final. 0 = desactivado, salto directo."
+        )
+
+        self.spin_buffer_caching = QSpinBox()
+        self.spin_buffer_caching.setRange(0, 5000)
+        self.spin_buffer_caching.setSingleStep(100)
+        self.spin_buffer_caching.setSuffix(" ms")
+        self.spin_buffer_caching.setToolTip(
+            "Buffer de lectura/decodificación de audio (libVLC) — más alto\n"
+            "da más margen contra tartamudeos si la PC se ocupa con otra\n"
+            "tarea, a costa de un arranque levemente más lento. Requiere\n"
+            "reabrir la app para aplicar."
+        )
+
+        self.spin_retardo_arranque = QSpinBox()
+        self.spin_retardo_arranque.setRange(0, 1000)
+        self.spin_retardo_arranque.setSingleStep(10)
+        self.spin_retardo_arranque.setSuffix(" ms")
+        self.spin_retardo_arranque.setToolTip(
+            "Pequeño retardo interno tras arrancar cada ítem, antes de\n"
+            "reforzar posición/volumen — no afecta perceptiblemente el\n"
+            "arranque. Requiere reabrir la app para aplicar."
         )
 
         form.addRow(self.chk_avanzar_en_error)
@@ -269,7 +292,9 @@ class VentanaConfiguracion(QDialog):
         form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
         form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
         form.addRow("Fade OUT entre tandas de Ventana 1:", self.spin_fade_out_v1)
-        form.addRow("Fade IN (anti-click) al arrancar ítems de Ventana 1:", self.spin_fade_in_declick_v1)
+        form.addRow("Fade IN al arrancar ítems de Ventana 1:", self.spin_fade_in_declick_v1)
+        form.addRow("Buffer de audio (anti-tartamudeo):", self.spin_buffer_caching)
+        form.addRow("Retardo de arranque interno:", self.spin_retardo_arranque)
 
         nota_silencio = QLabel(
             "El recorte de silencio SOLO mira el principio y el final de\n"
@@ -660,7 +685,8 @@ class VentanaConfiguracion(QDialog):
 
         fade = self._config["fade"]
         self.chk_crossfade.setChecked(fade["crossfade_activado"])
-        self.spin_duracion_fade.setValue(fade["duracion_fade_segundos"])
+        self.spin_fade_in_v2.setValue(fade["duracion_fade_in_v2_ms"])
+        self.spin_fade_out_v2.setValue(fade["duracion_fade_out_v2_ms"])
 
         rutas = self._config["rutas"]
         self.txt_ruta_musica.setText(rutas["biblioteca_musical"])
@@ -677,6 +703,8 @@ class VentanaConfiguracion(QDialog):
         self.spin_bajada_pisador.setValue(reproduccion["pisador_bajada_db"])
         self.spin_fade_out_v1.setValue(reproduccion["duracion_fade_out_v1_ms"])
         self.spin_fade_in_declick_v1.setValue(reproduccion["duracion_fade_in_declick_v1_ms"])
+        self.spin_buffer_caching.setValue(reproduccion["duracion_buffer_caching_ms"])
+        self.spin_retardo_arranque.setValue(reproduccion["retardo_arranque_ms"])
 
         general = self._config["general"]
         self.txt_nombre_emisora.setText(general.get("nombre_emisora", ""))
@@ -716,7 +744,8 @@ class VentanaConfiguracion(QDialog):
         self._config["audio"]["volumen_preescucha"] = self.slider_volumen_preescucha.value()
 
         self._config["fade"]["crossfade_activado"] = self.chk_crossfade.isChecked()
-        self._config["fade"]["duracion_fade_segundos"] = self.spin_duracion_fade.value()
+        self._config["fade"]["duracion_fade_in_v2_ms"] = self.spin_fade_in_v2.value()
+        self._config["fade"]["duracion_fade_out_v2_ms"] = self.spin_fade_out_v2.value()
 
         self._config["rutas"]["biblioteca_musical"] = self.txt_ruta_musica.text()
         self._config["rutas"]["biblioteca_publicidad"] = self.txt_ruta_publicidad.text()
@@ -731,6 +760,8 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["pisador_bajada_db"] = self.spin_bajada_pisador.value()
         self._config["reproduccion"]["duracion_fade_out_v1_ms"] = self.spin_fade_out_v1.value()
         self._config["reproduccion"]["duracion_fade_in_declick_v1_ms"] = self.spin_fade_in_declick_v1.value()
+        self._config["reproduccion"]["duracion_buffer_caching_ms"] = self.spin_buffer_caching.value()
+        self._config["reproduccion"]["retardo_arranque_ms"] = self.spin_retardo_arranque.value()
 
         self._config["clima"]["latitud"] = self.spin_latitud.value()
         self._config["clima"]["longitud"] = self.spin_longitud.value()

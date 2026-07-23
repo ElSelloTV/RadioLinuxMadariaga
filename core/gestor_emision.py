@@ -137,7 +137,8 @@ class GestorPlaylist:
         repetir_al_finalizar: bool = True,
         bajada_db_pisador: float = -4.0,
         crossfade_activado: bool = False,
-        duracion_fade_segundos: float = 3.0,
+        duracion_fade_segundos: float = 0.5,
+        duracion_fade_in_segundos: float = 0.4,
         persistir: bool = False,
         ventana_explorador=None,
     ):
@@ -149,7 +150,13 @@ class GestorPlaylist:
         self.repetir_al_finalizar = repetir_al_finalizar
         self.bajada_db_pisador = bajada_db_pisador
         self.crossfade_activado = crossfade_activado
+        # Duración del fade-OUT del saliente (y de cuánto antes del
+        # final natural se dispara el crossfade, ver _chequear_crossfade).
         self.duracion_fade_segundos = duracion_fade_segundos
+        # Duración del fade-IN del entrante (pedido explícito, ronda
+        # posterior: "el inicio con un fundido muy breve de 400ms" —
+        # reemplaza la decisión anterior de no hacer fade-in acá).
+        self.duracion_fade_in_segundos = duracion_fade_in_segundos
         self.persistir = persistir
         # Musicalizador Avanzado (pedido explícito): necesita el
         # Explorador para resolver categorías/archivos al generar.
@@ -464,6 +471,10 @@ class GestorPlaylist:
             ganancia_db=analisis.get("ganancia_db") or 0.0,
             volumen_base=self._volumen_base,
         )
+        # Bug real corregido ("el ícono de reproducido se marca al
+        # seleccionar, no al reproducir"): acá es donde el audio arranca
+        # de verdad — ver nota completa en gui/panel_reproductor.py:_pintar_item.
+        self.panel.marcar_realmente_reproducido(fila)
         self.panel.set_indicador_en_vivo(True)
         self._fila_pisador_outro_disparado = -1
         # Un Pisador de posición "final" (Outro) NO se dispara acá —
@@ -525,6 +536,7 @@ class GestorPlaylist:
             punto_fin_ms=analisis_siguiente.get("punto_fin_ms"),
             ganancia_db=analisis_siguiente.get("ganancia_db") or 0.0,
             volumen_base=self._volumen_base,
+            duracion_fade_in_ms=int(self.duracion_fade_in_segundos * 1000),
         )
         if entrante is None:
             return
@@ -538,6 +550,7 @@ class GestorPlaylist:
 
         self._fallos_consecutivos = 0
         self.panel.marcar_reproduciendo(fila_siguiente)
+        self.panel.marcar_realmente_reproducido(fila_siguiente)
         candidata_siguiente = fila_siguiente + 1
         if candidata_siguiente >= total:
             candidata_siguiente = 0 if self.repetir_al_finalizar else -1

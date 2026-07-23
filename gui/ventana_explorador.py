@@ -61,7 +61,7 @@ from PySide6.QtWidgets import (
     QLabel,
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QProcess
-from PySide6.QtGui import QColor, QBrush, QDesktopServices
+from PySide6.QtGui import QColor, QBrush, QDesktopServices, QFont
 
 from gui.common_widgets import (
     ArbolOrigenArrastre, ArbolConDrop, ArbolCategoriasConDrop,
@@ -453,7 +453,30 @@ class VentanaExplorador(QWidget):
             self.tree_categorias.addTopLevelItem(item)
         else:
             item_padre.addChild(item)
+        self._aplicar_estilo_por_nivel(item, item_padre)
         return item
+
+    @staticmethod
+    def _aplicar_estilo_por_nivel(item: QTreeWidgetItem, item_padre):
+        """Nivel 1 (categoría raíz): negrita + MAYÚSCULAS. Nivel 2
+        (subcategoría directa): negrita, sin tocar mayúsculas/minúsculas.
+        Nivel 3 en adelante: sin nada especial (como estaba).
+
+        El "MAYÚSCULAS" es solo de PINTADO (QFont.Capitalization.AllUppercase)
+        — el texto real del ítem (item.text(0), lo que se guarda en
+        biblioteca.json vía _serializar_categoria) nunca se toca, para
+        no pisar el nombre original guardado en disco."""
+        fuente = item.font(0)
+        if item_padre is None:
+            fuente.setBold(True)
+            fuente.setCapitalization(QFont.Capitalization.AllUppercase)
+        elif item_padre.parent() is None:
+            fuente.setBold(True)
+            fuente.setCapitalization(QFont.Capitalization.MixedCase)
+        else:
+            fuente.setBold(False)
+            fuente.setCapitalization(QFont.Capitalization.MixedCase)
+        item.setFont(0, fuente)
 
     def _categoria_actual(self):
         return self.tree_categorias.currentItem()
@@ -1192,12 +1215,25 @@ class VentanaExplorador(QWidget):
         except OSError as error:
             QMessageBox.warning(self, "Exportar", f"No se pudo copiar el archivo:\n{error}")
 
+    # Pedido explícito ("editor de audio ultra liviano para acortar y/o
+    # edición básica de subir volumen o introducir un fade in/out"):
+    # mhwaveedit (~1MB instalado, GTK2, corte/volumen/fade) — se
+    # prueba PRIMERO y explícito, antes que la asociación de archivos
+    # del sistema, porque el default de esa asociación suele ser un
+    # REPRODUCTOR (VLC, etc.), no un editor.
+    EDITOR_AUDIO_PREFERIDO = "mhwaveedit"
+
     def _editar_archivo(self, item):
         if item is None:
             return
         ruta = item.data(0, Qt.ItemDataRole.UserRole)
         if not ruta or not os.path.exists(ruta):
             QMessageBox.warning(self, "Editar", "No se encontró el archivo fuente.")
+            return
+
+        ejecutable_preferido = shutil.which(self.EDITOR_AUDIO_PREFERIDO)
+        if ejecutable_preferido:
+            QProcess.startDetached(ejecutable_preferido, [ruta])
             return
 
         exito = QDesktopServices.openUrl(QUrl.fromLocalFile(ruta))

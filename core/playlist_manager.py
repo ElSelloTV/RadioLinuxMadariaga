@@ -395,6 +395,10 @@ class GestorPublicidad:
             volumen_base=self._volumen_base,
             duracion_declick_ms=self.duracion_fade_in_declick_ms,
         )
+        # Bug real corregido ("el ícono de reproducido se marca al
+        # seleccionar, no al reproducir"): acá es donde el audio arranca
+        # de verdad — ver nota completa en gui/ventana_publicidad.py:_pintar_item.
+        self.ventana.marcar_realmente_reproducido_item(item)
         self.ventana.set_indicador_en_vivo(True)
         registrar_evento(f"Publicidad: reproduciendo '{item.text(0)}'")
 
@@ -454,6 +458,10 @@ class GestorPublicidad:
             duracion_declick_ms=self.duracion_fade_in_declick_ms,
         )
         self.ventana.set_indicador_en_vivo(True)
+        # Bug real corregido ("el ícono de reproducido se marca al
+        # seleccionar, no al reproducir"): acá es donde el audio arranca
+        # de verdad.
+        self.ventana.marcar_icono_reproducido_item(item)
         # El historial se registra con el archivo REAL resuelto (no el
         # ítem placeholder, que nunca tiene ruta propia) — es lo que
         # permite que el no-repetir funcione entre una reproducción y
@@ -495,6 +503,10 @@ class GestorPublicidad:
             return
 
         registrar_evento(f"Publicidad: comando HTH {parametro} -> {len(clips)} clip(s)")
+        # Bug real corregido ("el ícono de reproducido se marca al
+        # seleccionar, no al reproducir"): acá se confirmó que hay
+        # clips reales y el audio va a arrancar de verdad.
+        self.ventana.marcar_icono_reproducido_item(item)
         self._reproduciendo_hth = True
         self._cola_hth = list(clips)
         self._reproducir_siguiente_clip_hth()
