@@ -38,12 +38,24 @@ CONFIG_POR_DEFECTO = {
         # sola. Requiere reabrir la app para aplicar (argumento de
         # instancia de libVLC, fijo al crear cada MotorAudio — mismo
         # criterio ya establecido para duracion_buffer_caching_ms).
+        # Valores default AJUSTADOS (pedido explícito, ronda posterior)
+        # al preset real de EasyEffects de Santiago ("Radio Tuyú" ->
+        # efecto "compressor#0": threshold -12dB, ratio 3, attack 20ms,
+        # release 100ms, makeup+output-gain ~2dB) — la aproximación más
+        # cercana posible con el filtro "compressor" simple de libVLC,
+        # que NO tiene equivalente para el modo "Upward" (ese preset
+        # comprime hacia ARRIBA lo que está por DEBAJO del umbral, para
+        # levantar pasajes flojos, en vez de bajar los picos como hace
+        # este filtro) ni para su mezcla dry/wet o el sidechain con
+        # HPF/LPF — ver la nota completa en CLAUDE.md (ronda del
+        # preset de EasyEffects) sobre por qué esto es una
+        # aproximación, no un port exacto.
         "compresor_activado": False,
-        "compresor_umbral_db": -11.0,
-        "compresor_ratio": 8.0,
-        "compresor_ataque_ms": 25.0,
+        "compresor_umbral_db": -12.0,
+        "compresor_ratio": 3.0,
+        "compresor_ataque_ms": 20.0,
         "compresor_release_ms": 100.0,
-        "compresor_ganancia_salida_db": 7.0,
+        "compresor_ganancia_salida_db": 2.0,
     },
     "fade": {
         "crossfade_activado": True,

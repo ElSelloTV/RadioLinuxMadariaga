@@ -6900,6 +6900,87 @@ todo el resto.
     ahora sí escucha el efecto — con el diagnóstico del log ya puesto,
     la próxima vuelta debería poder aislar mucho más rápido si el
     problema está en esta app o en la instalación de libVLC.
+71. ~~Preset real de EasyEffects leído — descubierto un mismatch de
+    tecnología real entre el compresor de esta app (filtro nativo de
+    libVLC) y lo que EasyEffects usa de verdad (plugins LSP)~~ —
+    Santiago pasó el contenido completo de su preset "Radio Tuyú"
+    (`~/.configtde/easyeffects/output/Radio Tuyu.json` — nota: su
+    sistema usa `~/.configtde` en vez de `~/.config`, probablemente
+    por el entorno de escritorio). Confirmó 2 efectos, tal como había
+    dicho: `compressor#0` y `stereo_tools#0`.
+
+    **Compresor — mapeado con la mejor aproximación posible, pero NO
+    es un port exacto (diferencia real de tecnología, documentada acá
+    para no perderla de vista)**: el preset real usa un compresor LSP
+    (vía LV2, el motor de EasyEffects) con `mode: "Upward"` — un modo
+    que LEVANTA lo que está por DEBAJO del umbral (para subir pasajes
+    flojos), completamente distinto al compresor "downward" clásico
+    (bajar los picos que superan el umbral) que es el ÚNICO modo que
+    soporta el filtro nativo `compressor` de libVLC usado en esta app.
+    El preset también usa `dry`/`wet` (mezcla de señal procesada vs.
+    original), `boost-amount`/`boost-threshold`, y un sidechain con
+    HPF/LPF propios — ninguno de estos conceptos existe en el filtro
+    simple de libVLC. Mapeados los 5 parámetros que SÍ tienen
+    equivalente directo — `threshold: -12.0` → `compresor_umbral_db`,
+    `ratio: 3.0` → `compresor_ratio`, `attack: 20.0` →
+    `compresor_ataque_ms`, `release: 100.0` → `compresor_release_ms`,
+    y `makeup (0.0) + output-gain (2.0) ≈ 2.0` →
+    `compresor_ganancia_salida_db` (los dos controles de ganancia
+    final del preset se combinaron en el único que tiene el filtro de
+    libVLC) — actualizados como nuevo DEFAULT en `CONFIG_POR_DEFECTO`
+    (`config/settings.py`), así una instalación nueva (o resetear los
+    valores en Configuración → Procesador) ya arranca con estos
+    números en vez de los defaults genéricos de libVLC. **Importante,
+    explicado a Santiago**: el resultado audible NO va a sonar igual
+    al de EasyEffects — el filtro de esta app puede acercarse en
+    carácter (compresión moderada, ratio 3:1) pero nunca replica el
+    levantado de señal floja del modo Upward ni el resto de las
+    diferencias de arriba.
+
+    **Stereo Tools — SIN equivalente en libVLC, y en este preset en
+    particular no hace nada audible igual**: revisando los valores
+    reales de `stereo_tools#0` (LSP Stereo Tools, un procesador
+    Mid/Side con balance, mute/inversión de fase por canal, ancho
+    estéreo, etc.) — TODOS sus parámetros están en su posición
+    NEUTRA/default: `middle-level`/`side-level` en 0dB, `stereo-base:
+    0.0` (sin ensanchado), `mode: "LR > LR (Stereo Default)"`, sin
+    mute ni inversión de fase en ningún canal, ganancias en 0dB. En la
+    práctica, este efecto puntual del preset de Santiago NO está
+    haciendo ningún procesamiento audible tal como está configurado
+    hoy — no hay ganancia real perdida por no poder replicarlo. libVLC
+    tampoco tiene NINGÚN filtro nativo con este mismo concepto (Mid/
+    Side con estos controles) — lo más cercano que existe,
+    `stereo_widen` ("Stereo Enhancer" de VLC, basado en delay/
+    feedback/crossfeed), es un algoritmo TOTALMENTE distinto, no una
+    traducción de estos mismos parámetros.
+
+    **Pendiente, genuina decisión de Santiago (no adivinada, quedó
+    preguntado en el chat en vez de programado a ciegas)**: cómo
+    seguir con Stereo Tools — (a) dejarlo afuera, ya que en su preset
+    actual no hace nada audible igual; (b) agregar el "Stereo
+    Enhancer" REAL de VLC (`stereo_widen`, con sus propios 4
+    parámetros — delay/feedback/crossfeed/dry-mix — SIN pretender que
+    sea "lo mismo" que Stereo Tools, simplemente una función de
+    ensanchado estéreo distinta, honestamente etiquetada); o (c)
+    reconsiderar el enfoque completo del procesamiento (mismo dilema
+    ya recorrido en las rondas 37-55: control remoto de EasyEffects, o
+    un filter-chain de PipeWire con los MISMOS plugins LSP/Calf — ambos
+    ya descartados en su momento a favor de "manejarlo por fuera", pero
+    ahora que se sabe que el compresor de libVLC no puede replicar el
+    modo Upward, vale la pena que Santiago decida con los ojos
+    abiertos si el compresor nativo le alcanza o prefiere volver a uno
+    de esos caminos).
+
+    No hizo falta ningún código nuevo más allá de actualizar los 5
+    valores default del compresor (ver arriba) — se corrió la suite de
+    regresión completa (actualizando una sola aserción en
+    `test_autoscroll_y_compresor.py` que verificaba el default VIEJO
+    de `-11.0`, ahora `-12.0`) sin fallos nuevos (mismos 3
+    preexistentes de siempre + 4 tests locales ya diagnosticados como
+    desactualizados desde la ronda 63) + smoke test de arranque
+    limpio. Pendiente: la respuesta de Santiago sobre Stereo Tools, y
+    que confirme (con el compresor ya en valores más cercanos a su
+    preset real) si ahora sí nota el efecto al reabrir la app.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
