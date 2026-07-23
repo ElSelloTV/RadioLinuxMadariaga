@@ -6145,6 +6145,106 @@ todo el resto.
     Probado: suite de regresión completa sin fallos nuevos (mismos 3
     preexistentes de siempre) + confirmado que el log nuevo se escribe
     correctamente con el formato esperado.
+63. ~~PR #2 traído de otra sesión — fundidos estandarizados, buffer
+    configurable, y varias mejoras de UX~~ — pedido explícito: "Hay una
+    rama ya pusheada a GitHub con cambios que hicimos en otra sesión...
+    Traela, revisá el diff contra main, abrí el Pull Request, y si está
+    todo bien mergealo." Rama `claude/fundidos-y-mejoras-explorador-022105`,
+    11 archivos: (a) fade-in/out de Ventana 1 y 2 (crossfade)
+    estandarizado a 400ms/500ms, configurable por separado
+    (`duracion_fade_in_v2_ms`/`duracion_fade_out_v2_ms` en
+    Configuración → Fade/Transiciones — reemplaza la vieja
+    `duracion_fade_segundos` única, que queda solo por compatibilidad
+    hacia atrás sin usarse más); (b) buffer de audio (`--file-caching`
+    de libVLC) y retardo de arranque interno, antes fijos en el
+    código, ahora configurables desde Configuración → Reproducción
+    (`duracion_buffer_caching_ms`/`retardo_arranque_ms` — requieren
+    reabrir la app, son argumentos de instancia de libVLC fijados al
+    crearla); (c) bug real corregido — el ícono "ya reproducido" (y el
+    historial persistente) se marcaba al ARMAR un ítem en rojo
+    (`_asegurar_rojo_y_verde`, con el reproductor en silencio), no al
+    reproducirlo de verdad — separado en pintar rojo (puramente
+    visual, `_pintar_item`) vs. `marcar_realmente_reproducido()`
+    (ícono + historial), llamado por el motor SOLO en el punto exacto
+    donde el audio arranca de verdad (`_reproducir_fila`/
+    `_iniciar_crossfade` en Ventana 2, `_reproducir_item`/
+    `_reproducir_item_aleatorio` en Ventana 1 — esta última usa
+    `marcar_icono_reproducido_item()`, sin historial, porque ya lo
+    registra aparte con la ruta REAL resuelta); (d) Explorador:
+    categoría raíz en negrita+MAYÚSCULAS, subcategoría directa en
+    negrita, nivel 3+ sin cambios — solo estilo de pintado
+    (`QFont.Capitalization`), nunca toca el texto real guardado en
+    `biblioteca.json`; (e) "🎚 Editar audio" ahora prueba primero
+    `mhwaveedit` (editor ultra liviano, corte/volumen/fade) de forma
+    explícita antes de caer a la asociación de archivos del sistema
+    (que solía abrir un REPRODUCTOR, no un editor); (f) Reproductor
+    Auxiliar: nuevo menú contextual "➕ Agregar ítem específico..." /
+    "🎲 Agregar ítem aleatorio..." (mismo criterio de aleatorio que ya
+    usa el Musicalizador — resuelve un archivo random de una
+    categoría, con el mismo no-repetir vía historial), exclusivo del
+    Auxiliar (`PanelReproductor` ganó `permitir_agregar_item: bool`,
+    off por defecto — Ventana 2/Emisión se llena sola vía
+    Musicalizador/arrastre); (g) Ventana 1: los bloques quedan SIEMPRE
+    expandidos (`tree.setItemsExpandable(False)`, se sacó la
+    interacción de colapsarlos), y doble click en el TÍTULO de un
+    bloque ahora arma el primer ítem hijo en vez de no hacer nada;
+    (h) `MedidorNivelDecorativo` ahora anima con un rebote aleatorio
+    (`QTimer` cada 120ms, sesgado hacia "casi lleno") mientras suena,
+    en vez de quedar fijo en un valor — sigue siendo 100% decorativo
+    (nunca mide audio real), pedido explícito de Santiago sabiendo que
+    es ficticio.
+
+    **Bug real encontrado y corregido durante la revisión, antes de
+    mergear**: `PanelReproductor` ganó `marcar_realmente_reproducido()`
+    en esta misma rama, pero los DOS wrappers que lo envuelven
+    (`VentanaEmision`/`VentanaAuxiliar`) nunca lo delegaron — el MISMO
+    patrón de bug ya documentado varias veces en este archivo ("cuando
+    un wrapper delega en `PanelReproductor`, hay que delegar TODOS los
+    métodos que el core necesita"). Sin este fix, Emisión rompía con
+    un `AttributeError` silenciado dentro de un slot de Qt (indistinguible
+    de "el play no respondió") cada vez que resumía después de un
+    bloque automático de Publicidad, o en CUALQUIER transición con
+    crossfade — es decir, prácticamente todo el uso real de Ventana 2
+    en producción. Encontrado corriendo la suite de regresión completa
+    ANTES de mergear (12 tests rompían exactamente ahí:
+    `test_ciclo_automatico.py`, `test_musicalizador_gui.py`,
+    `test_silencio_v2_y_menu.py`, `test_ventana2_estados.py`,
+    `test_robustez_emision.py`, `test_pisador_race.py`,
+    `test_dinesat_play_fundido_stops.py`,
+    `test_auxiliar_paridad_y_exclusion.py`,
+    `test_fmt_memoria_y_refill_verde.py`,
+    `test_musicalizador_refill_crossfade.py`,
+    `test_pisador_crossfade_stop_programador.py`,
+    `test_ronda_7pedidos.py`, `test_ronda_rojo_verde_y_corte_v1.py`,
+    `test_ciclo_deja_terminar_item.py` — confirmado que NINGUNO de
+    estos fallaba contra `main` sin la rama nueva, así que no eran
+    tests desactualizados sino una regresión real de la rama).
+    Corregido agregando `marcar_realmente_reproducido(fila)` a ambos
+    wrappers (delega a `self.panel.marcar_realmente_reproducido(fila)`,
+    mismo patrón que ya usan `marcar_reproduciendo`/`marcar_siguiente`)
+    — los 12 tests volvieron a pasar. Otros 4 tests locales que
+    también fallaban (`test_audio_only_y_buffer.py`,
+    `test_fade_in_declick_v1.py`, `test_ronda_ajustes_dinesat2.py`,
+    `test_ronda_dinesat3.py`) resultaron ser tests VIEJOS de esta
+    sesión que hardcodeaban comportamiento que esta rama cambió a
+    propósito (la constante `ARGUMENTOS_VLC` pasó a ser una función
+    parametrizable, el default de `duracion_fade_in_declick_v1_ms`
+    subió de 60 a 400, y el timing del ícono "ya reproducido" es
+    justamente el punto (c) de arriba) — no regresiones, confirmado
+    revisando cada traceback a mano antes de descartarlos.
+
+    PR #2 abierto y mergeado a `main` después del fix (suite de
+    regresión completa corrida DOS VECES — antes y después del fix de
+    delegación — sin fallos nuevos tras el fix; mismos 3 fallos
+    preexistentes de siempre: `test_confirmaciones.py`,
+    `test_log_git.py`, `test_ventana3.py`) + smoke test de arranque
+    limpio. **Sigue sin poder confirmarse con audio/hardware real**
+    (como siempre que se toca `core/audio_engine.py`): falta que
+    Santiago confirme que los fundidos de 400ms/500ms se sienten bien,
+    que el buffer configurable ayuda con el tartamudeo que reportó, y
+    que el resto de los cambios de UX (categorías en mayúsculas,
+    mhwaveedit, menú del Auxiliar, bloques siempre expandidos, medidor
+    animado) se ven/comportan como esperaba.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
