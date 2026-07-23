@@ -39,11 +39,17 @@ RETARDO_ARRANQUE_MS_POR_DEFECTO = 150
 # Defaults del filtro "compressor" nativo de libVLC (módulo
 # modules/audio_filter/compressor.c) — usados si config_general.json
 # todavía no tiene estas claves (instalación vieja) o si el operador
-# no tocó un campo puntual del formulario.
-COMPRESOR_UMBRAL_DB_POR_DEFECTO = -11.0
-COMPRESOR_RATIO_POR_DEFECTO = 8.0
+# no tocó un campo puntual del formulario. Rangos y nombres
+# CONFIRMADOS por Santiago contra la interfaz real de su VLC 3.0.23
+# (Herramientas → Efectos y Filtros → Compresor) — los 7 controles
+# reales del módulo, no solo los 5 que se habían expuesto al
+# principio (faltaban RMS/Pico y Knee).
+COMPRESOR_RMS_PICO_POR_DEFECTO = 0.0
 COMPRESOR_ATAQUE_MS_POR_DEFECTO = 25.0
 COMPRESOR_RELEASE_MS_POR_DEFECTO = 100.0
+COMPRESOR_UMBRAL_DB_POR_DEFECTO = -11.0
+COMPRESOR_RATIO_POR_DEFECTO = 8.0
+COMPRESOR_KNEE_DB_POR_DEFECTO = 2.5
 COMPRESOR_GANANCIA_SALIDA_DB_POR_DEFECTO = 7.0
 
 
@@ -90,14 +96,17 @@ def _argumentos_compresor(audio_cfg: dict) -> list:
     explícito de Santiago porque prefería manejar el procesamiento por
     fuera de esta app), este vive DENTRO de cada MotorAudio, sin
     depender de ningún proceso ni configuración del sistema operativo.
-    Los 5 parámetros expuestos en Configuración → Procesador son los
-    que pidió Santiago, mapeados 1 a 1 a las opciones reales del
-    módulo: "Entrada de Audio" -> --compressor-threshold (dB, umbral a
-    partir del cual empieza a comprimir), Ratio -> --compressor-ratio,
-    Ataque -> --compressor-attack (ms), Release -> --compressor-release
-    (ms), "Salida (Ganancia de Compensación)" -> --compressor-makeup-gain
-    (dB). Desactivado por defecto (`compresor_activado=False`) — una
-    instalación existente nunca empieza a comprimir sola.
+    Los 7 parámetros REALES del módulo, confirmados por Santiago
+    contra la interfaz de su VLC (rangos exactos entre paréntesis):
+    RMS/Pico -> --compressor-rms-peak (0.0 a 1.0, mezcla RMS/pico para
+    la detección de nivel), Ataque -> --compressor-attack (1.5 a
+    400.0 ms), Release -> --compressor-release (2.0 a 800.0 ms),
+    Umbral ("Entrada de Audio") -> --compressor-threshold (-30 a 0.0
+    dB), Ratio ("Proporción") -> --compressor-ratio (1.0 a 20.0),
+    Knee ("Radio Knee") -> --compressor-knee (1.0 a 10.0 dB), y
+    "Salida (Ganancia de Compensación/Maquillaje)" -> --compressor-makeup-gain
+    (0 a 24 dB). Desactivado por defecto (`compresor_activado=False`)
+    — una instalación existente nunca empieza a comprimir sola.
 
     Devuelve solo los flags `--compressor-*` — el nombre del filtro en
     sí (`--audio-filter=...`) lo arma `_argumentos_vlc()`, que puede
@@ -109,10 +118,12 @@ def _argumentos_compresor(audio_cfg: dict) -> list:
     if not audio_cfg.get("compresor_activado", False):
         return []
     return [
-        f"--compressor-threshold={float(audio_cfg.get('compresor_umbral_db', COMPRESOR_UMBRAL_DB_POR_DEFECTO))}",
-        f"--compressor-ratio={float(audio_cfg.get('compresor_ratio', COMPRESOR_RATIO_POR_DEFECTO))}",
+        f"--compressor-rms-peak={float(audio_cfg.get('compresor_rms_pico', COMPRESOR_RMS_PICO_POR_DEFECTO))}",
         f"--compressor-attack={float(audio_cfg.get('compresor_ataque_ms', COMPRESOR_ATAQUE_MS_POR_DEFECTO))}",
         f"--compressor-release={float(audio_cfg.get('compresor_release_ms', COMPRESOR_RELEASE_MS_POR_DEFECTO))}",
+        f"--compressor-threshold={float(audio_cfg.get('compresor_umbral_db', COMPRESOR_UMBRAL_DB_POR_DEFECTO))}",
+        f"--compressor-ratio={float(audio_cfg.get('compresor_ratio', COMPRESOR_RATIO_POR_DEFECTO))}",
+        f"--compressor-knee={float(audio_cfg.get('compresor_knee_db', COMPRESOR_KNEE_DB_POR_DEFECTO))}",
         f"--compressor-makeup-gain={float(audio_cfg.get('compresor_ganancia_salida_db', COMPRESOR_GANANCIA_SALIDA_DB_POR_DEFECTO))}",
     ]
 

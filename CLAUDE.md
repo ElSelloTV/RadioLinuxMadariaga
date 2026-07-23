@@ -7132,6 +7132,122 @@ todo el resto.
     Configuración → Diagnóstico → Ver log ahora debería decir
     exactamente por qué — y (3) que confirme si el Volume Normalizer
     se escucha al activarlo.
+74. ~~Diagnóstico real con Santiago: la GUI de VLC aplica el compresor,
+    `cvlc`/el motor headless de esta app NO — decisión explícita de
+    Santiago de NO perseguir esa causa por ahora, sino corregir/ampliar
+    los controles del compresor a los 7 reales de VLC~~ — sesión larga
+    de diagnóstico guiado paso a paso con comandos reales en la máquina
+    de Santiago (mismo criterio "ground truth de tu máquina real" ya
+    usado para EasyEffects/PipeWire en su momento):
+    - `cvlc --list | grep -i compressor` confirmó que el módulo SÍ está
+      instalado. Un `cvlc --audio-filter=compressor --compressor-threshold=-60
+      --compressor-ratio=20 --compressor-makeup-gain=0 archivo.mp3` con
+      valores extremos (debería saturar/deformar sin duda) **no produjo
+      ningún cambio audible** contra la reproducción sin el filtro.
+    - Probado el mismo archivo con la GUI completa de VLC (`vlc`, con
+      interfaz gráfica): activando el compresor a mano desde
+      Herramientas → Efectos y Filtros → Compresor, **sí se percibió**
+      el efecto — confirmado por Santiago explícitamente ("Si, se
+      percibe el compresor... se percibe").
+    - Con eso ya aislado (el módulo funciona, el problema es el modo
+      HEADLESS), se probó pasarle los mismos flags `--audio-filter=
+      compressor --compressor-*` a la GUI de `vlc` por línea de
+      comandos (en vez de activarlo a mano) — Santiago confirmó "Entre
+      uno y otro, no hay nada de diferencia, en absoluto", es decir,
+      los flags de línea de comandos SÍ activan el filtro cuando el
+      proceso tiene una interfaz gráfica real.
+    - **Conclusión, no 100% definitiva pero fuertemente respaldada por
+      estas pruebas**: `cvlc` (interfaz "dummy") y el embedding
+      `python-vlc` que usa esta app (sin ningún módulo de interfaz
+      adjunto, igual de "headless" que `cvlc`) muy probablemente NO
+      aplican `--audio-filter=` de forma confiable a la salida de audio
+      real — sería una limitación real de cómo libVLC arma la cadena de
+      filtros sin una interfaz activa, no un error de sintaxis ni de
+      esta app. Esto significaría que el compresor/Stereo Enhancer/
+      Volume Normalizer, aunque configurados y aplicados sin tirar
+      ningún error, podrían no estar teniendo NINGÚN efecto real sobre
+      el audio que sale al aire.
+    - Frente a esto, se preparó una pregunta formal de 3 caminos
+      (investigar mecanismos alternativos de libVLC / dejarlo como está
+      sin garantía de efecto / reconsiderar volver a EasyEffects-
+      PipeWire) — **el intento de hacer esa pregunta fue rechazado
+      explícitamente** (bloqueo del propio sistema: "The user doesn't
+      want to proceed with this tool use... STOP"). Santiago dio en
+      cambio su propia instrucción directa, por texto: **"Te corrijo.
+      dejalo como está pero cambiemos los controles y valores del
+      compresor."** — mantener la arquitectura actual TAL CUAL está
+      (sin perseguir la causa de fondo del modo headless por ahora),
+      pero corregir/ampliar los controles expuestos.
+
+    **Controles del compresor ampliados de 5 a los 7 reales del
+    módulo** (`core/audio_engine.py`, `config/settings.py`,
+    `gui/ventana_configuracion.py`) — Santiago pasó el listado EXACTO
+    con los rangos reales de su VLC 3.0.23 (Herramientas → Efectos y
+    Filtros → Compresor), agregando los 2 que faltaban desde el
+    principio (RMS/Pico y Radio Knee) y corrigiendo los rangos de los 5
+    que ya existían para que coincidan EXACTO con los de su interfaz:
+    - RMS/Pico (`--compressor-rms-peak`, 0.0 a 1.0) — **nuevo**.
+    - Ataque (`--compressor-attack`, 1.5 a 400.0 ms) — rango corregido
+      (antes sin tope explícito acorde a esto).
+    - Release (`--compressor-release`, 2.0 a 800.0 ms) — rango
+      corregido.
+    - Umbral / "Entrada de Audio" (`--compressor-threshold`, -30.0 a
+      0.0 dB) — sin cambios de rango, solo reetiquetado.
+    - Ratio / "Proporción" (`--compressor-ratio`, 1.0 a 20.0) — sin
+      cambios de rango, reetiquetado.
+    - Radio Knee (`--compressor-knee`, 1.0 a 10.0 dB) — **nuevo**.
+    - Salida / "Ganancia de Maquillaje" (`--compressor-makeup-gain`, 0
+      a 24 dB) — sin cambios de rango, reetiquetado ("de Compensación"
+      → "de Maquillaje", nombre real del control en VLC).
+    `_argumentos_compresor()` ahora arma los 7 flags en el mismo orden
+    que la interfaz real de VLC. Nuevas claves de config
+    `compresor_rms_pico` (default 0.0) y `compresor_knee_db` (default
+    2.5, el "factory default" de libVLC — Santiago no pasó un valor
+    real de su preset para este control porque EasyEffects no tiene un
+    concepto de "knee" equivalente en su `compressor#0`). El `QGroupBox`
+    del Compresor en Configuración → Procesador ganó los 2 spin box
+    nuevos y los 5 existentes se relabelearon/re-rangearon para que el
+    formulario sea un espejo fiel de lo que Santiago ve en su propio
+    VLC — pensado para que, si prueba manualmente en la GUI de VLC un
+    valor que sí percibe, pueda replicar el mismo número acá con
+    confianza de que es el control correcto.
+
+    **Nota de honestidad, importante para no perder de vista**: esta
+    ronda NO resuelve la limitación de fondo encontrada en el
+    diagnóstico (headless vs. GUI) — fue una decisión EXPLÍCITA de
+    Santiago de no perseguirla por ahora, priorizando corregir los
+    controles primero. La hipótesis propia de Santiago ("Creo que la
+    configuración fuera de esos rangos puede ser la falla") es
+    plausible pero no es la explicación más respaldada por las pruebas
+    ya hechas — los valores que se usaron en el litmus test de `cvlc`
+    (threshold -60, ratio 20, makeup-gain 0) estaban DENTRO de rangos
+    razonables y aun así no tuvieron ningún efecto audible, mientras
+    que la MISMA sintaxis de línea de comandos SÍ funcionó apenas se
+    la pasó a la GUI de `vlc` en vez de a `cvlc` — el patrón apunta más
+    a headless-vs-GUI que a rangos fuera de límite. Si tras esta ronda
+    Santiago sigue sin percibir el efecto incluso con los controles ya
+    corregidos, la pista más prometedora para una futura ronda sigue
+    siendo esa: investigar si existe alguna forma de forzar a libVLC a
+    activar sus filtros de audio sin una interfaz gráfica real adjunta
+    (o, si no la hay, aceptar la limitación y reconsiderar el enfoque).
+
+    Probado extendiendo `test_autoscroll_y_compresor.py` (los 7 flags
+    en el orden correcto, con y sin valores parciales — usa los
+    defaults de fábrica si falta una clave — y el conteo exacto de 7,
+    ni uno más ni uno menos) + regresión de
+    `test_compresor_scope_master.py` y `test_fallback_filtro_roto_y_
+    normalizador.py` (ambos pasan sin cambios, ninguno depende del
+    conteo/orden exacto de flags del compresor) + suite de regresión
+    completa sin fallos nuevos (mismos 3 fallos preexistentes de
+    siempre + 4 tests locales ya diagnosticados como desactualizados
+    desde la ronda 63, sin relación con este cambio) + smoke test de
+    arranque limpio. **Sigue sin poder confirmarse con audio/VLC
+    real**: falta que Santiago cargue los 7 controles con los valores
+    que sabe que SÍ percibe en la GUI de su VLC y confirme si, con esos
+    mismos números, el compresor headless de esta app finalmente
+    produce algún efecto audible — si sigue sin notarse nada, es la
+    señal más fuerte de que el problema es la limitación headless
+    encontrada en el diagnóstico, no los rangos de los controles.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

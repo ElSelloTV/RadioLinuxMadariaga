@@ -50,11 +50,18 @@ CONFIG_POR_DEFECTO = {
         # HPF/LPF — ver la nota completa en CLAUDE.md (ronda del
         # preset de EasyEffects) sobre por qué esto es una
         # aproximación, no un port exacto.
+        # Pedido explícito posterior: agregados los 2 controles reales
+        # que faltaban (RMS/Pico y Knee), confirmados contra la
+        # interfaz real de VLC 3.0.23 de Santiago (Herramientas ->
+        # Efectos y Filtros -> Compresor) — ahora son los 7 controles
+        # completos del módulo, con los rangos exactos que reportó.
         "compresor_activado": False,
-        "compresor_umbral_db": -12.0,
-        "compresor_ratio": 3.0,
+        "compresor_rms_pico": 0.0,
         "compresor_ataque_ms": 20.0,
         "compresor_release_ms": 100.0,
+        "compresor_umbral_db": -12.0,
+        "compresor_ratio": 3.0,
+        "compresor_knee_db": 2.5,
         "compresor_ganancia_salida_db": 2.0,
         # Stereo Enhancer de salida (pedido explícito, ronda posterior
         # al compresor): filtro NATIVO de libVLC (módulo "stereo_widen")
