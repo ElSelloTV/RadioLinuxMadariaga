@@ -6338,6 +6338,77 @@ todo el resto.
     una aproximación fiel a la imagen de referencia, no un archivo
     idéntico pixel a pixel), y que buscar+navegar categorías y el
     menú de Ventana 2 se sienten como esperaba en el uso diario.
+65. ~~Configuración: los fundidos de Ventana 1 y Ventana 2 agrupados
+    juntos en la pestaña Fade/Transiciones~~ — episodio de
+    diagnóstico + reorganización de UI, en dos partes:
+
+    **Diagnóstico ("me dice que tengo la última versión")**: mismo
+    bug ya documentado en la ronda 57 — la app compara la versión
+    contra el UPSTREAM que la rama efectivamente checkouteada tiene
+    configurado (`git rev-parse @{u}`), no siempre contra `main`. La
+    PC de Santiago había quedado con el checkout en
+    `claude/fundidos-y-mejoras-explorador-022105` (la rama de la
+    ronda 63, ya mergeada a `main` en su momento) — esa rama estaba al
+    día CONSIGO MISMA, pero 5 commits atrás de `main`, así que el
+    chequeo de actualización comparaba contra la rama equivocada y
+    decía "ya estás al día" con total literalidad, aunque `main` ya
+    tuviera todo lo nuevo. Confirmado con `git status`/`git branch -vv`
+    reales antes de tocar nada (mismo criterio de "ground truth de tu
+    máquina real" ya establecido) — sin cambios locales sin guardar,
+    solo hacía falta `git checkout main && git pull origin main`.
+    **Regla reafirmada para el futuro**: cada vez que se prueba algo
+    puntual en una rama de feature directo en la PC real, hay que
+    volver a `git checkout main` al terminar — quedarse en la rama de
+    feature hace que el chequeo de actualización compare contra ESA
+    rama de ahí en más, no contra `main`, aunque `main` en GitHub siga
+    avanzando.
+
+    **"Me retrocedió una actualización que hice por la otra rama"**:
+    tras el `git checkout main`, Santiago sintió que se había perdido
+    un pedido anterior (fundidos 400ms/500ms configurables por
+    ventana). Investigado: `origin/claude/fundidos-y-mejoras-explorador-022105`
+    no tenía NINGÚN commit por encima de lo ya mergeado a `main` (`git
+    log origin/main..origin/rama` vacío) — nada se perdió a nivel de
+    git, los valores 400ms/500ms YA estaban en `main` desde la ronda
+    63. Lo que SÍ era cierto, revisando el pedido original de Santiago
+    palabra por palabra ("Configuración por ventana separada en el
+    menú configuraciones"): los 4 controles de fundido vivían
+    DISPERSOS en dos pestañas distintas — los de Ventana 2
+    (`duracion_fade_in_v2_ms`/`duracion_fade_out_v2_ms`) en "Fade /
+    Transiciones", los de Ventana 1
+    (`duracion_fade_in_declick_v1_ms`/`duracion_fade_out_v1_ms`)
+    perdidos en medio de "Reproducción y Automatización" junto a
+    tolerancia de silencio/buffer/reintentos — nunca agrupados "por
+    ventana" como pedía el texto original. Corregido en
+    `gui/ventana_configuracion.py`: `_crear_tab_fade()` ahora arma DOS
+    `QGroupBox` dentro de la misma pestaña "Fade / Transiciones" —
+    "Ventana 1 — Publicidad / Tanda" (Fade IN/OUT) y "Ventana 2 —
+    Emisión" (checkbox de crossfade + Fade IN/OUT) — y los dos spin
+    box de Ventana 1 se sacaron por completo de
+    `_crear_tab_reproduccion()` (que conserva el resto: avanzar en
+    error, reintentos, tolerancia de silencio x2, umbral, bajada de
+    Pisador, buffer, retardo de arranque — nada de eso es "fundido").
+    Los NOMBRES de atributo (`spin_fade_in_declick_v1`,
+    `spin_fade_out_v1`, `spin_fade_in_v2`, `spin_fade_out_v2`) y las
+    claves de `config_general.json` que leen/escriben NO cambiaron —
+    solo se movió DÓNDE se construyen los widgets, así
+    `_cargar_valores_en_ui()`/`_guardar_y_cerrar()` siguieron intactos
+    sin tocar una línea.
+
+    Probado con `test_fade_config_reagrupado.py` (nuevo, dedicado): la
+    pestaña "Fade / Transiciones" tiene los dos `QGroupBox` con los
+    títulos correctos, los 4 spin box viven físicamente dentro de esa
+    pestaña (no de "Reproducción"), los defaults siguen siendo
+    400ms/500ms en las cuatro, y guardar desde la UI reorganizada
+    sigue escribiendo exactamente las mismas claves de siempre en
+    `config_general.json` (round-trip completo) — + suite de
+    regresión completa sin fallos nuevos (mismos 3 fallos
+    preexistentes de siempre + los 4 tests locales ya diagnosticados
+    en la ronda 63 como desactualizados, sin relación con este
+    cambio) + smoke test de arranque limpio. Falta que Santiago
+    confirme que la pestaña Fade/Transiciones reorganizada, con
+    "Ventana 1"/"Ventana 2" agrupados por separado, es lo que tenía en
+    mente al pedir "configuración por ventana separada".
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

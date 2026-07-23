@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget, QWidget,
     QComboBox, QSlider, QCheckBox, QDoubleSpinBox, QSpinBox, QLineEdit,
     QPushButton, QLabel, QDialogButtonBox, QFileDialog, QApplication,
-    QMessageBox, QColorDialog
+    QMessageBox, QColorDialog, QGroupBox
 )
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
@@ -135,8 +135,46 @@ class VentanaConfiguracion(QDialog):
     # Tab: Fade / Transiciones
     # ------------------------------------------------------------------
     def _crear_tab_fade(self) -> QWidget:
+        """Pedido explícito ("perfeccioná el fundido... configuración
+        por ventana separada en el menú configuraciones"): los 4 spin
+        boxes de fundido (IN/OUT x Ventana 1/Ventana 2) viven TODOS
+        acá, agrupados por ventana — antes los de Ventana 1 estaban
+        sueltos en la pestaña "Reproducción y Automatización", mezclados
+        con tolerancia de silencio/buffer/reintentos, lejos de los de
+        Ventana 2. Los nombres de atributo (`spin_fade_out_v1`,
+        `spin_fade_in_declick_v1`, `spin_fade_in_v2`, `spin_fade_out_v2`)
+        no cambiaron — solo se movió DÓNDE se construyen y se muestran,
+        así `_cargar_valores()`/`_guardar_y_cerrar()` siguen intactos."""
         widget = QWidget()
-        form = QFormLayout(widget)
+        layout = QVBoxLayout(widget)
+
+        grupo_v1 = QGroupBox("Ventana 1 — Publicidad / Tanda")
+        form_v1 = QFormLayout(grupo_v1)
+
+        self.spin_fade_in_declick_v1 = QSpinBox()
+        self.spin_fade_in_declick_v1.setRange(0, 3000)
+        self.spin_fade_in_declick_v1.setSingleStep(10)
+        self.spin_fade_in_declick_v1.setSuffix(" ms")
+        self.spin_fade_in_declick_v1.setToolTip(
+            "Fade-in corto al ARRANCAR cada ítem de Ventana 1 — sin\n"
+            "silencio inicial, rampa breve (400ms recomendado) en vez de\n"
+            "un salto brusco a volumen final. 0 = desactivado, salto directo."
+        )
+        self.spin_fade_out_v1 = QSpinBox()
+        self.spin_fade_out_v1.setRange(0, 5000)
+        self.spin_fade_out_v1.setSingleStep(50)
+        self.spin_fade_out_v1.setSuffix(" ms")
+        self.spin_fade_out_v1.setToolTip(
+            "Fade-out corto al terminar naturalmente una tanda y encadenar\n"
+            "con la siguiente dentro del mismo bloque de Ventana 1."
+        )
+
+        form_v1.addRow("Fade IN al arrancar un ítem:", self.spin_fade_in_declick_v1)
+        form_v1.addRow("Fade OUT al terminar un ítem:", self.spin_fade_out_v1)
+        layout.addWidget(grupo_v1)
+
+        grupo_v2 = QGroupBox("Ventana 2 — Emisión")
+        form_v2 = QFormLayout(grupo_v2)
 
         self.chk_crossfade = QCheckBox("Activar crossfade entre temas de la Ventana 2")
         self.spin_fade_in_v2 = QSpinBox()
@@ -148,17 +186,21 @@ class VentanaConfiguracion(QDialog):
         self.spin_fade_out_v2.setSingleStep(50)
         self.spin_fade_out_v2.setSuffix(" ms")
 
-        form.addRow(self.chk_crossfade)
-        form.addRow("Fade IN al entrar un tema (Ventana 2):", self.spin_fade_in_v2)
-        form.addRow("Fade OUT al terminar un tema (Ventana 2):", self.spin_fade_out_v2)
+        form_v2.addRow(self.chk_crossfade)
+        form_v2.addRow("Fade IN al entrar un tema:", self.spin_fade_in_v2)
+        form_v2.addRow("Fade OUT al terminar un tema:", self.spin_fade_out_v2)
+        layout.addWidget(grupo_v2)
 
         nota = QLabel(
-            "El fade se aplica únicamente a las transiciones de música\n"
-            "(Ventana 2). Los cortes hacia Publicidad en modo AUTOMÁTICO\n"
-            "son directos, sin crossfade, para no solapar audio comercial."
+            "En Ventana 1, el fade OUT encadena tandas dentro del mismo\n"
+            "bloque; en Ventana 2, el fade se aplica a las transiciones\n"
+            "entre temas de música (crossfade). Los cortes hacia\n"
+            "Publicidad en modo AUTOMÁTICO son siempre directos, sin\n"
+            "crossfade, para no solapar audio comercial."
         )
         nota.setObjectName("lblTituloBloqueActivo")
-        form.addRow(nota)
+        layout.addWidget(nota)
+        layout.addStretch()
 
         return widget
 
@@ -248,20 +290,11 @@ class VentanaConfiguracion(QDialog):
         self.spin_bajada_pisador.setSingleStep(0.5)
         self.spin_bajada_pisador.setSuffix(" dB")
 
-        self.spin_fade_out_v1 = QSpinBox()
-        self.spin_fade_out_v1.setRange(0, 5000)
-        self.spin_fade_out_v1.setSingleStep(50)
-        self.spin_fade_out_v1.setSuffix(" ms")
-
-        self.spin_fade_in_declick_v1 = QSpinBox()
-        self.spin_fade_in_declick_v1.setRange(0, 3000)
-        self.spin_fade_in_declick_v1.setSingleStep(10)
-        self.spin_fade_in_declick_v1.setSuffix(" ms")
-        self.spin_fade_in_declick_v1.setToolTip(
-            "Fade-in corto al ARRANCAR cada ítem de Ventana 1 — sin\n"
-            "silencio inicial, rampa breve (400ms recomendado) en vez de\n"
-            "un salto brusco a volumen final. 0 = desactivado, salto directo."
-        )
+        # Pedido explícito ("configuración por ventana separada"): los
+        # fade IN/OUT de Ventana 1 (spin_fade_in_declick_v1/
+        # spin_fade_out_v1) se movieron a la pestaña "Fade /
+        # Transiciones", agrupados junto a los de Ventana 2 — ya no se
+        # construyen acá, ver _crear_tab_fade().
 
         self.spin_buffer_caching = QSpinBox()
         self.spin_buffer_caching.setRange(0, 5000)
@@ -291,8 +324,6 @@ class VentanaConfiguracion(QDialog):
         form.addRow("Tolerancia de silencio estricta (Publicidad/Separadores/HTH):", self.spin_tolerancia_silencio_v1)
         form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
         form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
-        form.addRow("Fade OUT entre tandas de Ventana 1:", self.spin_fade_out_v1)
-        form.addRow("Fade IN al arrancar ítems de Ventana 1:", self.spin_fade_in_declick_v1)
         form.addRow("Buffer de audio (anti-tartamudeo):", self.spin_buffer_caching)
         form.addRow("Retardo de arranque interno:", self.spin_retardo_arranque)
 
