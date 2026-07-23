@@ -33,7 +33,17 @@ CONFIG_POR_DEFECTO = {
     },
     "fade": {
         "crossfade_activado": True,
+        # "duracion_fade_segundos" queda solo por compatibilidad con
+        # instalaciones viejas (ya no se usa) — reemplazada por el par
+        # de abajo, mismo criterio in/out separado que ya tenía
+        # Ventana 1 (duracion_fade_out_v1_ms / duracion_fade_in_declick_v1_ms).
         "duracion_fade_segundos": 3.0,
+        # Pedido explícito ("perfeccioná el fundido... el inicio sin
+        # silencio inicial con un fundido muy breve de 400ms, el final
+        # un fundido de 500ms sin silencio"): fundido de Ventana 2
+        # (Emisión/crossfade entre ítems), en MILISEGUNDOS.
+        "duracion_fade_in_v2_ms": 400,
+        "duracion_fade_out_v2_ms": 500,
     },
     "rutas": {
         "biblioteca_musical": os.path.expanduser("~/Musica"),
@@ -65,18 +75,26 @@ CONFIG_POR_DEFECTO = {
         # "duracion_fade_segundos" de Fade/Transiciones, que es en
         # segundos y es para el crossfade/fundido manual de Ventana 2).
         "duracion_fade_out_v1_ms": 500,
-        # Pedido explícito ("un mínimo tartamudeo, incluso un clip de
-        # sonido al inicio de los ítems en la ventana 1... un leve
-        # fade de inicio"): rampa de MILISEGUNDOS (no un fade musical)
-        # al arrancar cada ítem — evita el click/discontinuidad de
-        # saltar de golpe a volumen final justo al empezar a sonar,
-        # más audible desde que el audio pasa por la cadena de
-        # EasyEffects (un compresor/limiter/autogain puede reaccionar
-        # a un escalón de volumen instantáneo). 0 = desactivado. Ver
-        # MotorAudio.reproducir(duracion_declick_ms=...) — DISTINTO
-        # del fade-in musical que se sacó a propósito en una ronda
-        # anterior, acá la duración es imperceptible como "fundido".
-        "duracion_fade_in_declick_v1_ms": 60,
+        # Pedido explícito, ronda posterior ("perfeccioná el fundido...
+        # el inicio sin silencio inicial con un fundido muy breve de
+        # 400ms"): esto YA NO es un simple anti-click de milisegundos,
+        # es el fade-in real y corto de Ventana 1 — la ronda anterior
+        # que lo había sacado ("que los temas suenen más enganchados,
+        # sin fade-in") quedó reemplazada por este pedido explícito
+        # más reciente. Ver MotorAudio.reproducir(duracion_declick_ms=...).
+        "duracion_fade_in_declick_v1_ms": 400,
+        # Pedido explícito ("sistema de buffer para evitar tartamudeo...
+        # un inicio de milisegundos de retardo no afecta en mucho,
+        # configurable"): ver core/audio_engine.py:_argumentos_vlc().
+        # Sube el buffer de lectura/decodificación de libVLC — más alto
+        # da más margen anti-tartamudeo a costa de un arranque
+        # levemente más lento. Requiere reabrir la app para aplicar
+        # (es un argumento de instancia de libVLC, fijo al crearla).
+        "duracion_buffer_caching_ms": 1000,
+        # Retardo (ms) antes de reforzar seek/volumen tras un play() —
+        # ver MotorAudio.reproducir()/_tras_arranque. Mismo valor ya
+        # probado internamente sin problemas.
+        "retardo_arranque_ms": 150,
     },
     "general": {
         "confirmar_antes_de_eliminar": True,

@@ -32,6 +32,8 @@ from gui.ventana_musicalizador import VentanaMusicalizador
 from gui.ventana_configuracion import VentanaConfiguracion
 from gui.dialogo_elegir_pisador import DialogoElegirPisador
 from gui.dialogo_listas_auxiliar import DialogoListasAuxiliar
+from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
+from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
 from gui.common_widgets import configurar_columnas_ajustables
 from gui import estado_ui
 
@@ -44,6 +46,7 @@ from config.settings import (
     cargar_configuracion, registrar_evento,
     guardar_lista_auxiliar, listar_listas_auxiliares,
     obtener_lista_auxiliar, eliminar_lista_auxiliar,
+    rutas_recientes_en_historial,
 )
 
 
@@ -625,6 +628,58 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Pisador '{registro.get('titulo', '')}' asignado.", 3000)
 
     # ------------------------------------------------------------------
+    # Menú contextual "Agregar ítem" del Auxiliar (pedido explícito,
+    # "lo mismo que Musicalizador: específico o aleatorio"). A
+    # diferencia del "aleatorio" de Ventana 1 (Publicidad), que queda
+    # como un PLACEHOLDER que se re-resuelve cada vez que suena, acá se
+    # resuelve UNA VEZ, ahora mismo, y se agrega como un ítem concreto
+    # — el Auxiliar no tiene el mecanismo de re-resolución al vuelo
+    # (eso es específico de GestorPublicidad).
+    # ------------------------------------------------------------------
+    def _agregar_item_especifico_auxiliar(self):
+        dialogo = DialogoSeleccionarBiblioteca(
+            self.ventana_explorador.tree_categorias, permitir_multiple=True,
+            titulo="Agregar ítem al Auxiliar", parent=self,
+        )
+        if dialogo.exec() != DialogoSeleccionarBiblioteca.DialogCode.Accepted:
+            return
+        registros = dialogo.registros_elegidos()
+        for registro in registros:
+            self._ventana_auxiliar.panel.agregar_item(
+                registro.get("titulo", ""), registro.get("duracion", ""), registro.get("codigo", "—"),
+                registro.get("ruta", ""), registro.get("punto_inicio_ms") or 0,
+                registro.get("punto_fin_ms"), registro.get("ganancia_db") or 0.0,
+            )
+        if registros:
+            self.statusBar().showMessage(f"{len(registros)} ítem(s) agregado(s) al Auxiliar.", 3000)
+
+    def _agregar_item_aleatorio_auxiliar(self):
+        dialogo = DialogoSeleccionarCategoria(self.ventana_explorador.tree_categorias, parent=self)
+        if dialogo.exec() != DialogoSeleccionarCategoria.DialogCode.Accepted:
+            return
+        ruta_categoria = dialogo.ruta_elegida()
+        if not ruta_categoria:
+            return
+        categoria = self.ventana_explorador.buscar_categoria_por_ruta(ruta_categoria)
+        if categoria is None:
+            return
+        candidatos = self.ventana_explorador.listar_registros_de_categoria(categoria, recursivo=True)
+        if not candidatos:
+            QMessageBox.information(self, "Agregar ítem aleatorio", "Esa categoría no tiene archivos.")
+            return
+        rutas_candidatas = {r.get("ruta") for r in candidatos if r.get("ruta")}
+        evitar = rutas_recientes_en_historial(rutas_candidatas, max(0, len(rutas_candidatas) - 1))
+        registro = self.ventana_explorador.elegir_aleatorio_de_categoria(categoria, recursivo=True, excluir_rutas=evitar)
+        if registro is None:
+            return
+        self._ventana_auxiliar.panel.agregar_item(
+            registro.get("titulo", ""), registro.get("duracion", ""), registro.get("codigo", "—"),
+            registro.get("ruta", ""), registro.get("punto_inicio_ms") or 0,
+            registro.get("punto_fin_ms"), registro.get("ganancia_db") or 0.0,
+        )
+        self.statusBar().showMessage(f"Agregado al azar: {registro.get('titulo', '')}", 3000)
+
+    # ------------------------------------------------------------------
     # "Eliminar de la biblioteca" del menú contextual de Ventana 2 /
     # Auxiliar: borra el registro completo del Explorador, no solo el
     # ítem de esa lista puntual (esa parte ya la maneja el panel).
@@ -736,7 +791,8 @@ class MainWindow(QMainWindow):
             repetir_al_finalizar=reproduccion["repetir_lista_al_finalizar"],
             bajada_db_pisador=reproduccion["pisador_bajada_db"],
             crossfade_activado=fade["crossfade_activado"],
-            duracion_fade_segundos=fade["duracion_fade_segundos"],
+            duracion_fade_segundos=fade["duracion_fade_out_v2_ms"] / 1000.0,
+            duracion_fade_in_segundos=fade["duracion_fade_in_v2_ms"] / 1000.0,
             persistir=True,
             ventana_explorador=self.ventana_explorador,
         )
@@ -831,7 +887,8 @@ class MainWindow(QMainWindow):
             gestor.repetir_al_finalizar = reproduccion["repetir_lista_al_finalizar"]
             gestor.bajada_db_pisador = reproduccion["pisador_bajada_db"]
             gestor.crossfade_activado = fade["crossfade_activado"]
-            gestor.duracion_fade_segundos = fade["duracion_fade_segundos"]
+            gestor.duracion_fade_segundos = fade["duracion_fade_out_v2_ms"] / 1000.0
+            gestor.duracion_fade_in_segundos = fade["duracion_fade_in_v2_ms"] / 1000.0
             for motor in (gestor.motor, gestor.motor_pisador):
                 if motor.id_dispositivo() != id_dispositivo_master:
                     motor.set_dispositivo_salida(id_dispositivo_master)
@@ -877,7 +934,8 @@ class MainWindow(QMainWindow):
                 repetir_al_finalizar=reproduccion["repetir_lista_al_finalizar"],
                 bajada_db_pisador=reproduccion["pisador_bajada_db"],
                 crossfade_activado=fade["crossfade_activado"],
-                duracion_fade_segundos=fade["duracion_fade_segundos"],
+                duracion_fade_segundos=fade["duracion_fade_out_v2_ms"] / 1000.0,
+                duracion_fade_in_segundos=fade["duracion_fade_in_v2_ms"] / 1000.0,
             )
             self._gestor_auxiliar.set_volumen_base(audio["volumen_master"])
             # Pedido explícito: mismo criterio que arriba, en el
@@ -889,6 +947,8 @@ class MainWindow(QMainWindow):
                 lambda fila: self._abrir_dialogo_pisador(self._ventana_auxiliar, fila)
             )
             self._ventana_auxiliar.solicitud_eliminar_definitivo.connect(self._eliminar_definitivo_de_biblioteca)
+            self._ventana_auxiliar.solicitud_agregar_item_especifico.connect(self._agregar_item_especifico_auxiliar)
+            self._ventana_auxiliar.solicitud_agregar_item_aleatorio.connect(self._agregar_item_aleatorio_auxiliar)
             self._ventana_auxiliar.solicitud_guardar_lista.connect(self._guardar_lista_auxiliar)
             self._ventana_auxiliar.solicitud_cargar_lista.connect(self._cargar_lista_auxiliar)
 

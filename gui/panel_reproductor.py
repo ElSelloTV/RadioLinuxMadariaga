@@ -67,10 +67,12 @@ class PanelReproductor(QWidget):
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)       # fila del tema música
     solicitud_eliminar_definitivo = Signal(str)   # ruta a borrar de TODA la biblioteca
+    solicitud_agregar_item_especifico = Signal()  # pedido explícito: menú contextual del Auxiliar
+    solicitud_agregar_item_aleatorio = Signal()   # ídem, elegir un ítem al azar de una categoría
 
     def __init__(self, titulo_panel: str,
                  mostrar_barra_progreso: bool = False, acepta_desde_publicidad: bool = False,
-                 parent=None):
+                 permitir_agregar_item: bool = False, parent=None):
         super().__init__(parent)
         self._item_reproduciendo = None
         self._item_siguiente = None
@@ -78,6 +80,12 @@ class PanelReproductor(QWidget):
         self.slider_progreso = None
         self._stop_bloqueado_por_automatico = False
         self._titulo_panel = titulo_panel
+        # Pedido explícito ("Reproductor Auxiliar: agregá el menú
+        # contextual para agregar ítem, lo mismo que Musicalizador"):
+        # solo el Auxiliar lo pide — Ventana 1 (Emisión) normalmente se
+        # llena sola vía Musicalizador/arrastre, así que este menú
+        # queda OFF por defecto y se prende explícito acá.
+        self._permitir_agregar_item = permitir_agregar_item
         self._construir_ui(titulo_panel, mostrar_barra_progreso, acepta_desde_publicidad)
 
     # ------------------------------------------------------------------
@@ -305,6 +313,22 @@ class PanelReproductor(QWidget):
         self._pintar_item(item, ESTADO_REPRODUCIENDO)
         self.lbl_titulo_actual.setText(item.text(0) if item else "")
 
+    def marcar_realmente_reproducido(self, fila: int):
+        """Marca el ícono "ya reproducido" + registra en el historial
+        persistente — a diferencia de `marcar_reproduciendo()` (que
+        solo arma visualmente en rojo, incluso en silencio), esto lo
+        debe llamar el motor SOLO en el instante exacto en que el
+        audio arranca de verdad (ver nota en `_pintar_item`)."""
+        item = self.tree.topLevelItem(fila)
+        if item is None:
+            return
+        item.setData(0, ROL_YA_REPRODUCIDO, True)
+        item.setIcon(0, icono_reproducido())
+        registrar_reproduccion(
+            self._titulo_panel, item.text(0), item.text(2),
+            item.data(0, Qt.ItemDataRole.UserRole) or "",
+        )
+
     def marcar_siguiente(self, fila: int):
         estado_previo = ESTADO_REPRODUCIENDO if self._item_siguiente is self._item_reproduciendo else ESTADO_NORMAL
         self._pintar_item(self._item_siguiente, estado_previo)
@@ -517,21 +541,23 @@ class PanelReproductor(QWidget):
         return QBrush(), QBrush()
 
     def _pintar_item(self, item, estado: int):
+        """Pinta rojo/verde/normal. Bug real corregido ("el ícono
+        'reproducido' se marca al seleccionar, no al reproducir de
+        verdad"): antes esta función marcaba ROL_YA_REPRODUCIDO + el
+        ícono + el historial persistente como efecto colateral de
+        pintar ESTADO_REPRODUCIENDO — pero `_asegurar_rojo_y_verde()`
+        (core/gestor_emision.py) pinta rojo el primer ítem de la lista
+        con el reproductor EN SILENCIO, solo para "dejar algo armado",
+        cada vez que se carga/regenera la lista (nuevo día, nueva serie
+        del Musicalizador, etc.) — sin que haya sonado un solo segundo
+        de audio. Ahora pintar rojo es puramente visual; la marca real
+        de "reproducido" vive en `marcar_realmente_reproducido()`, que
+        el motor llama SOLO en el punto donde el audio arranca de
+        verdad (core/gestor_emision.py: `_reproducir_fila()` /
+        `_iniciar_crossfade()`)."""
         if item is None:
             return
         item.setData(0, ROL_ESTADO_ITEM, estado)
-        if estado == ESTADO_REPRODUCIENDO:
-            # Marca "ya reproducido" (pedido explícito, ícono a la
-            # izquierda, sin texto) — se pone al arrancar a sonar y ya
-            # NUNCA se saca, ni cuando el ítem deja el rojo.
-            item.setData(0, ROL_YA_REPRODUCIDO, True)
-            item.setIcon(0, icono_reproducido())
-            # Historial de reproducción PERSISTENTE (pedido explícito,
-            # distinto del ícono de arriba: éste sobrevive un reinicio).
-            registrar_reproduccion(
-                self._titulo_panel, item.text(0), item.text(2),
-                item.data(0, Qt.ItemDataRole.UserRole) or "",
-            )
         color, texto = self._color_para_estado(estado)
         for columna in range(self.tree.columnCount()):
             item.setBackground(columna, color)
@@ -563,14 +589,25 @@ class PanelReproductor(QWidget):
         if item_bajo_cursor is not None and item_bajo_cursor not in seleccionados:
             self.tree.setCurrentItem(item_bajo_cursor)
             seleccionados = [item_bajo_cursor]
-        if not seleccionados:
+        if not seleccionados and not self._permitir_agregar_item:
             return
 
         item_unico = seleccionados[0] if len(seleccionados) == 1 else None
 
         menu = QMenu(self)
-        texto_quitar = "✕ Quitar de la lista" if item_unico is not None else f"✕ Quitar {len(seleccionados)} de la lista"
-        accion_borrar = menu.addAction(texto_quitar)
+
+        accion_agregar_especifico = None
+        accion_agregar_aleatorio = None
+        if self._permitir_agregar_item:
+            accion_agregar_especifico = menu.addAction("➕ Agregar ítem específico...")
+            accion_agregar_aleatorio = menu.addAction("🎲 Agregar ítem aleatorio...")
+            if seleccionados:
+                menu.addSeparator()
+
+        accion_borrar = None
+        if seleccionados:
+            texto_quitar = "✕ Quitar de la lista" if item_unico is not None else f"✕ Quitar {len(seleccionados)} de la lista"
+            accion_borrar = menu.addAction(texto_quitar)
 
         accion_info = None
         if item_unico is not None:
@@ -587,13 +624,22 @@ class PanelReproductor(QWidget):
             else:
                 accion_pisador = menu.addAction("🎚 Agregar Pisador...")
 
-        menu.addSeparator()
-        texto_eliminar = "🗑 Eliminar de la biblioteca..." if item_unico is not None \
-            else f"🗑 Eliminar {len(seleccionados)} de la biblioteca..."
-        accion_eliminar = menu.addAction(texto_eliminar)
+        accion_eliminar = None
+        if seleccionados:
+            menu.addSeparator()
+            texto_eliminar = "🗑 Eliminar de la biblioteca..." if item_unico is not None \
+                else f"🗑 Eliminar {len(seleccionados)} de la biblioteca..."
+            accion_eliminar = menu.addAction(texto_eliminar)
+
+        if menu.isEmpty():
+            return
 
         elegida = menu.exec(self.tree.viewport().mapToGlobal(posicion))
-        if elegida == accion_borrar:
+        if accion_agregar_especifico is not None and elegida == accion_agregar_especifico:
+            self.solicitud_agregar_item_especifico.emit()
+        elif accion_agregar_aleatorio is not None and elegida == accion_agregar_aleatorio:
+            self.solicitud_agregar_item_aleatorio.emit()
+        elif accion_borrar is not None and elegida == accion_borrar:
             bloqueados = [item.text(0) for item in seleccionados if not self.quitar_item(item)]
             if bloqueados:
                 QMessageBox.information(

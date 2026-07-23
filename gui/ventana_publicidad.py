@@ -270,6 +270,12 @@ class VentanaPublicidad(QWidget):
         self.tree.setAlternatingRowColors(True)
         self.tree.setColumnWidth(0, 220)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # Pedido explícito ("sacá la opción de contraer el árbol, que
+        # siempre esté expandido"): sin flechita de expandir/contraer —
+        # los bloques ya se agregan expandidos (ver cargar_bloques() y
+        # el alta de bloque nuevo), esto solo saca la INTERACCIÓN de
+        # colapsarlos a mano.
+        self.tree.setItemsExpandable(False)
         self.tree.archivo_soltado.connect(self.archivo_soltado.emit)
         self.tree.itemDoubleClicked.connect(lambda item, columna: self._on_doble_click_item(item))
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -566,7 +572,16 @@ class VentanaPublicidad(QWidget):
     # ------------------------------------------------------------------
     def _on_doble_click_item(self, item):
         if item is not None and not item.data(0, Qt.ItemDataRole.UserRole):
-            return  # nodo de bloque, no es reproducible
+            # Nodo de bloque (pedido explícito: "doble click en el
+            # título... se marque en rojo y cargue listo para
+            # reproducir el primer item del bloque"): en vez de no
+            # hacer nada, se redirige al primer hijo — la validación
+            # real (vigencia, etc.) la sigue haciendo GestorPublicidad
+            # ._on_doble_click() con el ítem ya resuelto, mismo camino
+            # que cualquier otro doble click.
+            if item.childCount() == 0:
+                return
+            item = item.child(0)
         self.item_doble_click.emit(item)
 
     # ------------------------------------------------------------------
@@ -859,19 +874,21 @@ class VentanaPublicidad(QWidget):
         return None
 
     def _pintar_item(self, item, estado: int):
+        """Pinta rojo/verde/normal. Bug real corregido ("el ícono
+        'reproducido' se marca al seleccionar, no al reproducir de
+        verdad"): antes esta función marcaba ROL_YA_REPRODUCIDO + el
+        ícono + el historial persistente como efecto colateral de
+        pintar ESTADO_REPRODUCIENDO — pero `_asegurar_rojo_y_verde()`
+        (core/playlist_manager.py) pinta rojo la primera tanda con el
+        reproductor EN SILENCIO, solo para "dejar algo armado", sin que
+        haya sonado un solo segundo de audio. Ahora pintar rojo es
+        puramente visual; la marca real de "reproducido" vive en
+        `marcar_realmente_reproducido_item()`, que el motor llama SOLO
+        en el punto donde el audio arranca de verdad
+        (core/playlist_manager.py: `_reproducir_item()`)."""
         item.setData(0, ROL_ESTADO_ITEM, estado)
         if estado == ESTADO_REPRODUCIENDO:
             color_fondo = QBrush(QColor(COLOR_REPRODUCIENDO))
-            # Marca "ya reproducido" (pedido explícito, ícono a la
-            # izquierda, sin texto) — se pone al arrancar a sonar y ya
-            # NUNCA se saca, ni cuando el ítem deja el rojo.
-            item.setData(0, ROL_YA_REPRODUCIDO, True)
-            item.setIcon(0, icono_reproducido())
-            # Historial de reproducción PERSISTENTE (pedido explícito,
-            # distinto del ícono de arriba: éste sobrevive un reinicio).
-            registrar_reproduccion(
-                "Publicidad", item.text(0), item.text(2), item.data(0, Qt.ItemDataRole.UserRole) or "",
-            )
         elif estado == ESTADO_SIGUIENTE:
             color_fondo = QBrush(QColor(COLOR_SIGUIENTE))
         else:
@@ -880,3 +897,28 @@ class VentanaPublicidad(QWidget):
         for columna in range(self.tree.columnCount()):
             item.setBackground(columna, color_fondo)
             item.setForeground(columna, color_texto)
+
+    def marcar_realmente_reproducido_item(self, item):
+        """Marca el ícono "ya reproducido" + registra en el historial
+        persistente — a diferencia de `marcar_reproduciendo_item()`
+        (que solo arma visualmente en rojo, incluso en silencio), esto
+        lo debe llamar el motor SOLO en el instante exacto en que el
+        audio arranca de verdad (ver nota en `_pintar_item`)."""
+        if item is None:
+            return
+        self.marcar_icono_reproducido_item(item)
+        registrar_reproduccion(
+            "Publicidad", item.text(0), item.text(2), item.data(0, Qt.ItemDataRole.UserRole) or "",
+        )
+
+    def marcar_icono_reproducido_item(self, item):
+        """Solo el ícono/rol "ya reproducido", SIN tocar el historial
+        persistente — lo usa el ítem ALEATORIO (`_reproducir_item_aleatorio`
+        en core/playlist_manager.py), que registra el historial a mano
+        con los datos del archivo REAL resuelto (el ítem acá es solo un
+        placeholder en el árbol, su propia ruta no sirve para el
+        historial)."""
+        if item is None:
+            return
+        item.setData(0, ROL_YA_REPRODUCIDO, True)
+        item.setIcon(0, icono_reproducido())

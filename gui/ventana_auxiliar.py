@@ -43,6 +43,8 @@ class VentanaAuxiliar(QDialog):
     solicitud_eliminar_definitivo = Signal(str)
     solicitud_guardar_lista = Signal()
     solicitud_cargar_lista = Signal()
+    solicitud_agregar_item_especifico = Signal()
+    solicitud_agregar_item_aleatorio = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,6 +61,10 @@ class VentanaAuxiliar(QDialog):
             # Auxiliar (nunca a Ventana 2 — ver
             # ArbolReproductorConDrop.acepta_desde_publicidad).
             acepta_desde_publicidad=True,
+            # Pedido explícito ("agregá el menú contextual para agregar
+            # ítem, lo mismo que Musicalizador"): solo el Auxiliar lo
+            # pide, Ventana 1 (Emisión) se llena sola.
+            permitir_agregar_item=True,
         )
         layout.addWidget(self.panel)
 
@@ -88,12 +94,17 @@ class VentanaAuxiliar(QDialog):
         self.panel.item_doble_click.connect(self.item_doble_click.emit)
         self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
         self.panel.solicitud_eliminar_definitivo.connect(self.solicitud_eliminar_definitivo.emit)
+        self.panel.solicitud_agregar_item_especifico.connect(self.solicitud_agregar_item_especifico.emit)
+        self.panel.solicitud_agregar_item_aleatorio.connect(self.solicitud_agregar_item_aleatorio.emit)
 
     # ------------------------------------------------------------------
     # Delegación: API pública usada por core/playlist_manager.py
     # ------------------------------------------------------------------
     def marcar_reproduciendo(self, fila):
         self.panel.marcar_reproduciendo(fila)
+
+    def marcar_realmente_reproducido(self, fila):
+        self.panel.marcar_realmente_reproducido(fila)
 
     def marcar_siguiente(self, fila):
         self.panel.marcar_siguiente(fila)
