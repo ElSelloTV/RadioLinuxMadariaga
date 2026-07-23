@@ -762,16 +762,26 @@ class GestorPublicidad:
     def _on_doble_click(self, item):
         if item is not None and item.parent() is None:
             # Nodo de bloque (título, "TANDA - Rotativa"), no una
-            # tanda — pedido explícito: doble click en el título arma
-            # el primer ítem REPRODUCIBLE del bloque, saltando
-            # cualquier ítem marcado con error (archivo faltante) en
-            # el camino, nunca solo "el hijo en la posición 0" a
-            # ciegas. Reutiliza el mismo camino que ya usa el botón
-            # Play sobre un bloque seleccionado, en vez de duplicar la
-            # lógica de saltear ítems inválidos acá también.
-            registrar_evento(f"Publicidad: doble click sobre el bloque '{item.text(0)}'")
-            self._reproducir_primero_del_bloque(item)
-            return
+            # tanda. Bug real corregido (pedido explícito, ronda
+            # posterior a la que agregó esto: "que NO reproduzca al
+            # doble clic en el bloque, solo debe reproducirse si le
+            # doy Play o llega su momento horario"): la versión
+            # anterior llamaba a _reproducir_primero_del_bloque(),
+            # que ARRANCA audio de una — eso violaba la regla de que
+            # Ventana 1 solo entra a reproducir por Play manual o por
+            # el horario del bloque, y de paso salteaba
+            # al_arrancar_manual (nunca corta Emisión), causando que
+            # V1 sonara superpuesta con V2. Ahora, igual que con
+            # cualquier tanda suelta, doble click en el título solo
+            # ARMA (rojo) o ENCOLA (verde) — nunca reproduce — así que
+            # acá solo se resuelve cuál es el primer ítem REPRODUCIBLE
+            # del bloque (saltando cualquiera marcado con error) y se
+            # deja que caiga en la misma lógica de siempre, de ahí
+            # para abajo.
+            primero = self._primer_item_valido_de(item)
+            if primero is None:
+                return
+            item = primero
         if not self._item_valido(item):
             return  # ítem inválido (vigencia vencida, archivo faltante, etc.)
         if self._bloque_automatico_actual is not None:

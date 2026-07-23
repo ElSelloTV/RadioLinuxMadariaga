@@ -283,6 +283,49 @@ class GestorPlaylist:
         if not self._pisador_activo:
             self.motor.set_volumen(volumen)
 
+    def _resolver_candidata_verde(self, fila_base: int) -> int:
+        """Calcula qué fila debería quedar en VERDE justo después de
+        `fila_base` (la que acaba de quedar en rojo/reproduciendo) —
+        centralizado para que `_asegurar_rojo_y_verde()`, `_avanzar()`,
+        `_iniciar_crossfade()` y `_recalcular_verde_tras_nuevo_rojo()`
+        compartan el mismo criterio, mismo espíritu que
+        `_marcar_siguiente_con_refill()` (evita el bug ya documentado
+        de caminos paralelos que se olvidan de aplicar la misma
+        regla).
+
+        Bug real corregido (pedido explícito: "SIEMPRE cuando se
+        pinte de rojo el último item... cargue otro ciclo, así puede
+        pintar de verde el siguiente"): las 4 llamadoras calculaban
+        esto de forma casi idéntica, pero cuando el candidato quedaba
+        fuera de rango (`fila_base` es el ÚLTIMO ítem disponible)
+        siempre se resolvía primero contra "repetir lista al
+        finalizar" (`True` por defecto) — como ese chequeo iba ANTES
+        de mirar si había un formato FMT activo, un ciclo de FMT
+        agotado nunca generaba nada nuevo: simplemente ENVOLVÍA de
+        vuelta al ítem 0, repitiendo la MISMA serie vieja para
+        siempre, en vez de generar contenido nuevo — exactamente la
+        causa de "no carga otro ciclo". Corregido invirtiendo la
+        prioridad: con un formato activo, SIEMPRE se intenta generar
+        una serie nueva primero — "repetir al finalizar" solo aplica
+        de verdad a una lista ESTÁTICA sin FMT (o como red de
+        seguridad si el formato resultó estar roto y no generó
+        nada)."""
+        total = self.panel.cantidad_items()
+        candidata = fila_base + 1
+        if candidata >= total:
+            generado = False
+            if self._formato_musicalizador_activo is not None:
+                self._generar_serie_musicalizador()
+                total = self.panel.cantidad_items()
+                generado = fila_base + 1 < total
+            if generado:
+                candidata = fila_base + 1
+            else:
+                candidata = 0 if self.repetir_al_finalizar else -1
+        if candidata == fila_base:
+            candidata = -1
+        return candidata
+
     def _asegurar_rojo_y_verde(self):
         """Pedido explícito: "siempre tendrá uno cargado en rojo para
         reproducir, y el verde siempre. Si hay 1 solo item, entonces
@@ -299,10 +342,8 @@ class GestorPlaylist:
             self.panel.marcar_reproduciendo(0)
         if 0 <= self.panel.fila_siguiente() < total and self.panel.fila_siguiente() != fila_roja:
             return
-        candidata = fila_roja + 1
-        if candidata >= total:
-            candidata = 0 if self.repetir_al_finalizar else -1
-        if candidata >= 0 and candidata != fila_roja:
+        candidata = self._resolver_candidata_verde(fila_roja)
+        if candidata >= 0:
             self._marcar_siguiente_con_refill(candidata)
 
     def reproducir_actual(self):
@@ -517,7 +558,16 @@ class GestorPlaylist:
             fila_siguiente = fila_actual + 1
 
         if fila_siguiente >= total:
-            fila_siguiente = 0 if self.repetir_al_finalizar else -1
+            # Mismo criterio que la red de emergencia de _avanzar():
+            # con un formato FMT activo, generar una serie nueva tiene
+            # prioridad sobre "repetir lista al finalizar" (si no, un
+            # ciclo agotado terminaría cruzando por crossfade de vuelta
+            # al ítem 0 en vez de a contenido recién generado).
+            if self._formato_musicalizador_activo is not None:
+                self._generar_serie_musicalizador()
+                total = self.panel.cantidad_items()
+            if fila_siguiente >= total:
+                fila_siguiente = 0 if self.repetir_al_finalizar else -1
         if fila_siguiente < 0:
             return
 
@@ -551,9 +601,7 @@ class GestorPlaylist:
         self._fallos_consecutivos = 0
         self.panel.marcar_reproduciendo(fila_siguiente)
         self.panel.marcar_realmente_reproducido(fila_siguiente)
-        candidata_siguiente = fila_siguiente + 1
-        if candidata_siguiente >= total:
-            candidata_siguiente = 0 if self.repetir_al_finalizar else -1
+        candidata_siguiente = self._resolver_candidata_verde(fila_siguiente)
         if candidata_siguiente >= 0:
             self._marcar_siguiente_con_refill(candidata_siguiente)
 
@@ -713,13 +761,16 @@ class GestorPlaylist:
         recién elegido a mano — a diferencia de `_asegurar_rojo_y_verde()`
         (que respeta un verde ya válido, sin importar dónde apunte),
         acá se sobrescribe cualquier verde viejo. `_marcar_siguiente_con_refill`
-        se encarga de repintar el verde anterior a su color normal."""
-        total = self.panel.cantidad_items()
-        candidata = fila_roja + 1
-        if candidata >= total:
-            candidata = 0 if self.repetir_al_finalizar else -1
-        if candidata == fila_roja:
-            candidata = -1
+        se encarga de repintar el verde anterior a su color normal.
+
+        Bug real corregido: cuando `fila_roja` era el ÚLTIMO ítem
+        disponible (el caso típico de "elegí a mano el último ítem
+        cargado y lo reproduzco"), esta función calculaba el
+        candidato a mano en vez de usar `_resolver_candidata_verde()`
+        — con un formato FMT activo, eso dejaba el verde vacío para
+        siempre sin disparar ningún refill (ver nota completa en
+        `_resolver_candidata_verde`)."""
+        candidata = self._resolver_candidata_verde(fila_roja)
         if candidata >= 0:
             self._marcar_siguiente_con_refill(candidata)
         else:
@@ -779,32 +830,34 @@ class GestorPlaylist:
             fila_siguiente = fila_actual + 1
 
         if fila_siguiente >= total:
-            if self.repetir_al_finalizar:
-                fila_siguiente = 0
-            elif self._formato_musicalizador_activo is not None:
-                # Red de emergencia — SOLO para el caso límite de una
-                # serie de 1 solo ítem (o cualquier otro donde nunca
-                # hubo "ante-último" desde donde marcar verde): el
-                # mecanismo normal es `_marcar_siguiente_con_refill()`
-                # (ver más abajo), pero acá no hay nada que marcar en
-                # verde todavía, así que se genera la serie siguiente
-                # directamente antes de rendirse.
+            # Red de emergencia — SOLO para el caso límite de una
+            # serie de 1 solo ítem (o cualquier otro donde nunca hubo
+            # "ante-último" desde donde marcar verde): el mecanismo
+            # normal es `_marcar_siguiente_con_refill()`/
+            # `_resolver_candidata_verde()` (ver más arriba), pero acá
+            # no hay nada que marcar en verde todavía, así que se
+            # genera la serie siguiente directamente antes de
+            # rendirse. Bug real corregido: esto ANTES chequeaba
+            # `repetir_al_finalizar` (True por defecto) PRIMERO —
+            # con un FMT activo, eso hacía ENVOLVER de vuelta al ítem
+            # 0 en vez de generar contenido nuevo. Con un formato
+            # activo, siempre se lo prioriza; "repetir al finalizar"
+            # queda como red de seguridad si el formato no generó
+            # nada (roto) o no hay ninguno activo.
+            if self._formato_musicalizador_activo is not None:
                 self._generar_serie_musicalizador()
                 total = self.panel.cantidad_items()
-                if fila_siguiente >= total:
+            if fila_siguiente >= total:
+                if self.repetir_al_finalizar:
+                    fila_siguiente = 0
+                else:
                     self.motor.detener()
                     self.panel.resetear_reproduccion()
                     return
-            else:
-                self.motor.detener()
-                self.panel.resetear_reproduccion()
-                return
 
         self.panel.marcar_reproduciendo(fila_siguiente)
 
-        candidata_siguiente = fila_siguiente + 1
-        if candidata_siguiente >= total:
-            candidata_siguiente = 0 if self.repetir_al_finalizar else -1
+        candidata_siguiente = self._resolver_candidata_verde(fila_siguiente)
         if candidata_siguiente >= 0:
             self._marcar_siguiente_con_refill(candidata_siguiente)
 

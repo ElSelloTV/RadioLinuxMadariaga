@@ -6597,6 +6597,125 @@ todo el resto.
     encuentra y arranca desde el primer ítem realmente reproducible,
     saltando cualquier ítem marcado con la X en el camino, sin importar
     en qué posición esté.
+68. ~~Corrección de la ronda anterior: doble click en un bloque de V1
+    NO debe reproducir (solo Play/horario) + el refill del FMT no
+    disparaba cuando el rojo era el último ítem~~ — Santiago probó la
+    ronda 67 (que arreglaba el salteo de ítems rotos al doble-clickear
+    un bloque) y reportó "hay un error que no puede suceder": el fix
+    de esa ronda hacía que doble click en el TÍTULO de un bloque
+    arrancara audio de una — violando la regla explícita "La ventana 1
+    solo ingresa a reproducir cuando: a) es su momento horario del
+    bloque, b) cuando manualmente le doy play" — y de paso, como ese
+    camino nunca pasaba por `al_arrancar_manual` (el único mecanismo
+    que corta Emisión antes de que Ventana 1 empiece a sonar), el
+    audio de V1 sonaba ENCIMA del de Ventana 2 — violando también la
+    regla de exclusión mutua ya establecida ("NUNCA una ventana pisará
+    en audio a la otra"). Aparte, reportó el problema más grande de
+    esta ronda: el Musicalizador/FMT de Ventana 2 seguía sin cargar un
+    ciclo nuevo al llegar al final de la lista, ni siquiera al abrir
+    la app y reproducir a mano el último ítem restaurado.
+
+    **a) V1: doble click en un bloque vuelve a ser "solo ARMA, nunca
+    reproduce" (pedido explícito, mismo criterio que cualquier tanda
+    suelta)**: `GestorPublicidad._on_doble_click()`
+    (`core/playlist_manager.py`) ya no llama a
+    `_reproducir_primero_del_bloque()` (que arranca audio) en la rama
+    de nodo de bloque — ahora solo resuelve `primero =
+    self._primer_item_valido_de(item)` (el mismo salteo de ítems rotos
+    de la ronda anterior, intacto) y deja que `item = primero` caiga
+    en la MISMA lógica de siempre (armar en rojo si está en silencio,
+    encolar en verde si está sonando) — sin duplicar código, un solo
+    camino para tanda suelta y título de bloque. Como nunca se llama a
+    `_reproducir_item()`, no hay audio que overlappee con Emisión — el
+    bug de "pisar" a Ventana 2 queda resuelto como consecuencia directa,
+    sin tocar nada de la coordinación de `al_arrancar_manual`. Los
+    ÚNICOS dos caminos que siguen arrancando audio de verdad en V1 son
+    `_reproducir_seleccion_o_actual()` (botón Play, ya llama a
+    `al_arrancar_manual` para cortar Emisión) y `disparar_bloque()`
+    (el Scheduler, por horario) — ninguno de los dos se tocó.
+
+    **b) V2: LA CAUSA DE FONDO real del refill que "no carga otro
+    ciclo" — un bug de PRECEDENCIA, no de que el mecanismo faltara**:
+    investigando el reporte de Santiago ("SIEMPRE cuando se pinte de
+    rojo el último item... cargue otro ciclo") se encontraron DOS
+    problemas superpuestos en `core/gestor_emision.py`:
+    1. **Cuatro lugares distintos** (`_asegurar_rojo_y_verde()`,
+       `_avanzar()`, `_iniciar_crossfade()`,
+       `_recalcular_verde_tras_nuevo_rojo()`) calculaban "qué fila
+       debería quedar en verde" con la MISMA lógica casi-duplicada —
+       y los CUATRO tenían el mismo agujero: cuando el candidato a
+       verde quedaba fuera de rango (la fila roja/actual es el ÚLTIMO
+       ítem disponible), directamente se rendían a `-1` SIN pasar
+       nunca por `_marcar_siguiente_con_refill()` — el ÚNICO punto que
+       dispara el refill del Musicalizador (centralizado ahí desde la
+       ronda 34c, a propósito, para evitar justo este tipo de bug). Es
+       decir: el refill NUNCA se disparaba en ningún escenario donde
+       el rojo llegara a ser el último ítem por un camino que NO fuera
+       el caso límite de "serie de 1 solo ítem" (que sí tenía su
+       propia red de emergencia dedicada, agregada en la ronda 30).
+       Corregido centralizando el cálculo en un helper NUEVO,
+       `_resolver_candidata_verde(fila_base)` — usado por los 4
+       lugares — que, si el candidato queda fuera de rango y hay un
+       formato FMT activo, genera una serie nueva ANTES de rendirse.
+    2. **El bug MÁS de fondo, encontrado recién al escribir el test**:
+       incluso con el helper centralizado, `repetir_lista_al_finalizar`
+       (`True` por defecto en `config_general.json`) se chequeaba
+       ANTES que el formato FMT activo en los 3 lugares que decidían
+       "qué pasa cuando no hay más ítems" (el candidato a verde en el
+       helper nuevo, y los dos chequeos de límite de la fila ROJA en
+       `_avanzar()` y `_iniciar_crossfade()`) — con la config por
+       defecto, esto significaba que un ciclo de FMT agotado
+       simplemente ENVOLVÍA de vuelta al ítem 0 y REPETÍA la misma
+       serie vieja para siempre, en vez de generar contenido nuevo —
+       la causa real y exacta de "no carga otro ciclo", reproducible
+       con la config de fábrica de cualquier instalación nueva.
+       Corregido invirtiendo la prioridad en los 3 lugares: con un
+       formato activo, SIEMPRE se intenta generar una serie nueva
+       PRIMERO; "repetir al finalizar" queda como red de seguridad
+       solo si el formato resultó estar roto (no generó nada) o si no
+       hay ningún FMT activo (lista estática armada a mano).
+    **Efecto colateral esperado, no un bug**: con este fix, una serie
+    de pocos ítems (1 o 2) ahora encadena el refill siguiente de forma
+    MÁS PROACTIVA que antes — incluso en la propia carga inicial
+    (`iniciar_musicalizador()`), si el primer/único ítem generado
+    resulta ser también el último, el refill se dispara ya mismo, en
+    vez de esperar reactivamente a que `_avanzar()` se topara con el
+    límite más tarde. Varios tests preexistentes de rondas anteriores
+    (`test_fmt_memoria_y_refill_verde.py`, `test_musicalizador_fixes.py`,
+    `test_musicalizador_gui.py`, `test_ronda_afinado_musicalizador.py`)
+    tenían aserciones que codificaban literalmente el conteo EXACTO
+    del comportamiento viejo (ej. "una serie de 1 solo ítem carga
+    exactamente 1, sin verde") — actualizadas para reflejar el nuevo
+    comportamiento proactivo, confirmado que no eran regresiones sino
+    aserciones desactualizadas por un cambio de comportamiento
+    deliberado (mismo criterio ya aplicado varias veces en este
+    archivo).
+
+    Probado con `test_v1_no_autoplay_v2_refill_siempre.py` (nuevo,
+    dedicado, 12 verificaciones): doble click en el título de un
+    bloque NUNCA dispara `motor.reproducir()` ni con V1 en silencio ni
+    con V2 sonando (y V2 nunca se corta, porque nada la interrumpe);
+    Play (botón) SÍ reproduce y SÍ corta Emisión; `disparar_bloque()`
+    (horario) sigue reproduciendo con normalidad, sin cambios;
+    `_asegurar_rojo_y_verde()` con el rojo en el último ítem de una
+    serie FMT genera una serie nueva en vez de dejar el verde vacío;
+    el escenario EXACTO reportado por Santiago (abrir la app, elegir a
+    mano con doble click el último ítem cargado y "reproducirlo")
+    dispara un ciclo nuevo — + actualización de las 4 suites
+    preexistentes mencionadas arriba + suite de regresión completa sin
+    fallos nuevos (mismos 3 fallos preexistentes de siempre:
+    `test_confirmaciones.py`, `test_log_git.py`, `test_ventana3.py`, +
+    4 tests locales ya diagnosticados como desactualizados desde la
+    ronda 63, confirmados sin relación con este cambio corriendo la
+    misma batería contra el código sin modificar vía `git stash`) +
+    smoke test de arranque limpio. **Sigue sin poder probarse con
+    audio/VLC real**: falta que Santiago confirme que doble click en
+    un bloque de Ventana 1 ya nunca arranca a sonar solo (solo Play o
+    el horario), que ya no hay superposición de audio entre V1 y V2
+    bajo ninguna circunstancia, y que el Musicalizador/FMT de Ventana 2
+    ahora sí encadena ciclos nuevos sin fin — tanto en uso continuo
+    normal como en el escenario puntual de abrir la app y retomar a
+    mano el último ítem de una lista restaurada.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
