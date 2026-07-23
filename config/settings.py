@@ -71,6 +71,17 @@ CONFIG_POR_DEFECTO = {
         "estereo_ancho_feedback_pct": 30,
         "estereo_ancho_crossfeed_pct": 30,
         "estereo_ancho_dry_mix_pct": 70,
+        # Volume Normalizer de salida (pedido explícito, ronda
+        # posterior: "¿qué filtro podemos aplicar para el efecto
+        # Upward en VLC?"): filtro NATIVO de libVLC (módulo "normvol")
+        # — libVLC NO tiene un compresor Upward real, este es lo más
+        # parecido (un AGC/auto-nivelador que promedia el nivel y
+        # ajusta ganancia hacia un objetivo, no un compresor
+        # paramétrico). Ver core/audio_engine.py:_argumentos_normalizador().
+        # Desactivado por defecto, valores de fábrica de libVLC.
+        "normalizador_activado": False,
+        "normalizador_buff_size": 20,
+        "normalizador_max_level": 2.0,
     },
     "fade": {
         "crossfade_activado": True,

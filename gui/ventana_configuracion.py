@@ -221,6 +221,39 @@ class VentanaConfiguracion(QDialog):
 
         form.addRow(grupo_estereo)
 
+        # Pedido explícito (ronda posterior, pregunta directa de
+        # Santiago: "¿qué filtro podemos aplicar para tener este
+        # efecto 'levanta lo que está bajo el umbral' en VLC?"): libVLC
+        # NO tiene un compresor Upward real -- lo más parecido es este
+        # Volume Normalizer (AGC/auto-nivelador), honestamente distinto.
+        grupo_normalizador = QGroupBox("Volume Normalizer (filtro nativo de VLC)")
+        form_normalizador = QFormLayout(grupo_normalizador)
+
+        self.chk_normalizador_activado = QCheckBox("Activar Volume Normalizer")
+        form_normalizador.addRow(self.chk_normalizador_activado)
+
+        self.spin_normalizador_buff_size = QSpinBox()
+        self.spin_normalizador_buff_size.setRange(1, 200)
+        form_normalizador.addRow("Buffers (ventana de promedio):", self.spin_normalizador_buff_size)
+
+        self.spin_normalizador_max_level = QDoubleSpinBox()
+        self.spin_normalizador_max_level.setRange(1.0, 10.0)
+        self.spin_normalizador_max_level.setSingleStep(0.1)
+        self.spin_normalizador_max_level.setSuffix(" x")
+        form_normalizador.addRow("Nivel máximo (factor):", self.spin_normalizador_max_level)
+
+        nota_normalizador = QLabel(
+            "NO es un compresor Upward real (libVLC no tiene ninguno)\n"
+            "— es un normalizador de volumen continuo (parecido a un\n"
+            "AGC), que va acercando el nivel a un objetivo en vez de\n"
+            "usar threshold/ratio/attack/release. Mismo criterio que\n"
+            "los otros dos: requiere reabrir la app, salida Master."
+        )
+        nota_normalizador.setObjectName("lblTituloBloqueActivo")
+        form_normalizador.addRow(nota_normalizador)
+
+        form.addRow(grupo_normalizador)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(contenido)
@@ -834,6 +867,9 @@ class VentanaConfiguracion(QDialog):
         self.spin_estereo_ancho_feedback.setValue(audio["estereo_ancho_feedback_pct"])
         self.spin_estereo_ancho_crossfeed.setValue(audio["estereo_ancho_crossfeed_pct"])
         self.spin_estereo_ancho_dry_mix.setValue(audio["estereo_ancho_dry_mix_pct"])
+        self.chk_normalizador_activado.setChecked(audio["normalizador_activado"])
+        self.spin_normalizador_buff_size.setValue(audio["normalizador_buff_size"])
+        self.spin_normalizador_max_level.setValue(audio["normalizador_max_level"])
 
         fade = self._config["fade"]
         self.chk_crossfade.setChecked(fade["crossfade_activado"])
@@ -905,6 +941,9 @@ class VentanaConfiguracion(QDialog):
         self._config["audio"]["estereo_ancho_feedback_pct"] = self.spin_estereo_ancho_feedback.value()
         self._config["audio"]["estereo_ancho_crossfeed_pct"] = self.spin_estereo_ancho_crossfeed.value()
         self._config["audio"]["estereo_ancho_dry_mix_pct"] = self.spin_estereo_ancho_dry_mix.value()
+        self._config["audio"]["normalizador_activado"] = self.chk_normalizador_activado.isChecked()
+        self._config["audio"]["normalizador_buff_size"] = self.spin_normalizador_buff_size.value()
+        self._config["audio"]["normalizador_max_level"] = self.spin_normalizador_max_level.value()
 
         self._config["fade"]["crossfade_activado"] = self.chk_crossfade.isChecked()
         self._config["fade"]["duracion_fade_in_v2_ms"] = self.spin_fade_in_v2.value()

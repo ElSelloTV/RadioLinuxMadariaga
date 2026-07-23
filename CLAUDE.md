@@ -7056,6 +7056,82 @@ todo el resto.
     Santiago confirme que el Stereo Enhancer se escucha al activarlo
     (mismo requisito de reabrir la app que el compresor), y que decida
     si quiere sumar el Volume Normalizer como tercera función.
+73. ~~LA CAUSA DE FONDO del "no se escucha nada": el compresor roto se
+    llevaba puesto TODO el motor de audio + Volume Normalizer (tercer
+    efecto)~~ — Santiago confirmó que quería el Volume Normalizer, y
+    de paso reportó un bug real crítico: tras activar el compresor,
+    "ahora solo tengo la opción de salida por 'predeterminada del
+    sistema' y no puedo elegir las salidas como antes, con el
+    listado, ni Pipe, ni Alsa, ni nada" — y sin sonido.
+
+    **Causa de fondo encontrada**: `MotorAudio.__init__()` construye
+    `vlc.Instance(argumentos_finales)` UNA sola vez, con los flags del
+    compresor/Stereo Enhancer ya incluidos si estaban activados — si
+    ESA llamada fallaba en la instalación real de Santiago (versión de
+    libVLC sin el módulo compilado, sintaxis no soportada, lo que sea
+    — no reproducible en el sandbox, que no tiene libVLC), el bloque
+    `except` general de todo el constructor se disparaba y ponía
+    `self._disponible = False` — dejando el motor ENTERO inutilizable,
+    no solo el filtro que falló. Como
+    `VentanaConfiguracion._listar_dispositivos_disponibles()` arma un
+    `MotorAudio()` temporal solo para listar dispositivos y devuelve
+    `[]` si `esta_disponible()` es `False`, el combo de Configuración
+    → Audio se quedaba con un solo ítem hardcodeado ("default") — el
+    síntoma exacto que reportó Santiago. Mismo motivo explica "no se
+    escucha": CUALQUIER motor nuevo (Publicidad, Emisión, Auxiliar,
+    Pisador) fallaba igual con el compresor activado.
+
+    **Corregido con un reintento, no con más cautela previa (no hay
+    forma de validar de antemano si libVLC va a aceptar un flag)**:
+    `MotorAudio.__init__()` ahora intenta `vlc.Instance()` CON los
+    filtros de audio primero — si eso falla (excepción o `None`), se
+    registra el error en el log con el motivo exacto y se reintenta
+    SIN ningún filtro, dejando el motor disponible igual (audio sin
+    procesar, en vez de sin audio) — mismo criterio de "nunca confiar
+    en una sola llamada, degradar limpio" ya aplicado repetidas veces
+    en este archivo para bugs de libVLC. El diagnóstico ya agregado en
+    la ronda del compresor (log con los argumentos exactos) se
+    mantiene sin cambios — ahora se complementa con el motivo del
+    fallo si el reintento llegó a dispararse.
+
+    **Volume Normalizer (tercer efecto, "normvol")**: respuesta a la
+    pregunta directa de Santiago sobre un filtro Upward — libVLC no
+    tiene ninguno real, este es lo más parecido (un AGC/auto-nivelador
+    que promedia el nivel de señal en una ventana móvil y ajusta
+    ganancia hacia un objetivo, sin threshold/ratio/attack/release).
+    Mismos 2 parámetros reales del módulo (`--norm-buff-size`,
+    `--norm-max-level`), mismo criterio de alcance que los otros dos
+    (desactivado por defecto, salida Master únicamente vía
+    `aplicar_procesador`, requiere reabrir la app). `_argumentos_vlc()`
+    ahora combina hasta 3 filtros en una sola cadena
+    (`compressor:stereo_widen:normvol`).
+
+    Probado con `test_fallback_filtro_roto_y_normalizador.py` (nuevo,
+    dedicado — REPRODUCE el bug real con un `vlc.Instance()` mockeado
+    que falla específicamente cuando ve `--audio-filter=` en los
+    argumentos, igual que se sospecha que pasa en la instalación de
+    Santiago): confirma que el primer intento incluye el filtro, el
+    segundo (reintento) NO incluye ninguno, el motor queda disponible
+    tras el reintento (antes se perdía por completo), y el log deja
+    constancia del motivo — más el camino feliz (sin excepción) sigue
+    llamando a `vlc.Instance()` una sola vez, sin reintentos de más —
+    + defaults/argumentos/combinación de 3 filtros/escaneo Master-
+    Preescucha/UI del Volume Normalizer + suite de regresión completa
+    sin fallos nuevos (mismos 3 fallos preexistentes de siempre + 4
+    tests locales ya diagnosticados como desactualizados desde la
+    ronda 63) + smoke test de arranque limpio. **Sigue sin poder
+    confirmarse con audio/libVLC real** (la causa exacta del fallo en
+    la instalación de Santiago sigue sin conocerse — el mock reproduce
+    el SÍNTOMA, "vlc.Instance() falla con esos flags", no
+    necesariamente la causa raíz específica de su sistema): falta que
+    Santiago confirme que, tras esta ronda, (1) el combo de
+    Configuración → Audio vuelve a listar todas sus salidas reales
+    (Pipe/Alsa/etc.), (2) el audio vuelve a sonar con el compresor
+    activado — aunque sea SIN el efecto de compresión aplicado, si
+    resulta que su libVLC de verdad no admite ese filtro, el log de
+    Configuración → Diagnóstico → Ver log ahora debería decir
+    exactamente por qué — y (3) que confirme si el Volume Normalizer
+    se escucha al activarlo.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
