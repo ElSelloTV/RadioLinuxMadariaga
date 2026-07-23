@@ -103,6 +103,9 @@ class VentanaAuxiliar(QDialog):
     def marcar_reproduciendo(self, fila):
         self.panel.marcar_reproduciendo(fila)
 
+    def marcar_realmente_reproducido(self, fila):
+        self.panel.marcar_realmente_reproducido(fila)
+
     def marcar_siguiente(self, fila):
         self.panel.marcar_siguiente(fila)
 
