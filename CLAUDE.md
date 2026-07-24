@@ -7953,6 +7953,31 @@ todo el resto.
     categoría entera de un tirón, y (4) que la verificación masiva de
     Configuración es cómoda para una limpieza grande de toda la
     biblioteca de una sola vez.
+81. ~~Mostrar la categoría/subcategoría del registro roto en el diálogo
+    de candidatos~~ — pedido explícito, retoque chico sobre la ronda
+    anterior: "algunos archivos son Cierre.mp3 y no sé a qué programa
+    o categoría corresponde... necesito esa información para vincular
+    correctamente". `VentanaExplorador._buscar_archivo_perdido()`
+    calcula `" > ".join(self.ruta_de_categoria(categoria))` (helper YA
+    existente, de la ronda del Musicalizador Avanzado — camino de
+    nombres desde la raíz hasta la categoría, ej. `"Programas >
+    Cierres"`) y se lo pasa como parámetro nuevo (`ruta_categoria`) a
+    `DialogoVincularArchivo`, que lo muestra en negrita, en su propia
+    línea, separado del resto del texto (`self.lbl_categoria`, pedido
+    explícito "bien visible") — así un título genérico como "Cierre"
+    ya no deja al operador adivinando de qué programa/categoría se
+    trata. Categoría vacía (una de nivel raíz, sin padre) muestra
+    "(raíz, sin subcategoría)" en vez de quedar en blanco. De paso, el
+    mensaje de "no se encontró ningún candidato" también incluye la
+    categoría, mismo criterio.
+
+    Probado extendiendo `test_ubicar_vincular_archivo.py` (se le pasa
+    al diálogo la categoría correcta de nivel raíz, y el camino
+    completo "Padre > Hijo" con una subcategoría real) +
+    `test_dialogo_vincular_archivo.py` (la etiqueta muestra la
+    categoría pasada, y aclara "(raíz...)" cuando no hay ninguna) +
+    suite de regresión completa sin fallos nuevos (mismos 7 fallos
+    preexistentes de siempre) + smoke test de arranque limpio.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

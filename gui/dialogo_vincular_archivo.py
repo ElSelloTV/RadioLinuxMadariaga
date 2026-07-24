@@ -23,6 +23,10 @@ VentanaExplorador._buscar_archivo_perdido), con:
   archivos iguales o las coincidencias no son las que yo esperaba y
   sobra el archivo" — esto NUNCA toca el registro/JSON de la
   biblioteca, solo limpia archivos de sobra encontrados en el disco).
+- La categoría/subcategoría del registro roto, en negrita, bien
+  visible (pedido explícito: "algunos archivos son Cierre.mp3 y no sé
+  a qué programa o categoría corresponde... necesito esa información
+  para vincular correctamente").
 --------------------------------------------------------
 """
 
@@ -57,7 +61,7 @@ class DialogoVincularArchivo(QDialog):
     # QDialog.Accepted=1/Rejected=0, ver _saltar()).
     SALTAR = 2
 
-    def __init__(self, titulo_registro: str, candidatos: list, id_dispositivo_preescucha, parent=None):
+    def __init__(self, titulo_registro: str, candidatos: list, id_dispositivo_preescucha, ruta_categoria: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Buscar archivo perdido")
         self.setMinimumSize(560, 360)
@@ -72,7 +76,18 @@ class DialogoVincularArchivo(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
-            f"No se encontró el archivo de '{titulo_registro}' en su ubicación original.\n"
+            f"No se encontró el archivo de '{titulo_registro}' en su ubicación original."
+        ))
+        # Pedido explícito ("algunos archivos son Cierre.mp3 y no sé a
+        # qué programa o categoría corresponde... necesito esa
+        # información para vincular correctamente"): la categoría del
+        # registro roto, bien visible, en negrita, en su propia línea —
+        # separada del resto del texto para que no se pierda de vista.
+        self.lbl_categoria = QLabel(f"Categoría: {ruta_categoria}" if ruta_categoria else "Categoría: (raíz, sin subcategoría)")
+        self.lbl_categoria.setStyleSheet("font-weight: bold;")
+        self.lbl_categoria.setWordWrap(True)
+        layout.addWidget(self.lbl_categoria)
+        layout.addWidget(QLabel(
             "Estos son los candidatos encontrados en la carpeta Música "
             "(primero por tamaño, luego por duración — el nombre pudo haber cambiado).\n"
             "Clic derecho sobre un candidato para \"Tomar el nombre\" o \"Eliminar\":"

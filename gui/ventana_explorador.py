@@ -1783,6 +1783,13 @@ class VentanaExplorador(QWidget):
         cerró el diálogo con Cancelar (detiene TODA la cola)."""
         duracion_objetivo = registro.get("duracion")
         tamano_objetivo = registro.get("tamaño_bytes")
+        # Pedido explícito ("algunos archivos son Cierre.mp3 y no sé a
+        # qué programa o categoría corresponde... necesito esa
+        # información para vincular correctamente"): la categoría/
+        # subcategoría del registro roto viaja junto al título a
+        # DialogoVincularArchivo, para que un título genérico no deje
+        # al operador adivinando de qué material se trata.
+        ruta_categoria_texto = " > ".join(self.ruta_de_categoria(categoria))
 
         self.solicitud_preload.emit(f"Buscando: {registro.get('titulo', '')}...")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1828,8 +1835,8 @@ class VentanaExplorador(QWidget):
             criterio = f"el mismo tamaño ({tamano_objetivo} bytes)" if tamano_objetivo is not None else f"la misma duración ({duracion_objetivo})"
             QMessageBox.information(
                 self, "Buscar archivo",
-                f"No se encontró ningún archivo con {criterio} para '{registro.get('titulo', '')}'\n"
-                f"en la carpeta Música ({carpeta_musica}).",
+                f"No se encontró ningún archivo con {criterio} para '{registro.get('titulo', '')}' "
+                f"(categoría: {ruta_categoria_texto})\nen la carpeta Música ({carpeta_musica}).",
             )
             return True
 
@@ -1839,7 +1846,7 @@ class VentanaExplorador(QWidget):
             audio_cfg["dispositivo_preescucha"] if audio_cfg["dispositivo_preescucha"] != "default" else None
         )
         dialogo = DialogoVincularArchivo(
-            registro.get("titulo", ""), candidatos, id_dispositivo_preescucha, parent=self,
+            registro.get("titulo", ""), candidatos, id_dispositivo_preescucha, ruta_categoria_texto, parent=self,
         )
         resultado_codigo = dialogo.exec()
 
