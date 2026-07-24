@@ -7248,6 +7248,117 @@ todo el resto.
     produce algún efecto audible — si sigue sin notarse nada, es la
     señal más fuerte de que el problema es la limitación headless
     encontrada en el diagnóstico, no los rangos de los controles.
+75. ~~Compresor/Stereo Enhancer/Volume Normalizer SACADOS de esta app
+    (confirmado: era la limitación headless) + bug real: silencio
+    excesivo al final de una canción~~ — dos pedidos en el mismo
+    mensaje, tras confirmar Santiago que el diagnóstico de la ronda
+    anterior daba en el clavo ("Si, es la limitación headless"):
+
+    **a) Remoción completa del procesador de audio nativo de VLC**:
+    Santiago armó, en otra sesión de Claude Code, una app Python
+    standalone que controla el filter-chain NATIVO de PipeWire
+    (plugins Calf en C — el mismo enfoque que ya había sonado bien en
+    la ronda 52) con una interfaz de bandeja del sistema propia — así
+    que el compresor/Stereo Enhancer/Volume Normalizer de las rondas
+    69-74 quedaron redundantes (y, peor, probablemente inertes de
+    fondo por la limitación headless recién confirmada). Se sacó todo
+    de punta a punta:
+    - `core/audio_engine.py`: eliminadas `_argumentos_compresor()`,
+      `_argumentos_estereo_ancho()`, `_argumentos_normalizador()`, sus
+      constantes de default, y la combinación de filtros en
+      `_argumentos_vlc()` (que ahora vuelve a devolver solo
+      `--no-video`/`--file-caching=N`, como antes de la ronda 69). El
+      reintento "con filtros / sin filtros" de `MotorAudio.__init__()`
+      (ronda 73) ya no hace falta — `vlc.Instance()` se llama una sola
+      vez, sin ninguna rama de fallback. `aplicar_procesador` queda
+      como parámetro de compatibilidad (`GestorExplorador` lo sigue
+      pasando en `False`) pero ya no cambia nada en la práctica.
+    - `config/settings.py`: sacadas las 13 claves
+      `compresor_*`/`estereo_ancho_*`/`normalizador_*` de
+      `CONFIG_POR_DEFECTO["audio"]`.
+    - `gui/ventana_configuracion.py`: eliminada la pestaña completa
+      "Procesador" (`_crear_tab_procesador()` y su wiring en
+      `_cargar_valores_en_ui()`/`_guardar_y_cerrar()`).
+    - **Bug real de UI encontrado y corregido como efecto colateral**:
+      el menú desplegable "⚙ Configuración" del toolbar
+      (`gui/main_window.py`, de la ronda del rediseño compacto)
+      mapeaba "Tiempos de Fade..." al índice de pestaña 1 — correcto
+      ANTES de que la ronda 70 insertara "Procesador" ahí mismo, pero
+      nunca actualizado después: desde la ronda 70, ese ítem de menú
+      en realidad abría la pestaña Procesador, no Fade. Sacar
+      "Procesador" (que volvía a dejar Fade en el índice 1) corrigió
+      este desalineamiento sin tocar una línea de `main_window.py` —
+      probado explícitamente con un test que confirma el orden real
+      de pestañas.
+    - 3 archivos de test dedicados a estos 3 efectos se eliminaron
+      (`test_compresor_scope_master.py`, `test_stereo_enhancer.py`,
+      `test_fallback_filtro_roto_y_normalizador.py`); el archivo que
+      compartía sección con el compresor
+      (`test_autoscroll_y_compresor.py`, autoscroll de Ventana 2)
+      se recortó a solo esa parte + un chequeo nuevo que confirma la
+      remoción completa (config, argumentos de libVLC, y UI).
+    3 rondas de trabajo (69-74) sobre un enfoque que terminó
+    descartado — el historial completo (por qué se intentó, qué se
+    aprendió del diagnóstico headless-vs-GUI, y por qué Santiago
+    prefirió una app aparte) queda documentado arriba, sin borrarlo,
+    para no tener que repetir la misma investigación si en algún
+    momento se reconsidera.
+
+    **b) Bug real de audio: "un tema finalizó y dejó mucho silencio al
+    final"**: investigado en `core/analizador_audio.py`. El margen de
+    seguridad que se deja SIN recortar en la SALIDA usaba el MISMO
+    `tolerancia_silencio_segundos` que el margen de la ENTRADA (2.0s
+    por defecto para Música) — para un tema con 3-4 segundos de
+    silencio real pegado al final (común en masters/exports con
+    padding), eso dejaba sonando hasta 2 segundos ENTEROS de aire casi
+    muerto antes de llegar al corte real (`punto_fin_ms`). Peor
+    todavía: el crossfade de Ventana 2 se calcula sobre ESE MISMO
+    `punto_fin_ms` (vía `restante_ms_cambio` en `core/audio_engine.py`
+    y `_chequear_crossfade()` en `core/gestor_emision.py`) — con el
+    punto de corte "inflado" por ese margen de 2s, el crossfade
+    también arrancaba más tarde de lo que debería, agravando el mismo
+    síntoma. Corregido con un tope duro nuevo,
+    `MARGEN_MAXIMO_SALIDA_MS = 300` — el margen de salida ahora es
+    `min(tolerancia_ms, 300)`, nunca la tolerancia completa: alcanza
+    para no cortar en seco una nota/reverberación recién decayendo,
+    sin arrastrar segundos de aire muerto. El margen de ENTRADA (el
+    pre-roll de silencio antes de que arranque el contenido real)
+    queda INTACTO — no era la queja de Santiago, y cortar ahí de más
+    podría sonar más abrupto al empezar un tema. Los géneros de corte
+    estricto (Publicidad/Separador/HTH, `tolerancia_silencio_v1_segundos=0`)
+    no se ven afectados — `min(0, 300)` sigue dando `0`, mismo
+    comportamiento "sin margen" de siempre.
+
+    **Importante — este fix NO es retroactivo**: como con cualquier
+    cambio a `analizador_audio.py`, un archivo YA IMPORTADO conserva
+    el `punto_fin_ms` calculado con el margen VIEJO hasta que se
+    reanalice — el botón "🔄 Reanalizar biblioteca" (Configuración →
+    Diagnóstico, ronda 40) recalcula todo con la fórmula nueva. Un
+    archivo importado/reemplazado DE ACÁ EN MÁS ya usa el margen
+    corregido automáticamente, sin acción manual.
+
+    Probado con `test_fix_silencio_final_cancion.py` (nuevo, dedicado,
+    con audio SINTÉTICO real vía `pydub.generators.Sine` + WAV, sin
+    necesitar ffmpeg — mismo patrón ya usado para el umbral de
+    silencio configurable de una ronda muy anterior): un tema con 4s
+    de silencio de salida real queda con el margen SONANDO topeado en
+    ~300ms (antes hubiera dejado ~2000ms, confirmado comparando contra
+    el punto de corte que habría dado el margen viejo); los géneros de
+    corte estricto siguen en margen ~0; un tema casi sin silencio de
+    salida no pierde contenido real — + `test_autoscroll_y_compresor.py`
+    actualizado + suite de regresión completa. La corrida cayó
+    exactamente sobre la medianoche del sistema (00:0x UTC) y sumó 6
+    fallos de horario más a los 7 preexistentes de siempre —
+    confirmado con `git stash` que los MISMOS 6 fallan igual contra el
+    código sin este cambio, en el mismo instante (el conocido patrón
+    de tests que resuelven "bloque vigente" contra la hora real,
+    documentado desde hace muchas rondas) — ninguno relacionado con
+    este cambio. + smoke test de arranque limpio. **Sigue sin poder
+    confirmarse con audio real**: falta que Santiago reanalice su
+    biblioteca (o importe algo nuevo) y confirme que los temas ya no
+    dejan un hueco de silencio audible al terminar, y que active su
+    app externa de PipeWire para el procesamiento de audio que antes
+    vivía acá.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

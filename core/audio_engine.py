@@ -23,7 +23,7 @@ en vez de lanzar una excepción no controlada.
 import vlc
 from PySide6.QtCore import QObject, Signal, QTimer
 
-from config.settings import registrar_evento, registrar_error, cargar_configuracion
+from config.settings import registrar_evento, cargar_configuracion
 
 MENSAJE_VLC_NO_DISPONIBLE = (
     "VLC no está instalado o no se encontró libvlc. "
@@ -34,138 +34,6 @@ MENSAJE_VLC_NO_DISPONIBLE = (
 # (instalación vieja) — ver config/settings.py:CONFIG_POR_DEFECTO["reproduccion"].
 BUFFER_CACHING_MS_POR_DEFECTO = 1000
 RETARDO_ARRANQUE_MS_POR_DEFECTO = 150
-
-
-# Defaults del filtro "compressor" nativo de libVLC (módulo
-# modules/audio_filter/compressor.c) — usados si config_general.json
-# todavía no tiene estas claves (instalación vieja) o si el operador
-# no tocó un campo puntual del formulario. Rangos y nombres
-# CONFIRMADOS por Santiago contra la interfaz real de su VLC 3.0.23
-# (Herramientas → Efectos y Filtros → Compresor) — los 7 controles
-# reales del módulo, no solo los 5 que se habían expuesto al
-# principio (faltaban RMS/Pico y Knee).
-COMPRESOR_RMS_PICO_POR_DEFECTO = 0.0
-COMPRESOR_ATAQUE_MS_POR_DEFECTO = 25.0
-COMPRESOR_RELEASE_MS_POR_DEFECTO = 100.0
-COMPRESOR_UMBRAL_DB_POR_DEFECTO = -11.0
-COMPRESOR_RATIO_POR_DEFECTO = 8.0
-COMPRESOR_KNEE_DB_POR_DEFECTO = 2.5
-COMPRESOR_GANANCIA_SALIDA_DB_POR_DEFECTO = 7.0
-
-
-# Defaults del filtro "stereo_widen" nativo de libVLC ("Stereo
-# Enhancer", módulo modules/audio_filter/stereo_widen.c) — pedido
-# explícito, ronda posterior al compresor: el preset real de
-# EasyEffects de Santiago ("Radio Tuyú") tiene un segundo efecto,
-# "Stereo Tools" (procesador Mid/Side con balance/nivel/fase por
-# canal) — libVLC NO tiene ningún filtro con ese mismo concepto, así
-# que en vez de fingir un port inexistente, Santiago eligió agregar
-# el Stereo Enhancer REAL de libVLC (un algoritmo de ensanchado
-# estéreo por delay/feedback/crossfeed, técnica completamente
-# distinta) como una función aparte y honestamente distinta — no un
-# reemplazo de Stereo Tools.
-ESTEREO_ANCHO_DELAY_MS_POR_DEFECTO = 20
-ESTEREO_ANCHO_FEEDBACK_PCT_POR_DEFECTO = 30
-ESTEREO_ANCHO_CROSSFEED_PCT_POR_DEFECTO = 30
-ESTEREO_ANCHO_DRY_MIX_PCT_POR_DEFECTO = 70
-
-
-# Defaults del filtro "normvol" nativo de libVLC ("Volume Normalizer",
-# módulo modules/audio_filter/normvol.c) — tercer efecto, pedido
-# explícito de Santiago tras preguntar "¿qué filtro podemos aplicar
-# para tener este efecto 'levanta lo que está bajo el umbral' en
-# VLC?". Respuesta honesta: libVLC NO tiene un compresor Upward real
-# (threshold+ratio aplicado a lo que está por DEBAJO de un umbral,
-# como el "compressor#0" real del preset de EasyEffects de Santiago)
-# — lo más parecido es este normalizador de volumen, que funciona
-# DISTINTO: promedia el nivel de señal en una ventana móvil y aplica
-# una ganancia continua para acercarla a un nivel objetivo (más
-# parecido a un AGC/auto-nivelador que a un compresor paramétrico).
-# Sin threshold/ratio/attack/release — solo 2 parámetros reales.
-NORMALIZADOR_BUFF_SIZE_POR_DEFECTO = 20
-NORMALIZADOR_MAX_LEVEL_POR_DEFECTO = 2.0
-
-
-def _argumentos_compresor(audio_cfg: dict) -> list:
-    """Compresor de salida (pedido explícito, "incluí un compresor en
-    configuraciones de salida de audio, configurable y personalizable")
-    — usa el filtro de audio NATIVO de libVLC ("compressor", el mismo
-    módulo que trae VLC de fábrica), no un procesador externo — a
-    diferencia de los intentos previos con EasyEffects/PipeWire
-    filter-chain (ver roadmap rondas 37-55, ambos DESCARTADOS a pedido
-    explícito de Santiago porque prefería manejar el procesamiento por
-    fuera de esta app), este vive DENTRO de cada MotorAudio, sin
-    depender de ningún proceso ni configuración del sistema operativo.
-    Los 7 parámetros REALES del módulo, confirmados por Santiago
-    contra la interfaz de su VLC (rangos exactos entre paréntesis):
-    RMS/Pico -> --compressor-rms-peak (0.0 a 1.0, mezcla RMS/pico para
-    la detección de nivel), Ataque -> --compressor-attack (1.5 a
-    400.0 ms), Release -> --compressor-release (2.0 a 800.0 ms),
-    Umbral ("Entrada de Audio") -> --compressor-threshold (-30 a 0.0
-    dB), Ratio ("Proporción") -> --compressor-ratio (1.0 a 20.0),
-    Knee ("Radio Knee") -> --compressor-knee (1.0 a 10.0 dB), y
-    "Salida (Ganancia de Compensación/Maquillaje)" -> --compressor-makeup-gain
-    (0 a 24 dB). Desactivado por defecto (`compresor_activado=False`)
-    — una instalación existente nunca empieza a comprimir sola.
-
-    Devuelve solo los flags `--compressor-*` — el nombre del filtro en
-    sí (`--audio-filter=...`) lo arma `_argumentos_vlc()`, que puede
-    necesitar combinarlo con OTROS filtros activos (ver
-    `_argumentos_estereo_ancho()`) en una sola cadena
-    `--audio-filter=compressor:stereo_widen` — libVLC no acumula
-    varios `--audio-filter=` sueltos, el último pisa a los
-    anteriores."""
-    if not audio_cfg.get("compresor_activado", False):
-        return []
-    return [
-        f"--compressor-rms-peak={float(audio_cfg.get('compresor_rms_pico', COMPRESOR_RMS_PICO_POR_DEFECTO))}",
-        f"--compressor-attack={float(audio_cfg.get('compresor_ataque_ms', COMPRESOR_ATAQUE_MS_POR_DEFECTO))}",
-        f"--compressor-release={float(audio_cfg.get('compresor_release_ms', COMPRESOR_RELEASE_MS_POR_DEFECTO))}",
-        f"--compressor-threshold={float(audio_cfg.get('compresor_umbral_db', COMPRESOR_UMBRAL_DB_POR_DEFECTO))}",
-        f"--compressor-ratio={float(audio_cfg.get('compresor_ratio', COMPRESOR_RATIO_POR_DEFECTO))}",
-        f"--compressor-knee={float(audio_cfg.get('compresor_knee_db', COMPRESOR_KNEE_DB_POR_DEFECTO))}",
-        f"--compressor-makeup-gain={float(audio_cfg.get('compresor_ganancia_salida_db', COMPRESOR_GANANCIA_SALIDA_DB_POR_DEFECTO))}",
-    ]
-
-
-def _argumentos_estereo_ancho(audio_cfg: dict) -> list:
-    """Stereo Enhancer nativo de libVLC (módulo "stereo_widen") —
-    pedido explícito ("agregá el Stereo Enhancer real de VLC... una
-    función de ensanchado estéreo distinta"). Los 4 parámetros reales
-    del módulo: Delay (ms, tiempo de retardo entre canales), Feedback
-    (%), Crossfeed (%, cuánto se filtra un canal al otro), Dry Mix (%,
-    proporción de señal sin procesar). Desactivado por defecto, mismo
-    criterio que el compresor. Devuelve solo los flags
-    `--stereo-widen-*`, ver la nota de `_argumentos_compresor()` sobre
-    por qué el nombre del filtro se arma aparte."""
-    if not audio_cfg.get("estereo_ancho_activado", False):
-        return []
-    return [
-        f"--stereo-widen-delay={int(audio_cfg.get('estereo_ancho_delay_ms', ESTEREO_ANCHO_DELAY_MS_POR_DEFECTO))}",
-        f"--stereo-widen-feedback={int(audio_cfg.get('estereo_ancho_feedback_pct', ESTEREO_ANCHO_FEEDBACK_PCT_POR_DEFECTO))}",
-        f"--stereo-widen-crossfeed={int(audio_cfg.get('estereo_ancho_crossfeed_pct', ESTEREO_ANCHO_CROSSFEED_PCT_POR_DEFECTO))}",
-        f"--stereo-widen-dry-mix={int(audio_cfg.get('estereo_ancho_dry_mix_pct', ESTEREO_ANCHO_DRY_MIX_PCT_POR_DEFECTO))}",
-    ]
-
-
-def _argumentos_normalizador(audio_cfg: dict) -> list:
-    """Volume Normalizer nativo de libVLC (módulo "normvol") — tercer
-    efecto, pedido explícito ("¿qué filtro podemos aplicar para tener
-    el efecto Upward en VLC?"). NO es un compresor Upward real (no hay
-    ninguno en libVLC) — es un normalizador de nivel continuo (más
-    parecido a un AGC), honestamente distinto. Los 2 parámetros reales
-    del módulo: "buff-size" (cantidad de buffers para calcular el
-    promedio de nivel — más alto, reacción más lenta y suave) y
-    "max-level" (techo de amplificación, factor lineal — ej. 2.0 =
-    hasta el doble de volumen). Desactivado por defecto. Devuelve solo
-    los flags `--norm-*`, ver la nota de `_argumentos_compresor()`
-    sobre por qué el nombre del filtro se arma aparte."""
-    if not audio_cfg.get("normalizador_activado", False):
-        return []
-    return [
-        f"--norm-buff-size={int(audio_cfg.get('normalizador_buff_size', NORMALIZADOR_BUFF_SIZE_POR_DEFECTO))}",
-        f"--norm-max-level={float(audio_cfg.get('normalizador_max_level', NORMALIZADOR_MAX_LEVEL_POR_DEFECTO))}",
-    ]
 
 
 def _argumentos_vlc(duracion_buffer_caching_ms: int, audio_cfg: dict = None) -> list:
@@ -189,27 +57,21 @@ def _argumentos_vlc(duracion_buffer_caching_ms: int, audio_cfg: dict = None) -> 
       posterior) — OJO: es un argumento de instancia de libVLC, un
       cambio solo aplica a los MotorAudio creados DESPUÉS de guardar
       (en la práctica, tras reabrir la app), no a los ya en curso.
-    - Compresor + Stereo Enhancer + Volume Normalizer (Configuración →
-      Procesador): los filtros activos se combinan en UNA sola cadena
-      `--audio-filter=compressor:stereo_widen:normvol` — nunca varios
-      flags `--audio-filter=` sueltos, que se pisarían entre sí."""
-    argumentos = ["--no-video", f"--file-caching={max(0, int(duracion_buffer_caching_ms))}"]
-    audio_cfg = audio_cfg or {}
-    filtros_activos = []
-    parametros_filtros = []
-    if audio_cfg.get("compresor_activado", False):
-        filtros_activos.append("compressor")
-        parametros_filtros += _argumentos_compresor(audio_cfg)
-    if audio_cfg.get("estereo_ancho_activado", False):
-        filtros_activos.append("stereo_widen")
-        parametros_filtros += _argumentos_estereo_ancho(audio_cfg)
-    if audio_cfg.get("normalizador_activado", False):
-        filtros_activos.append("normvol")
-        parametros_filtros += _argumentos_normalizador(audio_cfg)
-    if filtros_activos:
-        argumentos.append(f"--audio-filter={':'.join(filtros_activos)}")
-        argumentos += parametros_filtros
-    return argumentos
+
+    El compresor/Stereo Enhancer/Volume Normalizer nativos de libVLC
+    que vivieron acá (Configuración → Procesador, rondas 69-74) se
+    sacaron a pedido explícito de Santiago: construyó una app Python
+    aparte, standalone, que controla el filter-chain NATIVO de
+    PipeWire (plugins Calf en C, cero procesamiento en Python) — el
+    mismo enfoque que ya se había probado y sonaba bien en la ronda
+    52, ahora con una interfaz de control propia. El diagnóstico de
+    esa ronda había confirmado además que el compresor headless de
+    esta app probablemente nunca aplicaba de verdad sobre el audio
+    real (libVLC sin interfaz gráfica adjunta no arma el filtro de
+    forma confiable) — otra razón de peso para no mantenerlo acá.
+    `audio_cfg` queda como parámetro por compatibilidad de firma, sin
+    uso real por ahora."""
+    return ["--no-video", f"--file-caching={max(0, int(duracion_buffer_caching_ms))}"]
 
 
 class MotorAudio(QObject):
@@ -221,17 +83,11 @@ class MotorAudio(QObject):
     def __init__(self, id_dispositivo: str = None, parent=None, aplicar_procesador: bool = True):
         super().__init__(parent)
         self._id_dispositivo = id_dispositivo
-        # Pedido explícito ("verificá que el compresor se aplique
-        # sobre la salida de audio master"): el compresor y el Stereo
-        # Enhancer (Configuración → Procesador) son argumentos de
-        # INSTANCIA de libVLC (ver _argumentos_compresor/
-        # _argumentos_estereo_ancho), así que se deciden acá, al crear
-        # el motor — nunca por dispositivo elegido en runtime. `False`
-        # SOLO en GestorExplorador (el Previo de Ventana 3, que usa la
-        # salida de Preescucha, no la Master que va al aire) — todos
-        # los demás motores (Publicidad, Emisión, Auxiliar, Pisador, y
-        # el motor "entrante" de un crossfade) están ligados a la
-        # salida Master y sí lo reciben.
+        # `aplicar_procesador` queda como parámetro por compatibilidad
+        # con los llamadores existentes (GestorExplorador lo pasa en
+        # `False` para el Previo de Ventana 3) — desde que se sacó el
+        # compresor/Stereo Enhancer/Volume Normalizer nativos de libVLC
+        # (ver `_argumentos_vlc()`), ya no cambia nada en la práctica.
         self._aplicar_procesador = aplicar_procesador
         self._ruta_actual = ""
         self._disponible = True
@@ -261,7 +117,6 @@ class MotorAudio(QObject):
 
         config_actual = cargar_configuracion()
         reproduccion = config_actual.get("reproduccion", {})
-        audio_cfg = config_actual.get("audio", {}) if aplicar_procesador else {}
         self._retardo_arranque_ms = reproduccion.get(
             "retardo_arranque_ms", RETARDO_ARRANQUE_MS_POR_DEFECTO
         )
@@ -270,53 +125,10 @@ class MotorAudio(QObject):
         )
 
         try:
-            hay_procesador_pedido = (
-                audio_cfg.get("compresor_activado", False)
-                or audio_cfg.get("estereo_ancho_activado", False)
-                or audio_cfg.get("normalizador_activado", False)
-            )
-            argumentos_finales = _argumentos_vlc(duracion_buffer_caching_ms, audio_cfg)
-            if hay_procesador_pedido:
-                # Diagnóstico (pedido explícito, "verificá que el
-                # compresor se aplique"): deja en el log el string
-                # EXACTO que se le manda a libVLC al crear este motor
-                # — comparable a mano contra `cvlc --audio-filter=
-                # compressor:stereo_widen ...` corrido suelto en la PC
-                # real, para aislar si el problema es esta app o el
-                # propio filtro de libVLC en esa instalación.
-                registrar_evento(
-                    f"MotorAudio: procesador de audio activado, argumentos de instancia libVLC: {argumentos_finales}"
-                )
-            # Bug real corregido ("ahora solo tengo salida
-            # predeterminada del sistema, no puedo elegir... no se
-            # escucha"): si `--audio-filter=...`/sus flags no son
-            # aceptados por la instalación real de libVLC (versión sin
-            # ese módulo compilado, sintaxis no soportada, etc.),
-            # `vlc.Instance()` puede devolver None o lanzar una
-            # excepción — antes eso tiraba abajo TODO el motor
-            # (`self._disponible = False`), que en cascada rompía
-            # también el listado de dispositivos (usa un `MotorAudio()`
-            # temporal solo para listar) y la reproducción real, sin
-            # ningún rastro de que la causa era el compresor/Stereo
-            # Enhancer. Ahora, si la construcción CON esos filtros
-            # falla, se reintenta SIN ellos — nunca perder audio ni el
-            # listado de dispositivos por un filtro que no se pudo
-            # aplicar; mismo criterio de "nunca confiar en una sola
-            # llamada" ya establecido para libVLC en este proyecto.
-            try:
-                self._instancia = vlc.Instance(argumentos_finales)
-                if self._instancia is None:
-                    raise RuntimeError("vlc.Instance() devolvió None")
-            except Exception as error_filtro:
-                if not hay_procesador_pedido:
-                    raise
-                registrar_error(
-                    f"MotorAudio: el procesador de audio (compresor/Stereo Enhancer/Volume "
-                    f"Normalizer) no pudo aplicarse en esta instalación de libVLC — {error_filtro}. Reintentando "
-                    f"sin esos filtros para no perder el audio ni el listado de dispositivos."
-                )
-                argumentos_basicos = _argumentos_vlc(duracion_buffer_caching_ms, {})
-                self._instancia = vlc.Instance(argumentos_basicos)
+            argumentos_finales = _argumentos_vlc(duracion_buffer_caching_ms)
+            self._instancia = vlc.Instance(argumentos_finales)
+            if self._instancia is None:
+                raise RuntimeError("vlc.Instance() devolvió None")
             self._player = self._instancia.media_player_new()
             if id_dispositivo:
                 self._aplicar_dispositivo_salida()

@@ -31,64 +31,6 @@ CONFIG_POR_DEFECTO = {
         "dispositivo_preescucha": "default",
         "volumen_master": 100,
         "volumen_preescucha": 100,
-        # Compresor de salida (pedido explícito): filtro NATIVO de
-        # libVLC (módulo "compressor"), no un procesador externo — ver
-        # core/audio_engine.py:_argumentos_compresor(). Desactivado por
-        # defecto, así una instalación existente no empieza a comprimir
-        # sola. Requiere reabrir la app para aplicar (argumento de
-        # instancia de libVLC, fijo al crear cada MotorAudio — mismo
-        # criterio ya establecido para duracion_buffer_caching_ms).
-        # Valores default AJUSTADOS (pedido explícito, ronda posterior)
-        # al preset real de EasyEffects de Santiago ("Radio Tuyú" ->
-        # efecto "compressor#0": threshold -12dB, ratio 3, attack 20ms,
-        # release 100ms, makeup+output-gain ~2dB) — la aproximación más
-        # cercana posible con el filtro "compressor" simple de libVLC,
-        # que NO tiene equivalente para el modo "Upward" (ese preset
-        # comprime hacia ARRIBA lo que está por DEBAJO del umbral, para
-        # levantar pasajes flojos, en vez de bajar los picos como hace
-        # este filtro) ni para su mezcla dry/wet o el sidechain con
-        # HPF/LPF — ver la nota completa en CLAUDE.md (ronda del
-        # preset de EasyEffects) sobre por qué esto es una
-        # aproximación, no un port exacto.
-        # Pedido explícito posterior: agregados los 2 controles reales
-        # que faltaban (RMS/Pico y Knee), confirmados contra la
-        # interfaz real de VLC 3.0.23 de Santiago (Herramientas ->
-        # Efectos y Filtros -> Compresor) — ahora son los 7 controles
-        # completos del módulo, con los rangos exactos que reportó.
-        "compresor_activado": False,
-        "compresor_rms_pico": 0.0,
-        "compresor_ataque_ms": 20.0,
-        "compresor_release_ms": 100.0,
-        "compresor_umbral_db": -12.0,
-        "compresor_ratio": 3.0,
-        "compresor_knee_db": 2.5,
-        "compresor_ganancia_salida_db": 2.0,
-        # Stereo Enhancer de salida (pedido explícito, ronda posterior
-        # al compresor): filtro NATIVO de libVLC (módulo "stereo_widen")
-        # — el segundo efecto del preset "Radio Tuyú" de EasyEffects es
-        # "Stereo Tools" (Mid/Side), sin NINGÚN equivalente en libVLC;
-        # Santiago eligió agregar en su lugar este Stereo Enhancer real
-        # (ensanchado por delay/feedback/crossfeed) como una función
-        # distinta y honestamente etiquetada, no un port. Ver
-        # core/audio_engine.py:_argumentos_estereo_ancho(). Desactivado
-        # por defecto, con los valores de fábrica de libVLC (no hay
-        # nada que "portear" acá, a diferencia del compresor).
-        "estereo_ancho_activado": False,
-        "estereo_ancho_delay_ms": 20,
-        "estereo_ancho_feedback_pct": 30,
-        "estereo_ancho_crossfeed_pct": 30,
-        "estereo_ancho_dry_mix_pct": 70,
-        # Volume Normalizer de salida (pedido explícito, ronda
-        # posterior: "¿qué filtro podemos aplicar para el efecto
-        # Upward en VLC?"): filtro NATIVO de libVLC (módulo "normvol")
-        # — libVLC NO tiene un compresor Upward real, este es lo más
-        # parecido (un AGC/auto-nivelador que promedia el nivel y
-        # ajusta ganancia hacia un objetivo, no un compresor
-        # paramétrico). Ver core/audio_engine.py:_argumentos_normalizador().
-        # Desactivado por defecto, valores de fábrica de libVLC.
-        "normalizador_activado": False,
-        "normalizador_buff_size": 20,
-        "normalizador_max_level": 2.0,
     },
     "fade": {
         "crossfade_activado": True,

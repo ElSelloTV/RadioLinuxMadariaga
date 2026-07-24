@@ -2,10 +2,14 @@
 gui/ventana_configuracion.py
 --------------------------------------------------------
 Configuración general de la aplicación, en pestañas: Audio (dispositivos
-Master/Preescucha, volúmenes), Procesador (compresor y, a futuro, otros
-efectos de audio — ver `_crear_tab_procesador()`), Fade/Transiciones,
-Rutas, Reproducción y Automatización, General, Apariencia,
-Actualizaciones, Diagnóstico.
+Master/Preescucha, volúmenes), Fade/Transiciones, Rutas, Reproducción y
+Automatización, General, Apariencia, Actualizaciones, Diagnóstico.
+
+La pestaña "Procesador" (compresor/Stereo Enhancer/Volume Normalizer
+nativos de VLC, rondas 69-74) se sacó a pedido explícito de Santiago —
+armó una app Python aparte, standalone, que controla el filter-chain
+nativo de PipeWire para el procesamiento de audio de salida (ver
+CLAUDE.md, ronda de esta remoción, para el contexto completo).
 
 Todo se persiste en config/data/config_general.json vía
 config/settings.py. No hay nada de satelital/RDS: es justo lo
@@ -19,7 +23,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget, QWidget,
     QComboBox, QSlider, QCheckBox, QDoubleSpinBox, QSpinBox, QLineEdit,
     QPushButton, QLabel, QDialogButtonBox, QFileDialog, QApplication,
-    QMessageBox, QColorDialog, QGroupBox, QScrollArea
+    QMessageBox, QColorDialog, QGroupBox
 )
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
@@ -58,7 +62,6 @@ class VentanaConfiguracion(QDialog):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._crear_tab_audio(), "Audio")
-        self.tabs.addTab(self._crear_tab_procesador(), "Procesador")
         self.tabs.addTab(self._crear_tab_fade(), "Fade / Transiciones")
         self.tabs.addTab(self._crear_tab_rutas(), "Rutas")
         self.tabs.addTab(self._crear_tab_reproduccion(), "Reproducción y Automatización")
@@ -113,167 +116,6 @@ class VentanaConfiguracion(QDialog):
         form.addRow(nota)
 
         return widget
-
-    # ------------------------------------------------------------------
-    # Tab: Procesador (pedido explícito: "en una pestaña nueva de
-    # Configuraciones que se llame 'Procesador'") — compresor +, a
-    # futuro, los efectos incorporados desde el preset de EasyEffects
-    # de Santiago. Envuelto en QScrollArea (pedido explícito: "agregá
-    # las barras para hacer scroll hacia abajo y arriba") para que
-    # sumar más efectos más adelante nunca obligue a agrandar el
-    # diálogo entero.
-    # ------------------------------------------------------------------
-    def _crear_tab_procesador(self) -> QWidget:
-        contenido = QWidget()
-        form = QFormLayout(contenido)
-
-        grupo_compresor = QGroupBox("Compresor (filtro nativo de VLC)")
-        form_compresor = QFormLayout(grupo_compresor)
-
-        self.chk_compresor_activado = QCheckBox("Activar compresor")
-        form_compresor.addRow(self.chk_compresor_activado)
-
-        # Pedido explícito, ronda posterior: los 7 controles reales del
-        # módulo, con los rangos EXACTOS que Santiago confirmó contra
-        # la interfaz real de su VLC (Herramientas -> Efectos y
-        # Filtros -> Compresor) — antes faltaban RMS/Pico y Knee.
-        self.spin_compresor_rms_pico = QDoubleSpinBox()
-        self.spin_compresor_rms_pico.setRange(0.0, 1.0)
-        self.spin_compresor_rms_pico.setSingleStep(0.05)
-        self.spin_compresor_rms_pico.setDecimals(2)
-        form_compresor.addRow("RMS / Pico:", self.spin_compresor_rms_pico)
-
-        self.spin_compresor_ataque = QDoubleSpinBox()
-        self.spin_compresor_ataque.setRange(1.5, 400.0)
-        self.spin_compresor_ataque.setSingleStep(1.0)
-        self.spin_compresor_ataque.setSuffix(" ms")
-        form_compresor.addRow("Ataque:", self.spin_compresor_ataque)
-
-        self.spin_compresor_release = QDoubleSpinBox()
-        self.spin_compresor_release.setRange(2.0, 800.0)
-        self.spin_compresor_release.setSingleStep(5.0)
-        self.spin_compresor_release.setSuffix(" ms")
-        form_compresor.addRow("Release:", self.spin_compresor_release)
-
-        self.spin_compresor_umbral = QDoubleSpinBox()
-        self.spin_compresor_umbral.setRange(-30.0, 0.0)
-        self.spin_compresor_umbral.setSingleStep(0.5)
-        self.spin_compresor_umbral.setSuffix(" dB")
-        form_compresor.addRow("Umbral (Entrada de Audio):", self.spin_compresor_umbral)
-
-        self.spin_compresor_ratio = QDoubleSpinBox()
-        self.spin_compresor_ratio.setRange(1.0, 20.0)
-        self.spin_compresor_ratio.setSingleStep(0.5)
-        self.spin_compresor_ratio.setSuffix(" : 1")
-        form_compresor.addRow("Ratio (Proporción):", self.spin_compresor_ratio)
-
-        self.spin_compresor_knee = QDoubleSpinBox()
-        self.spin_compresor_knee.setRange(1.0, 10.0)
-        self.spin_compresor_knee.setSingleStep(0.5)
-        self.spin_compresor_knee.setSuffix(" dB")
-        form_compresor.addRow("Radio Knee:", self.spin_compresor_knee)
-
-        self.spin_compresor_ganancia_salida = QDoubleSpinBox()
-        self.spin_compresor_ganancia_salida.setRange(0.0, 24.0)
-        self.spin_compresor_ganancia_salida.setSingleStep(0.5)
-        self.spin_compresor_ganancia_salida.setSuffix(" dB")
-        form_compresor.addRow("Salida (Ganancia de Maquillaje):", self.spin_compresor_ganancia_salida)
-
-        nota_compresor = QLabel(
-            "Requiere reabrir la aplicación para aplicarse (es un\n"
-            "argumento de instancia de libVLC, igual que el buffer de\n"
-            "Reproducción y Automatización) — afecta Publicidad, Emisión,\n"
-            "el Auxiliar y el Pisador (SIEMPRE sobre la Salida Master\n"
-            "elegida en la pestaña Audio), nunca el Previo de Ventana 3\n"
-            "(usa la salida de Preescucha, no la que va al aire)."
-        )
-        nota_compresor.setObjectName("lblTituloBloqueActivo")
-        form_compresor.addRow(nota_compresor)
-
-        form.addRow(grupo_compresor)
-
-        # Pedido explícito (ronda posterior al compresor): el segundo
-        # efecto del preset de EasyEffects de Santiago, "Stereo Tools",
-        # no tiene NINGÚN equivalente en libVLC — en vez de fingir un
-        # port inexistente, se agrega el Stereo Enhancer REAL de VLC
-        # (ensanchado por delay/feedback/crossfeed, algoritmo
-        # completamente distinto), como una función aparte y
-        # honestamente etiquetada como tal.
-        grupo_estereo = QGroupBox("Stereo Enhancer (filtro nativo de VLC)")
-        form_estereo = QFormLayout(grupo_estereo)
-
-        self.chk_estereo_ancho_activado = QCheckBox("Activar Stereo Enhancer")
-        form_estereo.addRow(self.chk_estereo_ancho_activado)
-
-        self.spin_estereo_ancho_delay = QSpinBox()
-        self.spin_estereo_ancho_delay.setRange(1, 100)
-        self.spin_estereo_ancho_delay.setSuffix(" ms")
-        form_estereo.addRow("Delay:", self.spin_estereo_ancho_delay)
-
-        self.spin_estereo_ancho_feedback = QSpinBox()
-        self.spin_estereo_ancho_feedback.setRange(0, 100)
-        self.spin_estereo_ancho_feedback.setSuffix(" %")
-        form_estereo.addRow("Feedback:", self.spin_estereo_ancho_feedback)
-
-        self.spin_estereo_ancho_crossfeed = QSpinBox()
-        self.spin_estereo_ancho_crossfeed.setRange(0, 100)
-        self.spin_estereo_ancho_crossfeed.setSuffix(" %")
-        form_estereo.addRow("Crossfeed:", self.spin_estereo_ancho_crossfeed)
-
-        self.spin_estereo_ancho_dry_mix = QSpinBox()
-        self.spin_estereo_ancho_dry_mix.setRange(0, 100)
-        self.spin_estereo_ancho_dry_mix.setSuffix(" %")
-        form_estereo.addRow("Dry Mix:", self.spin_estereo_ancho_dry_mix)
-
-        nota_estereo = QLabel(
-            "NO es un port de 'Stereo Tools' de EasyEffects (que no\n"
-            "tiene equivalente en libVLC) — es el Stereo Enhancer\n"
-            "propio de VLC, un algoritmo de ensanchado distinto.\n"
-            "Mismo criterio que el Compresor: requiere reabrir la\n"
-            "app, y se aplica sobre la Salida Master, nunca el Previo."
-        )
-        nota_estereo.setObjectName("lblTituloBloqueActivo")
-        form_estereo.addRow(nota_estereo)
-
-        form.addRow(grupo_estereo)
-
-        # Pedido explícito (ronda posterior, pregunta directa de
-        # Santiago: "¿qué filtro podemos aplicar para tener este
-        # efecto 'levanta lo que está bajo el umbral' en VLC?"): libVLC
-        # NO tiene un compresor Upward real -- lo más parecido es este
-        # Volume Normalizer (AGC/auto-nivelador), honestamente distinto.
-        grupo_normalizador = QGroupBox("Volume Normalizer (filtro nativo de VLC)")
-        form_normalizador = QFormLayout(grupo_normalizador)
-
-        self.chk_normalizador_activado = QCheckBox("Activar Volume Normalizer")
-        form_normalizador.addRow(self.chk_normalizador_activado)
-
-        self.spin_normalizador_buff_size = QSpinBox()
-        self.spin_normalizador_buff_size.setRange(1, 200)
-        form_normalizador.addRow("Buffers (ventana de promedio):", self.spin_normalizador_buff_size)
-
-        self.spin_normalizador_max_level = QDoubleSpinBox()
-        self.spin_normalizador_max_level.setRange(1.0, 10.0)
-        self.spin_normalizador_max_level.setSingleStep(0.1)
-        self.spin_normalizador_max_level.setSuffix(" x")
-        form_normalizador.addRow("Nivel máximo (factor):", self.spin_normalizador_max_level)
-
-        nota_normalizador = QLabel(
-            "NO es un compresor Upward real (libVLC no tiene ninguno)\n"
-            "— es un normalizador de volumen continuo (parecido a un\n"
-            "AGC), que va acercando el nivel a un objetivo en vez de\n"
-            "usar threshold/ratio/attack/release. Mismo criterio que\n"
-            "los otros dos: requiere reabrir la app, salida Master."
-        )
-        nota_normalizador.setObjectName("lblTituloBloqueActivo")
-        form_normalizador.addRow(nota_normalizador)
-
-        form.addRow(grupo_normalizador)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(contenido)
-        return scroll
 
     def _crear_slider_volumen(self) -> QSlider:
         slider = QSlider(Qt.Orientation.Horizontal)
@@ -872,22 +714,6 @@ class VentanaConfiguracion(QDialog):
         self._seleccionar_en_combo(self.combo_dispositivo_preescucha, audio["dispositivo_preescucha"])
         self.slider_volumen_master.setValue(audio["volumen_master"])
         self.slider_volumen_preescucha.setValue(audio["volumen_preescucha"])
-        self.chk_compresor_activado.setChecked(audio["compresor_activado"])
-        self.spin_compresor_rms_pico.setValue(audio["compresor_rms_pico"])
-        self.spin_compresor_umbral.setValue(audio["compresor_umbral_db"])
-        self.spin_compresor_ratio.setValue(audio["compresor_ratio"])
-        self.spin_compresor_ataque.setValue(audio["compresor_ataque_ms"])
-        self.spin_compresor_release.setValue(audio["compresor_release_ms"])
-        self.spin_compresor_knee.setValue(audio["compresor_knee_db"])
-        self.spin_compresor_ganancia_salida.setValue(audio["compresor_ganancia_salida_db"])
-        self.chk_estereo_ancho_activado.setChecked(audio["estereo_ancho_activado"])
-        self.spin_estereo_ancho_delay.setValue(audio["estereo_ancho_delay_ms"])
-        self.spin_estereo_ancho_feedback.setValue(audio["estereo_ancho_feedback_pct"])
-        self.spin_estereo_ancho_crossfeed.setValue(audio["estereo_ancho_crossfeed_pct"])
-        self.spin_estereo_ancho_dry_mix.setValue(audio["estereo_ancho_dry_mix_pct"])
-        self.chk_normalizador_activado.setChecked(audio["normalizador_activado"])
-        self.spin_normalizador_buff_size.setValue(audio["normalizador_buff_size"])
-        self.spin_normalizador_max_level.setValue(audio["normalizador_max_level"])
 
         fade = self._config["fade"]
         self.chk_crossfade.setChecked(fade["crossfade_activado"])
@@ -948,22 +774,6 @@ class VentanaConfiguracion(QDialog):
             or self.combo_dispositivo_preescucha.currentText()
         self._config["audio"]["volumen_master"] = self.slider_volumen_master.value()
         self._config["audio"]["volumen_preescucha"] = self.slider_volumen_preescucha.value()
-        self._config["audio"]["compresor_activado"] = self.chk_compresor_activado.isChecked()
-        self._config["audio"]["compresor_rms_pico"] = self.spin_compresor_rms_pico.value()
-        self._config["audio"]["compresor_umbral_db"] = self.spin_compresor_umbral.value()
-        self._config["audio"]["compresor_ratio"] = self.spin_compresor_ratio.value()
-        self._config["audio"]["compresor_ataque_ms"] = self.spin_compresor_ataque.value()
-        self._config["audio"]["compresor_release_ms"] = self.spin_compresor_release.value()
-        self._config["audio"]["compresor_knee_db"] = self.spin_compresor_knee.value()
-        self._config["audio"]["compresor_ganancia_salida_db"] = self.spin_compresor_ganancia_salida.value()
-        self._config["audio"]["estereo_ancho_activado"] = self.chk_estereo_ancho_activado.isChecked()
-        self._config["audio"]["estereo_ancho_delay_ms"] = self.spin_estereo_ancho_delay.value()
-        self._config["audio"]["estereo_ancho_feedback_pct"] = self.spin_estereo_ancho_feedback.value()
-        self._config["audio"]["estereo_ancho_crossfeed_pct"] = self.spin_estereo_ancho_crossfeed.value()
-        self._config["audio"]["estereo_ancho_dry_mix_pct"] = self.spin_estereo_ancho_dry_mix.value()
-        self._config["audio"]["normalizador_activado"] = self.chk_normalizador_activado.isChecked()
-        self._config["audio"]["normalizador_buff_size"] = self.spin_normalizador_buff_size.value()
-        self._config["audio"]["normalizador_max_level"] = self.spin_normalizador_max_level.value()
 
         self._config["fade"]["crossfade_activado"] = self.chk_crossfade.isChecked()
         self._config["fade"]["duracion_fade_in_v2_ms"] = self.spin_fade_in_v2.value()

@@ -55,6 +55,26 @@ DBFS_OBJETIVO = -16.0                        # nivel de referencia al que se niv
 UMBRAL_SILENCIO_DBFS_DEFECTO = -40.0         # por debajo de esto se considera "silencio" (configurable)
 LIMITE_RECORTE_SILENCIO_SEGUNDOS = 20.0      # techo duro: nunca recorta más que esto de cada lado
 
+# Tope del margen de seguridad que se deja SIN recortar en la SALIDA
+# (bug real corregido, pedido explícito: "finalizó y dejó mucho
+# silencio al final. No debería suceder eso"). Antes, el margen de
+# salida usaba el mismo `tolerancia_silencio_segundos` que el de
+# ENTRADA (2s por defecto) -- para un tema con 3-4s de silencio real
+# pegado al final (frecuente en masters/exports con padding), eso
+# dejaba hasta 2 segundos de aire casi muerto sonando antes del corte
+# real, y de paso retrasaba el disparo del crossfade (que se calcula
+# sobre ese mismo punto_fin_ms ya "inflado"). El margen de ENTRADA se
+# deja intacto (un pre-roll de 2s antes de que arranque el contenido
+# no genera el mismo problema) -- el de SALIDA ahora nunca supera este
+# tope, sin importar qué tan grande sea `tolerancia_silencio_segundos`
+# configurado (`min(tolerancia_ms, MARGEN_MAXIMO_SALIDA_MS)`): alcanza
+# para no cortar en seco una nota/reverberación recién decayendo, sin
+# arrastrar segundos de aire muerto. Los géneros de corte estricto
+# (Publicidad/Separador/HTH, tolerancia=0) no se ven afectados --
+# min(0, 300) sigue dando 0, mismo comportamiento "sin margen" de
+# siempre.
+MARGEN_MAXIMO_SALIDA_MS = 300
+
 
 def analizar_audio(
     ruta: str,
@@ -100,9 +120,14 @@ def analizar_audio(
 
         # Silencio de salida: mismo escaneo "desde afuera hacia
         # adentro", pero sobre el audio invertido — misma garantía.
+        # El margen que se deja SIN recortar acá está topeado por
+        # MARGEN_MAXIMO_SALIDA_MS (ver nota arriba) — nunca el
+        # tolerancia_ms completo, para no dejar segundos de aire
+        # muerto sonando antes del corte real.
         silencio_fin_ms = detect_leading_silence(audio.reverse(), silence_threshold=umbral_silencio_dbfs)
         silencio_fin_ms = min(silencio_fin_ms, limite_ms)
-        silencio_fin_ms = max(0, silencio_fin_ms - tolerancia_ms)
+        margen_salida_ms = min(tolerancia_ms, MARGEN_MAXIMO_SALIDA_MS)
+        silencio_fin_ms = max(0, silencio_fin_ms - margen_salida_ms)
 
         punto_inicio_ms = min(silencio_inicio_ms, max(0, duracion_total_ms - 1))
         punto_fin_ms = max(punto_inicio_ms + 1, duracion_total_ms - silencio_fin_ms)
