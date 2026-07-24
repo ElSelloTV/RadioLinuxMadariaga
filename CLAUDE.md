@@ -7561,6 +7561,66 @@ todo el resto.
     DESPUÉS de esa migración inicial, explorar cualquier categoría —
     incluso las que nunca había abierto — ya es instantáneo, sin
     ningún tranco.
+78. ~~Botón manual "Verificar biblioteca" en Configuración + confirmado
+    que no queda ningún procesador de audio en la app~~ — dos
+    consultas de Santiago tras probar la ronda anterior:
+
+    **a) "¿Esta verificación se puede hacer también manual desde
+    Configuraciones?"**: sí — nuevo botón "🔎 Verificar biblioteca
+    (duración faltante)" en Configuración → Diagnóstico, junto a
+    "🔄 Reanalizar biblioteca" (que es una función DISTINTA — recalcula
+    el recorte de silencio/nivelado con la tolerancia actual, nunca
+    toca la duración). El botón nuevo reusa EXACTAMENTE el mismo
+    mecanismo que ya corre solo al arrancar
+    (`VentanaExplorador.iniciar_migracion_duracion_al_arrancar()` +
+    `DialogoPreloadBiblioteca`, ronda anterior) — mismos lotes chicos
+    vía `QTimer`, misma barra de progreso gráfica — así se comporta
+    igual sea que se dispare al abrir el programa o a mano desde acá,
+    sin tener que reiniciar. Si no hay nada pendiente, avisa que no
+    hacía falta nada en vez de mostrar una barra vacía.
+    **Sobre la otra mitad de la pregunta ("cuando se agregan archivos
+    nuevos")**: no hizo falta agregar ningún gancho nuevo — los 3
+    caminos de alta de la app ("＋ Agregar", "Importar masivo",
+    descarga de YouTube) YA calculan la duración en el momento mismo
+    de importar (`obtener_duracion_formateada(ruta)`, confirmado
+    revisando los 3 puntos de alta en `gui/ventana_explorador.py`) —
+    nunca queda un hueco para un archivo agregado por la vía normal de
+    la app. El botón nuevo (más el chequeo lazy de
+    `_registros_de_categoria()`, ronda anterior, que sigue como red de
+    seguridad) cubre el único caso real donde SÍ podría faltar: un
+    archivo que entra a la biblioteca por fuera de esos 3 caminos (ej.
+    editando `biblioteca.json` a mano o por script).
+
+    **b) "¿Quedó algún proceso de algún procesador de audio, autoganancia
+    o algo por el estilo?"**: NO — confirmado con una búsqueda
+    puntual en todo `core/` y `config/settings.py`: del compresor/
+    Stereo Enhancer/Volume Normalizer nativos de libVLC (sacados en la
+    ronda 75, cuando Santiago armó su propia app de PipeWire) no queda
+    ningún código funcional — solo comentarios explicando la remoción
+    y el parámetro `aplicar_procesador` de `MotorAudio`, que sigue
+    existiendo por compatibilidad de firma pero ya no cambia nada en
+    la práctica. **Lo único relacionado con volumen que SÍ sigue
+    activo, y es importante no confundirlo con un "procesador"**: el
+    nivelado POR TEMA de `core/analizador_audio.py`
+    (`ganancia_db = DBFS_OBJETIVO - audio.dBFS`, calculado UNA vez al
+    importar cada archivo, aplicado como un simple ajuste de volumen
+    estático al reproducir) — esto NUNCA formó parte de la saga
+    EasyEffects/PipeWire/compresor de VLC, existe desde mucho antes, y
+    es justamente lo que ya se le había confirmado a Santiago en la
+    ronda 55 como "lo más parecido a una autoganancia de salida que
+    esta app puede ofrecer sin volver a depender de un procesador de
+    audio externo" — sigue funcionando igual, sin cambios.
+
+    Probado con `test_verificar_biblioteca_manual.py` (nuevo,
+    dedicado): el botón queda deshabilitado sin `ventana_explorador`
+    (mismo criterio que "Reanalizar biblioteca"), con archivos
+    pendientes dispara la migración y deja todo persistido con el
+    mensaje de resumen correcto, y sin nada pendiente avisa que no
+    hacía falta nada sin mostrar ningún diálogo de progreso — + suite
+    de regresión completa sin fallos nuevos (mismos 7 fallos
+    preexistentes de siempre) + smoke test de arranque limpio. Falta
+    que Santiago confirme que el botón nuevo aparece en Configuración
+    → Diagnóstico y funciona como espera.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

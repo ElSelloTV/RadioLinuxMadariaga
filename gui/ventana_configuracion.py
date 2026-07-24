@@ -35,6 +35,7 @@ from config.settings import (
 from core.audio_engine import MotorAudio
 from core import actualizador
 from gui.styles import LISTA_GENEROS
+from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 
 
 class VentanaConfiguracion(QDialog):
@@ -530,6 +531,31 @@ class VentanaConfiguracion(QDialog):
         if self._ventana_explorador is None:
             self.btn_reanalizar_biblioteca.setEnabled(False)
 
+        # Pedido explícito ("¿esta verificación se puede hacer también
+        # manual desde Configuraciones?"): la migración de duración
+        # faltante ya corre sola al arrancar la app
+        # (VentanaExplorador.iniciar_migracion_duracion_al_arrancar,
+        # con la barra de progreso gráfica) — este botón es el mismo
+        # mecanismo, disparable a mano en cualquier momento, sin tener
+        # que reiniciar el programa. Con la biblioteca ya migrada (el
+        # caso normal después del primer uso) no hace nada más que
+        # avisar que no había nada pendiente.
+        nota_verificar = QLabel(
+            "Verificar biblioteca: busca archivos sin la duración\n"
+            "calculada todavía (típico de una biblioteca migrada por\n"
+            "fuera de las altas normales, que sí la calculan al importar)\n"
+            "y la completa — mismo chequeo que ya corre solo al abrir el\n"
+            "programa, para correrlo a mano sin tener que reiniciar."
+        )
+        nota_verificar.setObjectName("lblTituloBloqueActivo")
+        nota_verificar.setWordWrap(True)
+        layout.addWidget(nota_verificar)
+        self.btn_verificar_biblioteca = QPushButton("🔎 Verificar biblioteca (duración faltante)")
+        self.btn_verificar_biblioteca.clicked.connect(self._verificar_biblioteca)
+        layout.addWidget(self.btn_verificar_biblioteca)
+        if self._ventana_explorador is None:
+            self.btn_verificar_biblioteca.setEnabled(False)
+
         layout.addStretch()
 
         if not actualizador.es_instalacion_git():
@@ -621,6 +647,47 @@ class VentanaConfiguracion(QDialog):
             self, "Reanalizar biblioteca",
             f"Listo: {cantidad} archivo(s) reanalizado(s) con los valores nuevos.",
         )
+
+    def _verificar_biblioteca(self):
+        """Corre a mano el mismo chequeo de duración faltante que ya
+        corre solo al abrir el programa — reusa `iniciar_migracion_
+        duracion_al_arrancar()` (lotes chicos vía QTimer, nunca un
+        bucle síncrono gigante) y la MISMA barra de progreso gráfica,
+        así se comporta igual sea que se dispare al arrancar o a mano
+        desde acá."""
+        if self._ventana_explorador is None:
+            return
+
+        estado = {"dialogo": None, "hechos": 0}
+
+        def _iniciar(total):
+            if total > 0:
+                estado["dialogo"] = DialogoPreloadBiblioteca(total, parent=self)
+                estado["dialogo"].show()
+
+        def _progreso(hechos, total):
+            if estado["dialogo"] is not None:
+                estado["dialogo"].actualizar(hechos, total)
+
+        def _terminado(hechos):
+            estado["hechos"] = hechos
+            if estado["dialogo"] is not None:
+                estado["dialogo"].close()
+
+        self._ventana_explorador.iniciar_migracion_duracion_al_arrancar(
+            callback_iniciar=_iniciar, callback_progreso=_progreso, callback_terminado=_terminado,
+        )
+        if estado["dialogo"] is not None:
+            estado["dialogo"].exec()
+            QMessageBox.information(
+                self, "Verificar biblioteca",
+                f"Listo: {estado['hechos']} archivo(s) con duración calculada y guardada.",
+            )
+        else:
+            QMessageBox.information(
+                self, "Verificar biblioteca",
+                "No había nada pendiente — todos los archivos ya tenían la duración calculada.",
+            )
 
     # ------------------------------------------------------------------
     # Tab: Actualizaciones
