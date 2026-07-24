@@ -580,6 +580,24 @@ class VentanaConfiguracion(QDialog):
         if self._ventana_explorador is None:
             self.btn_verificar_perdidos.setEnabled(False)
 
+        # Pedido explícito: "búsqueda de duplicados en el explorador
+        # (ventana 3) por nombre, duración y tamaño con opción de
+        # elegir alguno de esos filtros incluso los 3 juntos".
+        nota_duplicados = QLabel(
+            "Buscar duplicados: agrupa materiales de toda la biblioteca\n"
+            "que coincidan por nombre, duración y/o tamaño (combinables) —\n"
+            "permite moverlos a otra categoría o eliminar el registro\n"
+            "sobrante, mostrando la ruta de categoría de cada uno."
+        )
+        nota_duplicados.setObjectName("lblTituloBloqueActivo")
+        nota_duplicados.setWordWrap(True)
+        layout.addWidget(nota_duplicados)
+        self.btn_buscar_duplicados = QPushButton("🧩 Buscar duplicados en el explorador")
+        self.btn_buscar_duplicados.clicked.connect(self._buscar_duplicados)
+        layout.addWidget(self.btn_buscar_duplicados)
+        if self._ventana_explorador is None:
+            self.btn_buscar_duplicados.setEnabled(False)
+
         layout.addStretch()
 
         if not actualizador.es_instalacion_git():
@@ -719,6 +737,17 @@ class VentanaConfiguracion(QDialog):
         if self._ventana_explorador is None:
             return
         self._ventana_explorador.verificar_archivos_perdidos_biblioteca()
+
+    def _buscar_duplicados(self):
+        """Abre el diálogo de duplicados (gui/dialogo_duplicados.py) —
+        toda la lógica de búsqueda/mover/eliminar vive ahí y en
+        VentanaExplorador; este botón solo lo dispara desde
+        Configuración."""
+        if self._ventana_explorador is None:
+            return
+        from gui.dialogo_duplicados import DialogoDuplicados
+        dialogo = DialogoDuplicados(self._ventana_explorador, parent=self)
+        dialogo.exec()
 
     # ------------------------------------------------------------------
     # Tab: Actualizaciones

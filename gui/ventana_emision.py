@@ -63,6 +63,9 @@ class VentanaEmision(QWidget):
     def marcar_siguiente(self, fila):
         self.panel.marcar_siguiente(fila)
 
+    def marcar_item_con_error_en_fila(self, fila, con_error):
+        self.panel.marcar_item_con_error_en_fila(fila, con_error)
+
     def actualizar_contadores(self, transcurrido, restante):
         self.panel.actualizar_contadores(transcurrido, restante)
 

@@ -86,6 +86,18 @@ EXTENSIONES_SOPORTADAS = (".mp3", ".wav", ".mp4", ".m4a")
 # Roles de datos propios (por encima de Qt.ItemDataRole.UserRole)
 ROL_ARCHIVOS = Qt.ItemDataRole.UserRole + 20     # en ítem de categoría: list[dict]
 ROL_REGISTRO = Qt.ItemDataRole.UserRole + 21     # en ítem de archivo: dict completo
+# Bug real corregido ("Eliminar" no funcionaba para ítems sin ruta --
+# volvían a aparecer): antes, ubicar la categoría de un ítem de
+# tree_archivos dependía SIEMPRE de comparar por `ruta` contra
+# `ROL_ARCHIVOS` de cada categoría (_buscar_categoria_de_ruta) — con
+# `ruta` vacía (archivo nunca vinculado) esa comparación no tiene
+# forma de identificar cuál es el registro correcto, así que varios
+# lugares directamente hacían `if not ruta: continue/return` antes de
+# llegar a tocar la lista persistida. Ahora cada ítem de tree_archivos
+# guarda una referencia DIRECTA a su categoría de origen (el propio
+# QTreeWidgetItem de la izquierda), que sobrevive sin importar la
+# ruta -- ver _agregar_fila_archivo()/_llenar_tree_archivos().
+ROL_CATEGORIA_ORIGEN = Qt.ItemDataRole.UserRole + 22
 
 # Orden de columnas de tree_archivos (pedido explícito): Duración
 # primero, después Título/Artista/Categoría/Código.
@@ -406,7 +418,7 @@ class VentanaExplorador(QWidget):
                 titulo = (registro.get("titulo") or "").lower()
                 artista = (registro.get("artista") or "").lower()
                 if texto in titulo or texto in artista:
-                    resultados.append(registro)
+                    resultados.append((registro, item))
 
         self._para_cada_categoria(visitar)
 
@@ -575,7 +587,7 @@ class VentanaExplorador(QWidget):
         if actual is None:
             return
         registros = self._registros_de_categoria(actual)
-        self._llenar_tree_archivos(registros)
+        self._llenar_tree_archivos([(r, actual) for r in registros])
 
     def _registros_de_categoria(self, item_categoria: QTreeWidgetItem) -> list:
         """Lee los archivos de una categoría (`ROL_ARCHIVOS`) y, si
@@ -727,13 +739,18 @@ class VentanaExplorador(QWidget):
 
         QTimer.singleShot(0, procesar_lote)
 
-    def _agregar_fila_archivo(self, registro: dict, insertar: bool = True):
+    def _agregar_fila_archivo(self, registro: dict, item_categoria: QTreeWidgetItem, insertar: bool = True):
         """Arma el QTreeWidgetItem de una fila. Con `insertar=True`
         (default, usado por las altas de UN solo archivo) lo agrega
         directo al árbol y lo devuelve. Con `insertar=False` (usado
         por `_llenar_tree_archivos`, ver más abajo) devuelve el ítem
         SIN insertarlo — para que el llamador pueda insertar TODOS los
-        ítems de un lote de una sola vez con `addTopLevelItems()`."""
+        ítems de un lote de una sola vez con `addTopLevelItems()`.
+
+        `item_categoria` es la categoría de ORIGEN del registro — se
+        guarda en el propio ítem (`ROL_CATEGORIA_ORIGEN`) para poder
+        ubicarla después sin depender de comparar por `ruta` (que
+        puede estar vacía, ver nota junto a `ROL_CATEGORIA_ORIGEN`)."""
         duracion = registro.get("duracion")
         if not duracion:
             # Red de seguridad, no el punto principal de cacheo (ver
@@ -752,6 +769,7 @@ class VentanaExplorador(QWidget):
         item.setText(COL_CODIGO, registro.get("codigo", ""))
         item.setData(0, Qt.ItemDataRole.UserRole, registro.get("ruta", ""))  # para el drag
         item.setData(0, ROL_REGISTRO, registro)
+        item.setData(0, ROL_CATEGORIA_ORIGEN, item_categoria)
         self._pintar_por_genero(item, registro.get("genero", ""))
         self._actualizar_vinculo_item(item, registro)
         if insertar:
@@ -773,8 +791,11 @@ class VentanaExplorador(QWidget):
             fuente.setUnderline(sin_vinculo)
             item.setFont(columna, fuente)
 
-    def _llenar_tree_archivos(self, registros: list):
-        """Bug real de rendimiento con una biblioteca de ~10-12mil
+    def _llenar_tree_archivos(self, entradas: list):
+        """`entradas`: list[tuple[dict, QTreeWidgetItem]] -- cada
+        registro junto con su categoría de origen (necesaria para que
+        cada fila pueda guardar `ROL_CATEGORIA_ORIGEN`, ver esa nota
+        más arriba). Bug real de rendimiento con una biblioteca de ~10-12mil
         archivos ("el JSON parece trabarse... al ver los ítems en la
         categoría"): antes, ver una categoría con miles de archivos de
         golpe (frecuente tras una importación masiva — un solo lote
@@ -807,7 +828,7 @@ class VentanaExplorador(QWidget):
         ya pasó por `_registros_de_categoria()` antes de llegar acá —
         ver esa función para el bug de fondo que corrige (la copia que
         devuelve `QTreeWidgetItem.data()` para roles custom)."""
-        cantidad = len(registros)
+        cantidad = len(entradas)
         aviso_grande = cantidad >= self._UMBRAL_ITEMS_PRELOAD
         if aviso_grande:
             self.solicitud_preload.emit(f"Cargando {cantidad} archivos...")
@@ -816,8 +837,8 @@ class VentanaExplorador(QWidget):
         self.tree_archivos.setUpdatesEnabled(False)
         try:
             items = []
-            for indice, registro in enumerate(registros):
-                items.append(self._agregar_fila_archivo(registro, insertar=False))
+            for indice, (registro, categoria) in enumerate(entradas):
+                items.append(self._agregar_fila_archivo(registro, categoria, insertar=False))
                 if aviso_grande and indice % 500 == 0:
                     QApplication.processEvents()
             self.tree_archivos.addTopLevelItems(items)
@@ -848,22 +869,22 @@ class VentanaExplorador(QWidget):
             self._columna_orden_actual = columna
             self._orden_ascendente = True
 
-        registros = [
-            self.tree_archivos.topLevelItem(i).data(0, ROL_REGISTRO)
-            for i in range(self.tree_archivos.topLevelItemCount())
+        entradas = [
+            (item.data(0, ROL_REGISTRO), item.data(0, ROL_CATEGORIA_ORIGEN))
+            for item in (self.tree_archivos.topLevelItem(i) for i in range(self.tree_archivos.topLevelItemCount()))
         ]
-        registros = [r for r in registros if r is not None]
+        entradas = [(r, c) for r, c in entradas if r is not None]
         # Duración ya viene en formato "HH:MM:SS" con ceros a la
         # izquierda (obtener_duracion_formateada) — el orden lexicográfico
         # de esa cadena coincide con el orden cronológico real, no hace
         # falta parsear a segundos.
-        registros.sort(
-            key=lambda r: (r.get(campo) or "").lower() if isinstance(r.get(campo), str) else (r.get(campo) or ""),
+        entradas.sort(
+            key=lambda par: (par[0].get(campo) or "").lower() if isinstance(par[0].get(campo), str) else (par[0].get(campo) or ""),
             reverse=not self._orden_ascendente,
         )
 
         self.tree_archivos.clear()
-        self._llenar_tree_archivos(registros)
+        self._llenar_tree_archivos(entradas)
 
         orden_qt = Qt.SortOrder.AscendingOrder if self._orden_ascendente else Qt.SortOrder.DescendingOrder
         self.tree_archivos.header().setSortIndicator(columna, orden_qt)
@@ -1007,7 +1028,7 @@ class VentanaExplorador(QWidget):
         item_categoria.setData(0, ROL_ARCHIVOS, registros)
 
         if item_categoria is self._categoria_actual() and not self._en_busqueda:
-            self._agregar_fila_archivo(registro)
+            self._agregar_fila_archivo(registro, item_categoria)
 
         self._guardar_biblioteca_debounced()
         self.archivo_agregado.emit(ruta)
@@ -1378,6 +1399,27 @@ class VentanaExplorador(QWidget):
         if cambia_categoria:
             self.archivo_movido.emit(registro["titulo"], categoria_nueva.text(0))
 
+    @staticmethod
+    def _quitar_registro_de_lista(registros: list, registro: dict) -> list:
+        """Filtra `registro` fuera de una lista de registros de
+        categoría (ROL_ARCHIVOS). Bug real corregido ("no puedo
+        eliminar ítems que NO estén vinculados... vuelven a
+        aparecer"): filtrar solo por `ruta` no encuentra NADA cuando
+        el archivo nunca se vinculó (ruta vacía) -- ahí se usa
+        código+título como identidad (el código es único DENTRO de
+        una categoría, ver GENERO_PREFIJOS_CODIGO/altas). Función pura,
+        reutilizada por Eliminar, "Ubicar → Eliminar registro", y el
+        buscador de duplicados."""
+        ruta = registro.get("ruta") or ""
+        if ruta:
+            return [r for r in registros if r.get("ruta") != ruta]
+        codigo = registro.get("codigo")
+        titulo = registro.get("titulo")
+        return [
+            r for r in registros
+            if not (not r.get("ruta") and r.get("codigo") == codigo and r.get("titulo") == titulo)
+        ]
+
     def _eliminar_archivo(self):
         items = self.tree_archivos.selectedItems()
         if not items:
@@ -1396,16 +1438,18 @@ class VentanaExplorador(QWidget):
         rutas_eliminadas = []
         for item in list(items):
             registro = item.data(0, ROL_REGISTRO)
-            ruta = registro.get("ruta") if registro else None
+            ruta = (registro.get("ruta") if registro else None) or ""
             indice = self.tree_archivos.indexOfTopLevelItem(item)
             if indice >= 0:
                 self.tree_archivos.takeTopLevelItem(indice)
-            if not ruta:
+            if registro is None:
                 continue
-            categoria = self._buscar_categoria_de_ruta(ruta)
+            # Referencia directa a la categoría de origen -- no
+            # depende de `ruta` para ubicarla (ver ROL_CATEGORIA_ORIGEN).
+            categoria = item.data(0, ROL_CATEGORIA_ORIGEN)
             if categoria is None:
                 continue
-            registros = [r for r in (categoria.data(0, ROL_ARCHIVOS) or []) if r.get("ruta") != ruta]
+            registros = self._quitar_registro_de_lista(categoria.data(0, ROL_ARCHIVOS) or [], registro)
             categoria.setData(0, ROL_ARCHIVOS, registros)
             rutas_eliminadas.append(ruta)
 
@@ -1638,7 +1682,12 @@ class VentanaExplorador(QWidget):
         if decision == "eliminar":
             self._eliminar_registro_sin_confirmar(item)
         elif decision == "buscar":
-            categoria = self._buscar_categoria_de_ruta(ruta)
+            # Bug real corregido: antes se ubicaba la categoría vía
+            # _buscar_categoria_de_ruta(ruta) -- con `ruta` vacía
+            # (archivo NUNCA vinculado, el caso más común de este
+            # botón) esa comparación no encuentra nada. Usa la
+            # referencia directa guardada en el propio ítem.
+            categoria = item.data(0, ROL_CATEGORIA_ORIGEN)
             if categoria is None:
                 QMessageBox.warning(self, "Buscar archivo", "No se encontró la categoría de este archivo.")
                 return
@@ -1650,10 +1699,16 @@ class VentanaExplorador(QWidget):
             # delega en el mismo procesador que usa la verificación
             # masiva de Configuración.
             registros = categoria.data(0, ROL_ARCHIVOS) or []
-            try:
-                indice_actual = next(i for i, r in enumerate(registros) if r.get("ruta") == ruta)
-            except StopIteration:
-                indice_actual = -1
+            if ruta:
+                indice_actual = next((i for i, r in enumerate(registros) if r.get("ruta") == ruta), -1)
+            else:
+                codigo = registro.get("codigo")
+                titulo = registro.get("titulo")
+                indice_actual = next(
+                    (i for i, r in enumerate(registros)
+                     if not r.get("ruta") and r.get("codigo") == codigo and r.get("titulo") == titulo),
+                    -1,
+                )
             entradas = [(categoria, registro, item)]
             for r in registros[indice_actual + 1:]:
                 r_ruta = r.get("ruta")
@@ -1711,18 +1766,24 @@ class VentanaExplorador(QWidget):
         desde "Ubicar" sobre un archivo perdido, donde la propia
         pregunta "¿Buscarlo o eliminar el registro?" YA es la
         confirmación (reusar _eliminar_archivo() dispararía una
-        segunda, redundante, gateada por confirmar_antes_de_eliminar)."""
+        segunda, redundante, gateada por confirmar_antes_de_eliminar).
+
+        Bug real corregido (mismo de _eliminar_archivo() más arriba):
+        el caso de uso PRINCIPAL de este método es justamente un
+        registro con `ruta` vacía o rota, así que el viejo `if not
+        ruta: return` bloqueaba el borrado exactamente en el caso que
+        más importaba. Usa ROL_CATEGORIA_ORIGEN, sin depender de ruta."""
         registro = item.data(0, ROL_REGISTRO)
-        ruta = registro.get("ruta") if registro else None
+        ruta = (registro.get("ruta") if registro else None) or ""
         indice = self.tree_archivos.indexOfTopLevelItem(item)
         if indice >= 0:
             self.tree_archivos.takeTopLevelItem(indice)
-        if not ruta:
+        if registro is None:
             return
-        categoria = self._buscar_categoria_de_ruta(ruta)
+        categoria = item.data(0, ROL_CATEGORIA_ORIGEN)
         if categoria is None:
             return
-        registros = [r for r in (categoria.data(0, ROL_ARCHIVOS) or []) if r.get("ruta") != ruta]
+        registros = self._quitar_registro_de_lista(categoria.data(0, ROL_ARCHIVOS) or [], registro)
         categoria.setData(0, ROL_ARCHIVOS, registros)
         self._guardar_biblioteca_debounced()
         self.archivo_eliminado.emit(ruta)
@@ -2070,6 +2131,88 @@ class VentanaExplorador(QWidget):
 
         self._guardar_biblioteca_debounced()
         self.archivo_eliminado.emit(ruta)
+        return True
+
+    # ------------------------------------------------------------------
+    # Buscador de duplicados (pedido explícito: "búsqueda de duplicados
+    # en el explorador por nombre, duración y tamaño con opción de
+    # elegir alguno de esos filtros incluso los 3 juntos... menú
+    # contextual de mover o eliminar").
+    # ------------------------------------------------------------------
+    def buscar_duplicados_biblioteca(self, por_nombre: bool = True,
+                                      por_duracion: bool = False,
+                                      por_tamano: bool = False) -> list:
+        """Agrupa registros de TODA la biblioteca que coinciden en los
+        criterios elegidos (combinables). Devuelve una lista de grupos
+        -- cada grupo, una lista de tuplas (registro, categoria) -- y
+        solo incluye grupos de 2 o más (duplicados reales). Sin ningún
+        criterio activo no hay nada que agrupar. Un registro con algún
+        dato faltante en un criterio activo (ej. tamaño no cacheado)
+        se excluye de ese agrupamiento -- nunca se junta "sin dato"
+        con "sin dato", evitaría falsos positivos."""
+        if not (por_nombre or por_duracion or por_tamano):
+            return []
+
+        grupos: dict = {}
+        orden = []
+
+        def clave_de(registro):
+            partes = []
+            if por_nombre:
+                partes.append(("nombre", (registro.get("titulo") or "").strip().lower()))
+            if por_duracion:
+                partes.append(("duracion", registro.get("duracion") or ""))
+            if por_tamano:
+                partes.append(("tamano", registro.get("tamaño_bytes")))
+            return tuple(partes)
+
+        def visitar(item):
+            for registro in (item.data(0, ROL_ARCHIVOS) or []):
+                clave = clave_de(registro)
+                if any(valor in (None, "") for _, valor in clave):
+                    continue
+                if clave not in grupos:
+                    grupos[clave] = []
+                    orden.append(clave)
+                grupos[clave].append((registro, item))
+
+        self._para_cada_categoria(visitar)
+        return [grupos[clave] for clave in orden if len(grupos[clave]) > 1]
+
+    def mover_registro_a_otra_categoria(self, registro: dict, categoria_origen, categoria_destino) -> bool:
+        """Mueve UN registro puntual (ya resuelto por el llamador, ej.
+        el buscador de duplicados) entre categorías -- variante de
+        _mover_archivos_a_categoria() que no depende de resolver la
+        categoría de origen buscando por ruta (necesario acá porque un
+        duplicado sin vincular tiene `ruta` vacía)."""
+        if categoria_origen is None or categoria_destino is None or categoria_origen is categoria_destino:
+            return False
+        registros_origen = self._quitar_registro_de_lista(categoria_origen.data(0, ROL_ARCHIVOS) or [], registro)
+        categoria_origen.setData(0, ROL_ARCHIVOS, registros_origen)
+        registros_destino = categoria_destino.data(0, ROL_ARCHIVOS) or []
+        registros_destino.append(registro)
+        categoria_destino.setData(0, ROL_ARCHIVOS, registros_destino)
+        if not self._en_busqueda and self._categoria_actual() in (categoria_origen, categoria_destino):
+            self._on_categoria_seleccionada(self._categoria_actual(), None)
+        self._guardar_biblioteca_debounced()
+        self.archivo_movido.emit(registro.get("titulo", ""), categoria_destino.text(0))
+        return True
+
+    def eliminar_registro_de_categoria(self, registro: dict, categoria) -> bool:
+        """Elimina definitivamente UN registro (entrada JSON) de la
+        biblioteca -- usado por el buscador de duplicados. Nota
+        importante: esto borra el REGISTRO, nunca el archivo físico --
+        distinto de "🗑 Eliminar" sobre un candidato del diálogo
+        Vincular (gui/dialogo_vincular_archivo.py), que borra el
+        archivo de la PC y nunca toca la biblioteca JSON."""
+        if categoria is None:
+            return False
+        registros = self._quitar_registro_de_lista(categoria.data(0, ROL_ARCHIVOS) or [], registro)
+        categoria.setData(0, ROL_ARCHIVOS, registros)
+        if not self._en_busqueda and categoria is self._categoria_actual():
+            self._on_categoria_seleccionada(categoria, None)
+        self._guardar_biblioteca_debounced()
+        self.archivo_eliminado.emit(registro.get("ruta") or "")
         return True
 
     # ------------------------------------------------------------------

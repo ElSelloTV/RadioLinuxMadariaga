@@ -101,6 +101,8 @@ sincronizado.
 --------------------------------------------------------
 """
 
+import os
+
 from PySide6.QtCore import Qt, QTimer
 
 from core.audio_engine import MotorAudio
@@ -358,6 +360,20 @@ class GestorPlaylist:
         if fila < 0 and self.panel.cantidad_items() > 0:
             fila = 0
             self.panel.marcar_reproduciendo(0)
+        total = self.panel.cantidad_items()
+        if total > 0:
+            # Mismo criterio que _avanzar()/_iniciar_crossfade(): si el
+            # ítem armado en rojo tiene el archivo faltante, Play no
+            # debe intentarlo (ni siquiera de forma reactiva vía el
+            # error de VLC) — saltea directo al próximo reproducible.
+            fila_valida = self._resolver_siguiente_fila_valida(fila, total)
+            if fila_valida < 0:
+                self.motor.detener()
+                self.panel.resetear_reproduccion()
+                return
+            if fila_valida != fila:
+                fila = fila_valida
+                self.panel.marcar_reproduciendo(fila)
         self._asegurar_rojo_y_verde()
         registrar_evento(f"Play (Emisión persistir={self.persistir}) fila={fila}")
         self._reproducir_fila(fila)
@@ -493,6 +509,57 @@ class GestorPlaylist:
         self._ceder_control_armado = True
         self._callback_ceder_control = callback
 
+    def _fila_valida(self, fila: int) -> bool:
+        """Pedido explícito ("apliquemos en Ventana 2 el mismo
+        criterio que la Ventana 1: si hay un ítem no vinculado, que no
+        se detenga y pase al que sigue debajo"): mismo chequeo
+        PROACTIVO (`os.path.exists`, antes de intentar reproducir) que
+        ya usa `GestorPublicidad._item_valido()` — antes, Emisión solo
+        reaccionaba REACTIVAMENTE al error de VLC vía `_on_error()`, y
+        si varios ítems rotos caían seguidos, `reintentos_maximos`
+        se agotaba y `_on_error()` cortaba TODO el aire. Marca/desmarca
+        la X roja de error en el mismo momento en que se evalúa cada
+        fila — igual que V1, sincronizado en vivo."""
+        ruta = self.panel.ruta_en_fila(fila)
+        if not ruta or not os.path.exists(ruta):
+            self.panel.marcar_item_con_error_en_fila(fila, True)
+            return False
+        self.panel.marcar_item_con_error_en_fila(fila, False)
+        return True
+
+    def _resolver_siguiente_fila_valida(self, fila_inicio: int, total: int) -> int:
+        """Devuelve la próxima fila REPRODUCIBLE (archivo existente en
+        disco) a partir de `fila_inicio`, aplicando la misma lógica de
+        fin de lista que ya tenían `_avanzar()`/`_iniciar_crossfade()`
+        (refill del Musicalizador si hay un formato activo, si no
+        "repetir al finalizar", si no detenerse) — así un archivo sin
+        vincular nunca corta el aire, se saltea como ya hace Ventana 1.
+        Devuelve -1 si NINGÚN ítem de la lista es reproducible (todo
+        roto) — ahí sí no queda nada para reproducir, ni V1 podría."""
+        fila = fila_inicio
+        # Tope defensivo (mismo espíritu que el resto del proyecto
+        # ante libVLC: nunca confiar en una sola vuelta) — con una
+        # lista totalmente rota y "repetir al finalizar" activo, sin
+        # este tope el fin-de-lista podría rebotar indefinidamente
+        # entre "envolver a 0" y "0 también está roto".
+        limite = total + 2
+        vueltas = 0
+        while vueltas <= limite:
+            if fila >= total:
+                if self._formato_musicalizador_activo is not None:
+                    self._generar_serie_musicalizador()
+                    total = self.panel.cantidad_items()
+                if fila >= total:
+                    if self.repetir_al_finalizar:
+                        fila = 0
+                    else:
+                        return -1
+            if self._fila_valida(fila):
+                return fila
+            fila += 1
+            vueltas += 1
+        return -1
+
     def _reproducir_fila(self, fila: int):
         ruta = self.panel.ruta_en_fila(fila)
         if not ruta:
@@ -557,17 +624,12 @@ class GestorPlaylist:
         if fila_siguiente < 0 or fila_siguiente == fila_actual:
             fila_siguiente = fila_actual + 1
 
-        if fila_siguiente >= total:
-            # Mismo criterio que la red de emergencia de _avanzar():
-            # con un formato FMT activo, generar una serie nueva tiene
-            # prioridad sobre "repetir lista al finalizar" (si no, un
-            # ciclo agotado terminaría cruzando por crossfade de vuelta
-            # al ítem 0 en vez de a contenido recién generado).
-            if self._formato_musicalizador_activo is not None:
-                self._generar_serie_musicalizador()
-                total = self.panel.cantidad_items()
-            if fila_siguiente >= total:
-                fila_siguiente = 0 if self.repetir_al_finalizar else -1
+        # Mismo criterio que _avanzar() (caminos paralelos, ver nota al
+        # inicio del archivo — cualquier chequeo sobre "qué ítem sigue"
+        # se agrega a los DOS): refill/"repetir al finalizar" + saltear
+        # filas con el archivo faltante, para que el crossfade nunca
+        # intente cruzar hacia un ítem sin vincular.
+        fila_siguiente = self._resolver_siguiente_fila_valida(fila_siguiente, total)
         if fila_siguiente < 0:
             return
 
@@ -829,31 +891,20 @@ class GestorPlaylist:
         if fila_siguiente < 0 or fila_siguiente == fila_actual:
             fila_siguiente = fila_actual + 1
 
-        if fila_siguiente >= total:
-            # Red de emergencia — SOLO para el caso límite de una
-            # serie de 1 solo ítem (o cualquier otro donde nunca hubo
-            # "ante-último" desde donde marcar verde): el mecanismo
-            # normal es `_marcar_siguiente_con_refill()`/
-            # `_resolver_candidata_verde()` (ver más arriba), pero acá
-            # no hay nada que marcar en verde todavía, así que se
-            # genera la serie siguiente directamente antes de
-            # rendirse. Bug real corregido: esto ANTES chequeaba
-            # `repetir_al_finalizar` (True por defecto) PRIMERO —
-            # con un FMT activo, eso hacía ENVOLVER de vuelta al ítem
-            # 0 en vez de generar contenido nuevo. Con un formato
-            # activo, siempre se lo prioriza; "repetir al finalizar"
-            # queda como red de seguridad si el formato no generó
-            # nada (roto) o no hay ninguno activo.
-            if self._formato_musicalizador_activo is not None:
-                self._generar_serie_musicalizador()
-                total = self.panel.cantidad_items()
-            if fila_siguiente >= total:
-                if self.repetir_al_finalizar:
-                    fila_siguiente = 0
-                else:
-                    self.motor.detener()
-                    self.panel.resetear_reproduccion()
-                    return
+        # Red de emergencia de fin de lista (serie de 1 solo ítem, o
+        # cualquier otro caso sin "ante-último" desde donde marcar
+        # verde) + pedido explícito ("si hay un ítem no vinculado, que
+        # no se detenga y pase al que sigue debajo"): _resolver_
+        # siguiente_fila_valida() resuelve las dos cosas de una —
+        # aplica el mismo refill/"repetir al finalizar" de siempre Y
+        # saltea cualquier fila con el archivo faltante en el camino.
+        fila_siguiente = self._resolver_siguiente_fila_valida(fila_siguiente, total)
+        if fila_siguiente < 0:
+            # Ningún ítem de la lista es reproducible (todo roto) —
+            # ahí sí no queda nada para reproducir.
+            self.motor.detener()
+            self.panel.resetear_reproduccion()
+            return
 
         self.panel.marcar_reproduciendo(fila_siguiente)
 

@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QHeaderView, QMenu, QMessageBox, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QBrush
+from PySide6.QtGui import QColor, QBrush, QIcon
 
 from gui.common_widgets import ArbolReproductorConDrop, SliderBusqueda
 from gui.etiqueta_marquesina import EtiquetaMarquesina
@@ -52,6 +52,7 @@ from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
     ROL_YA_REPRODUCIDO, icono_reproducido, ROL_POSICION_PISADOR,
+    ROL_ITEM_CON_ERROR, icono_error,
 )
 from config.settings import registrar_reproduccion
 
@@ -346,6 +347,29 @@ class PanelReproductor(QWidget):
             self._titulo_panel, item.text(0), item.text(2),
             item.data(0, Qt.ItemDataRole.UserRole) or "",
         )
+
+    def marcar_item_con_error_en_fila(self, fila: int, con_error: bool):
+        """Pedido explícito ("apliquemos el mismo criterio que la
+        ventana 1: si hay un ítem no vinculado... lo deje marcado con
+        una X roja de error"): mismo mecanismo que
+        VentanaPublicidad.marcar_item_con_error(), adaptado a indexado
+        por fila (acá la fila "reproduciendo"/"siguiente" se rastrea
+        por ítem, pero el resto de la API del panel es por fila). Si
+        el ítem ya tenía el tick verde de "ya reproducido" (sonó antes
+        de que su archivo desapareciera), sacar el error lo restaura
+        en vez de dejar el ícono en blanco."""
+        item = self.tree.topLevelItem(fila)
+        if item is None:
+            return
+        if item.data(0, ROL_ITEM_CON_ERROR) == con_error:
+            return
+        item.setData(0, ROL_ITEM_CON_ERROR, con_error)
+        if con_error:
+            item.setIcon(0, icono_error())
+        elif item.data(0, ROL_YA_REPRODUCIDO):
+            item.setIcon(0, icono_reproducido())
+        else:
+            item.setIcon(0, QIcon())
 
     def marcar_siguiente(self, fila: int):
         estado_previo = ESTADO_REPRODUCIENDO if self._item_siguiente is self._item_reproduciendo else ESTADO_NORMAL

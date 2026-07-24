@@ -8007,6 +8007,163 @@ todo el resto.
     confirme que el subrayado se distingue bien a simple vista con su
     biblioteca real, sobre todo en filas ya coloreadas por género.
 
+83. ~~Ventana 2 saltea ítems sin vinculación (mismo criterio que V1) +
+    ícono de error en el salteado + fix real de "no puedo eliminar
+    ítems sin vinculación" + buscador de duplicados~~ — pedido
+    explícito, 4 partes: "a) En la ventana 2 apliquemos el mismo
+    criterio que la ventana 1: si hay un ítem no vinculado, que no se
+    detenga y que pase al que sigue debajo. b) A ese que pasó sin
+    vinculación, lo deje marcado en vez con el icono 'ok', con una
+    'x' roja de error. c) Revisá por qué no puedo eliminar de la
+    biblioteca (ventana 3) item que NO esten vinculados... vuelven a
+    aparecer. d) Incorporame en la ventana configuraciones, otro botón
+    de búsqueda de duplicados en el explorador (ventana 3) por
+    nombre, duración y tamaño con opción de elegir alguno de esos
+    filtros incluso los 3 juntos. Menú contextual de mover o eliminar.
+    Debo ver las rutas de categorias cuando aparezcan duplicados."
+
+    **a+b) Ventana 2 (Emisión/Auxiliar) ahora saltea ítems sin
+    vinculación, mismo criterio que Ventana 1**: hasta esta ronda,
+    `GestorPlaylist` solo reaccionaba REACTIVAMENTE a un archivo
+    faltante (vía `error_reproduccion` de `MotorAudio`, tras el
+    intento real de reproducir) — si varios ítems rotos caían
+    seguidos, `reintentos_maximos` se agotaba y el aire se cortaba
+    entero, el mismo bug que Ventana 1 ya tenía corregido desde la
+    ronda 66 (`_item_valido()`, chequeo proactivo con
+    `os.path.exists()` antes de intentar reproducir nada). Portado a
+    `core/gestor_emision.py`: `_fila_valida(fila)` (nuevo) hace el
+    mismo chequeo proactivo y marca/desmarca la X roja de error EN EL
+    MISMO momento en que evalúa cada fila; `_resolver_siguiente_fila_
+    valida(fila_inicio, total)` (nuevo) es un bucle que avanza fila
+    por fila hasta encontrar una reproducible, aplicando la MISMA
+    lógica de fin de lista que ya tenían `_avanzar()`/
+    `_iniciar_crossfade()` (refill del Musicalizador si hay un
+    formato activo, si no "repetir al finalizar", si no detenerse) —
+    con un tope defensivo (`total + 2` vueltas) para nunca colgarse
+    ante una lista totalmente rota con "repetir" activo. Los TRES
+    puntos de entrada que deciden "qué ítem sigue" ahora pasan por
+    acá: `_avanzar()` y `_iniciar_crossfade()` (los dos caminos
+    paralelos de siempre, ver "Cosas ya resueltas" — el chequeo se
+    agregó a los DOS, no solo a uno) reemplazan su viejo bloque
+    inline de fin-de-lista por un llamado a
+    `_resolver_siguiente_fila_valida()`, y `reproducir_actual()`
+    (Play manual) ahora valida el ítem armado ANTES de reproducirlo,
+    saltando al próximo válido si hace falta — antes Play sobre un
+    ítem roto simplemente lo intentaba igual. El ícono se implementa
+    reusando `ROL_ITEM_CON_ERROR`/`icono_error()` de `gui/styles.py`
+    (ya existentes desde la ronda de V1, genéricos, sin nada
+    V1-específico) — `PanelReproductor.marcar_item_con_error_en_fila()`
+    (nuevo) prende la X roja o, si no hay error, restaura el tilde
+    verde de "ya reproducido" si el ítem lo tenía, o lo deja sin
+    ícono. **Bug de delegación evitado de raíz, no atrapado después**
+    (mismo patrón ya documentado muchas veces en este archivo): el
+    método nuevo se delegó de una en `VentanaEmision` Y
+    `VentanaAuxiliar` a la vez, antes de dar la ronda por terminada.
+
+    **c) Bug real corregido — "no puedo eliminar ítems sin
+    vinculación... vuelven a aparecer"**: causa de fondo en
+    `gui/ventana_explorador.py` — `_eliminar_archivo()`/
+    `_eliminar_registro_sin_confirmar()` ubicaban la categoría de
+    origen de un ítem con `_buscar_categoria_de_ruta(ruta)`, que
+    compara por `ruta` contra `ROL_ARCHIVOS` — con `ruta` VACÍA (un
+    material nunca vinculado, exactamente el caso que Santiago estaba
+    resolviendo a mano con "Vincular"), esa búsqueda no encuentra
+    NADA: el ítem se sacaba de `tree_archivos` (visualmente
+    desaparecía) pero JAMÁS se sacaba de la lista `ROL_ARCHIVOS`
+    persistida de su categoría — al recargar la categoría (o
+    reabrir la app), volvía a aparecer, tal cual describió Santiago.
+    Corregido de raíz con un rol nuevo, `ROL_CATEGORIA_ORIGEN`
+    (`Qt.ItemDataRole.UserRole + 22`): cada fila de `tree_archivos`
+    ahora guarda una referencia DIRECTA al `QTreeWidgetItem` de su
+    categoría de origen (seteada en `_agregar_fila_archivo()`, que
+    ganó un parámetro obligatorio `item_categoria`) — nunca hay que
+    re-derivar la categoría comparando por ruta, así que una ruta
+    vacía deja de ser un caso especial roto. `_llenar_tree_archivos()`
+    (el batcheador de la ronda de rendimiento) pasó a recibir tuplas
+    `(registro, categoria)` en vez de una lista plana de registros —
+    todos sus llamadores (`_on_categoria_seleccionada`, `_buscar`,
+    `_ordenar_por_columna`) se actualizaron para armar esas tuplas.
+    Con la categoría ya resuelta sin ambigüedad, `_eliminar_archivo()`/
+    `_eliminar_registro_sin_confirmar()`/la rama "buscar" de
+    `_ubicar_archivo()` se simplificaron para usar un helper nuevo
+    compartido, `_quitar_registro_de_lista(registros, registro)`
+    (función pura, sin Qt): filtra por `ruta` si el registro la tiene,
+    o por `código+título` si no (el código es único DENTRO de una
+    categoría) — la MISMA lógica que antes vivía duplicada en dos
+    lugares, ahora en un solo sitio, reutilizada también por el
+    buscador de duplicados del punto (d).
+
+    **d) Buscador de duplicados (Configuración → Diagnóstico, botón
+    nuevo "🧩 Buscar duplicados en el explorador")**: `VentanaExplorador.
+    buscar_duplicados_biblioteca(por_nombre, por_duracion, por_tamano)`
+    (nuevo) recorre TODA la biblioteca (`_para_cada_categoria`) y
+    agrupa por la INTERSECCIÓN de los criterios tildados (combinables
+    — con los 3 activos, dos registros solo cuentan como duplicados si
+    coinciden en título, duración Y tamaño en bytes a la vez); un
+    registro con algún dato faltante en un criterio activo (ej.
+    `tamaño_bytes` no cacheado) se excluye de ESE agrupamiento —
+    nunca junta "sin dato" con "sin dato", evitaría falsos positivos.
+    Solo se devuelven grupos de 2+ (duplicados reales). Nuevo diálogo
+    `gui/dialogo_duplicados.py` — 3 checkboxes de criterio + botón
+    "🔎 Buscar duplicados", resultado agrupado en un árbol (un nodo por
+    grupo, con la cantidad de coincidencias; hijos con Título/Categoría/
+    Duración/Tamaño/Ruta) — pedido explícito "debo ver las rutas de
+    categorías": cada fila muestra el camino completo
+    (`ruta_de_categoria()`, "Padre > Hijo", ya existente desde el
+    Musicalizador). Menú contextual sobre cada candidato: "📂 Mover a
+    categoría..." (reusa `gui/dialogo_seleccionar_categoria.py`, ya
+    existente, + `VentanaExplorador.mover_registro_a_otra_categoria()`
+    nuevo — variante de `_mover_archivos_a_categoria()` que no depende
+    de resolver la categoría de origen por ruta, ya que acá el
+    registro y su categoría de origen vienen resueltos de antes) y
+    "🗑 Eliminar registro de la biblioteca" (con confirmación siempre,
+    `VentanaExplorador.eliminar_registro_de_categoria()` nuevo).
+    **Distinción importante, aclarada en el propio código y pedida
+    explícitamente por Santiago para el diálogo de "Ubicar" de una
+    ronda anterior (no cambia acá, pero se reafirma para no
+    confundir)**: "Eliminar" en ESTE diálogo borra el REGISTRO (la
+    entrada de la biblioteca JSON), nunca el archivo físico — el
+    concepto exactamente OPUESTO al "🗑 Eliminar" del diálogo de
+    Vincular archivos perdidos (`gui/dialogo_vincular_archivo.py`),
+    que borra el archivo real de la PC y nunca toca el JSON. Los dos
+    conviven a propósito, cada uno con su alcance bien distinto —
+    documentado en el docstring de cada diálogo para que quede claro
+    de dónde se dispara cada cosa.
+
+    Probado con `test_ronda_v2_skip_y_eliminar_c_duplicados.py`
+    (nuevo, dedicado, cubre las 4 partes): Ventana 2 —
+    `_fila_valida()` marca/desmarca la X correctamente,
+    `reproducir_actual()` saltea un ítem armado roto y arranca en el
+    siguiente real (marcándolo "ya reproducido"), `_avanzar()` desde
+    el fin de la lista envuelve y saltea el roto sin detenerse,
+    `_iniciar_crossfade()` nunca cruza hacia un ítem roto; Ventana 3 —
+    un registro con `ruta=""` se elimina de la lista VISUAL Y de la
+    PERSISTIDA (confirmado recargando la categoría, ya no reaparece);
+    duplicados — agrupa por nombre solo, por nombre+duración
+    (criterios más estrictos separan grupos), sin ningún criterio no
+    agrupa nada, mover/eliminar un registro puntual funciona y el
+    diálogo se puebla correctamente al buscar — + suite de regresión
+    completa sin fallos nuevos (mismos 7 fallos preexistentes de
+    siempre: `test_audio_only_y_buffer.py`, `test_confirmaciones.py`,
+    `test_fade_in_declick_v1.py`, `test_log_git.py`,
+    `test_ronda_ajustes_dinesat2.py`, `test_ronda_dinesat3.py`,
+    `test_ventana3.py`) + smoke test de arranque limpio. **Nota de
+    infraestructura de testing, no de la app**: el chequeo proactivo
+    nuevo de Ventana 2 rompió varios scripts de regresión preexistentes
+    que usaban rutas `/tmp/*.mp3` ficticias (nunca creadas en disco)
+    como simple placeholder de "algún archivo" — confirmado uno por
+    uno que ninguno probaba intencionalmente el camino de "archivo
+    faltante" (eso lo prueban tests dedicados, con nombres explícitos
+    tipo `no_existe_de_verdad_*`, que SÍ se dejaron sin crear a
+    propósito) — se crearon como archivos vacíos reales en `/tmp` los
+    que sí eran simples placeholders, mismo criterio ya usado en la
+    ronda 66. **Sigue sin poder probarse con audio/VLC real** (como
+    todo lo que toca el motor de reproducción): falta que Santiago
+    confirme con su radio real que un archivo movido/borrado en
+    Ventana 2 ahora se saltea solo (con la X roja) en vez de cortar el
+    aire, y que el buscador de duplicados encuentra y permite resolver
+    duplicados reales de su biblioteca.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
