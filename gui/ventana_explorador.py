@@ -753,9 +753,25 @@ class VentanaExplorador(QWidget):
         item.setData(0, Qt.ItemDataRole.UserRole, registro.get("ruta", ""))  # para el drag
         item.setData(0, ROL_REGISTRO, registro)
         self._pintar_por_genero(item, registro.get("genero", ""))
+        self._actualizar_vinculo_item(item, registro)
         if insertar:
             self.tree_archivos.addTopLevelItem(item)
         return item
+
+    def _actualizar_vinculo_item(self, item: QTreeWidgetItem, registro: dict):
+        """Pedido explícito ("un subrayado de los ítems que no tengan
+        vinculación, así también me doy cuenta visualmente"): un
+        registro cuyo archivo ya no está donde dice (falta la ruta, o
+        el archivo fue movido/borrado por fuera de la app) se subraya
+        en TODA la fila -- mismo criterio de "aplicar a las 5
+        columnas" que ya usa _pintar_por_genero, pero independiente
+        del color (un ítem sin vínculo puede tener cualquier género)."""
+        ruta = registro.get("ruta")
+        sin_vinculo = not ruta or not os.path.exists(ruta)
+        for columna in range(item.columnCount()):
+            fuente = item.font(columna)
+            fuente.setUnderline(sin_vinculo)
+            item.setFont(columna, fuente)
 
     def _llenar_tree_archivos(self, registros: list):
         """Bug real de rendimiento con una biblioteca de ~10-12mil
@@ -1260,6 +1276,7 @@ class VentanaExplorador(QWidget):
             item.setData(0, Qt.ItemDataRole.UserRole, ruta_nueva)
             item.setData(0, ROL_REGISTRO, registro)
             item.setText(COL_DURACION, registro["duracion"])
+            self._actualizar_vinculo_item(item, registro)
         self._sincronizar_registro_en_categoria(categoria, ruta_anterior, registro)
         self._guardar_biblioteca_debounced()
         return registro

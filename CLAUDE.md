@@ -7978,6 +7978,34 @@ todo el resto.
     categoría pasada, y aclara "(raíz...)" cuando no hay ninguna) +
     suite de regresión completa sin fallos nuevos (mismos 7 fallos
     preexistentes de siempre) + smoke test de arranque limpio.
+82. ~~Subrayado visual de los ítems sin vinculación en Ventana 3~~ —
+    pedido explícito: "agreguemos un subrayado de los ítem que no
+    tengan vinculación... así también me doy cuenta visualmente". Antes
+    de esta ronda, la única forma de notar un vínculo roto era abrir el
+    menú contextual "📍 Ubicar" ítem por ítem — ahora se ve de un
+    vistazo recorriendo la lista. Nuevo `VentanaExplorador.
+    _actualizar_vinculo_item(item, registro)`: si `registro["ruta"]`
+    está vacía o `os.path.exists()` da `False`, subraya la fuente de
+    las 5 columnas de esa fila (mismo criterio de "aplicar a todas las
+    columnas" que ya usa `_pintar_por_genero` para el color, pero
+    INDEPENDIENTE del color — un ítem sin vínculo puede ser de
+    cualquier género). Llamado desde `_agregar_fila_archivo()` (cubre
+    los 3 caminos que arman una fila: selección de categoría, búsqueda,
+    y alta de un archivo nuevo — recalculado en cada re-render, sin
+    necesitar un watcher de filesystem) y desde `_aplicar_nuevo_archivo()`
+    (para que "⟲ Reemplazar"/"🔗 Vincular" saquen el subrayado en el
+    momento, sin tener que recargar la categoría a mano).
+
+    Probado con `test_subrayado_sin_vinculo.py` (nuevo, dedicado): un
+    ítem con archivo real en disco queda sin subrayar, uno con la ruta
+    rota y uno sin ruta en absoluto quedan subrayados en las 5
+    columnas por igual, vincular un ítem roto le saca el subrayado al
+    instante, y reconstruir la categoría desde cero recalcula todo de
+    nuevo sin depender de estado previo — + suite de regresión
+    completa sin fallos nuevos (mismos 7 fallos preexistentes de
+    siempre) + smoke test de arranque limpio. Falta que Santiago
+    confirme que el subrayado se distingue bien a simple vista con su
+    biblioteca real, sobre todo en filas ya coloreadas por género.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
