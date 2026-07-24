@@ -134,18 +134,34 @@ def _asegurar_directorio():
     os.makedirs(DIRECTORIO_CONFIG, exist_ok=True)
 
 
-def _guardar_json_atomico(ruta: str, datos):
+def _guardar_json_atomico(ruta: str, datos, compacto: bool = False):
     """Escribe a un archivo temporal y lo renombra ENCIMA del
     definitivo (os.replace es atómico en Linux) — así un corte de luz
     o un apagado forzoso a mitad de la escritura nunca deja el
     archivo corrupto/truncado: o queda la versión anterior completa,
     o la nueva completa, nunca algo a medio escribir. Toda la
     persistencia de la app (config, biblioteca, programaciones) pasa
-    por acá."""
+    por acá.
+
+    `compacto=True` (pedido explícito, biblioteca de ~10-12mil
+    archivos: "el JSON parece trabarse... revisá el buffer") — sin
+    `indent=2`, `json.dump()` serializa bastante más rápido y el
+    archivo resultante pesa una fracción de lo que pesaba con el
+    pretty-print (cada nivel de indentación repite espacios en CADA
+    una de las miles de líneas) — con una biblioteca grande esto
+    reduce tanto el tiempo de escritura como el de `fsync()` (que
+    tiene que volcar más bytes a disco cuanto más grande el archivo).
+    `guardar_biblioteca()` es la única que lo usa — nadie edita
+    biblioteca.json a mano, a diferencia de config_general.json o
+    programacion.json, que se quedan legibles con indent=2 por si
+    Santiago necesita mirarlos/editarlos directo alguna vez."""
     _asegurar_directorio()
     archivo_temporal = f"{ruta}.tmp"
     with open(archivo_temporal, "w", encoding="utf-8") as f:
-        json.dump(datos, f, indent=2, ensure_ascii=False)
+        if compacto:
+            json.dump(datos, f, ensure_ascii=False, separators=(",", ":"))
+        else:
+            json.dump(datos, f, indent=2, ensure_ascii=False)
         f.flush()
         os.fsync(f.fileno())
     os.replace(archivo_temporal, ruta)
@@ -481,7 +497,7 @@ def cargar_biblioteca() -> list:
 
 
 def guardar_biblioteca(categorias: list):
-    _guardar_json_atomico(ARCHIVO_BIBLIOTECA, categorias)
+    _guardar_json_atomico(ARCHIVO_BIBLIOTECA, categorias, compacto=True)
 
 
 def reanalizar_biblioteca(config: dict) -> int:

@@ -7359,6 +7359,116 @@ todo el resto.
     dejan un hueco de silencio audible al terminar, y que active su
     app externa de PipeWire para el procesamiento de audio que antes
     vivía acá.
+76. ~~Rendimiento del Explorador con una biblioteca de ~10-12mil
+    archivos (pedido explícito, tras un pase real de casi 10mil
+    ítems) + barra de preload~~ — "el JSON parece trabarse un poco
+    para la lectura de exploración, por ejemplo al ver los ítems en
+    la categoría... revisá el buffer". Investigado a fondo en
+    `gui/ventana_explorador.py`, tres causas reales combinadas — la
+    tercera resultó ser, con datos realistas, la MÁS importante:
+
+    **a) Render de `tree_archivos` sin batchear**: `_on_categoria_
+    seleccionada`/`_buscar`/`_ordenar_por_columna` armaban cada
+    `QTreeWidgetItem` con `addTopLevelItem()` UNO POR UNO — con una
+    categoría de varios miles de ítems (frecuente: una importación
+    masiva suele caer entera en UNA sola categoría), cada inserción
+    dispara su propio recálculo interno de Qt. Corregido con
+    `_llenar_tree_archivos()` (nuevo, usado por los 3 lugares): arma
+    TODOS los ítems sueltos, los inserta de una con
+    `addTopLevelItems()`, y envuelve todo en
+    `setUpdatesEnabled(False)/(True)` — esto nunca toca disco (la
+    biblioteca ya está 100% en memoria desde el arranque, ver más
+    abajo), es puramente el costo de poblar el widget.
+
+    **b) Guardado de biblioteca.json SINCRÓNICO en cada mutación**:
+    `_guardar_biblioteca()` serializa TODA la biblioteca (recursivo)
+    y reescribe el archivo entero con `fsync()` — se disparaba en
+    CADA alta/baja/movimiento individual, bloqueando la UI un
+    instante cada vez, incluso en ráfagas (ej. arrastrar 20 archivos
+    uno por uno). Corregido con `_guardar_biblioteca_debounced()`
+    (timer de 600ms, mismo patrón de debounce ya usado en este
+    proyecto para la persistencia de Emisión/Publicidad) — usado en
+    11 de los 12 puntos que antes guardaban directo; se dejan
+    INMEDIATOS a propósito la importación masiva (que ya hace un solo
+    guardado deliberado al final del lote) y `flush_biblioteca_
+    pendiente()` (nuevo, llamado desde `MainWindow.closeEvent()` para
+    no perder la última ráfaga de cambios al cerrar el programa antes
+    de que el timer dispare solo). De paso, `guardar_biblioteca()`
+    ahora escribe COMPACTO (`config/settings.py:_guardar_json_atomico
+    (compacto=True)`, sin `indent=2`) — nadie edita biblioteca.json a
+    mano, a diferencia de config_general.json/programacion.json, que
+    se quedan legibles.
+
+    **c) EL BUG DE FONDO REAL, encontrado midiendo con datos
+    realistas de 10mil ítems (no una corazonada — medido: sin este
+    fix, la migración de duración era 3 VECES más lenta Y NUNCA
+    quedaba cacheada de verdad)**: registros guardados sin la columna
+    Duración (típico de una biblioteca migrada por fuera de las
+    altas normales de la app — "＋ Agregar"/"Importar masivo" SÍ la
+    calculan al alta) disparan una "migración silenciosa" en
+    `_agregar_fila_archivo()` que calcula la duración con mutagen y
+    la guarda en el dict del registro — pero **`QTreeWidgetItem.data()`
+    para roles custom (por encima de `Qt.UserRole`, como
+    `ROL_ARCHIVOS`) devuelve una COPIA del objeto Python guardado**
+    (trampa real de PySide6 ya documentada varias veces en este
+    proyecto, para otros roles) — mutar los dicts de esa copia NUNCA
+    se reflejaba en la data real del ítem de categoría, así que la
+    migración se perdía y se recalculaba desde cero CADA VEZ que se
+    volvía a leer esa categoría (cada click, no solo cada reinicio de
+    la app como decía el comentario original) — esto por sí solo
+    explica por completo el "se traba al ver los ítems de la
+    categoría" para cualquier biblioteca con ítems sin duración
+    cacheada. Corregido con `_registros_de_categoria()` (nuevo, único
+    punto de lectura de `ROL_ARCHIVOS` para MOSTRAR una categoría,
+    usado por `_on_categoria_seleccionada` y por `_buscar` — esta
+    última migra de paso TODA categoría que toca en el camino, no
+    solo lo que matchea el texto, "autocurando" el resto de la
+    biblioteca gratis): si migra algo, escribe la lista de vuelta con
+    `item_categoria.setData(...)` (ahora sí en la data real del
+    ítem) y dispara un guardado debounced — la duración migrada queda
+    persistida en biblioteca.json y nunca más hace falta recalcularla
+    para ese archivo.
+
+    **d) Preload (pedido explícito, "que sepa que la PC está
+    trabajando")**: nueva señal `solicitud_preload` (Ventana 3),
+    conectada en `MainWindow` al mismo `_mostrar_preload()` de
+    siempre (cursor de espera + mensaje en la barra de estado) —
+    emitida por `_llenar_tree_archivos()` solo si la lista supera
+    `_UMBRAL_ITEMS_PRELOAD = 300` (por debajo, mostrarlo sería puro
+    ruido visual, la operación ya es casi instantánea). Con listas
+    grandes también corre `QApplication.processEvents()` cada 500
+    ítems durante el armado — mismo patrón ya usado para la
+    importación masiva — para que la ventana no se vea "colgada" en
+    hardware modesto. El arranque de la app (carga inicial de TODA la
+    biblioteca) ya estaba cubierto por el `QSplashScreen` de siempre
+    en `main.py` — no hizo falta tocar nada ahí.
+
+    Probado con `test_biblioteca_grande_rendimiento.py` (nuevo,
+    dedicado, con datos sintéticos de hasta 10mil ítems): JSON
+    compacto vs. indentado (tamaño y validez), debounce coalescia 5
+    mutaciones en ráfaga en 1 solo guardado real, `flush_biblioteca_
+    pendiente()` fuerza el guardado pendiente sin duplicar si no hay
+    nada pendiente, `_llenar_tree_archivos()` arma correctamente
+    listas chicas (sin preload) y grandes (con preload, cantidad
+    correcta en el aviso), **reproduce el bug real de la copia de
+    PySide6 y confirma el fix**: migrar duración queda cacheada en
+    memoria Y persistida en disco, y una `VentanaExplorador` "nueva"
+    (simulando un reinicio real leyendo de disco) ya no recalcula
+    nada ni dispara guardados de más — + selección de categoría/
+    búsqueda/orden por columna siguen funcionando igual con el camino
+    nuevo + actualización de 2 tests preexistentes que asumían el
+    guardado SINCRÓNICO viejo (`test_reordenar_categorias.py`,
+    `test_descargador_youtube.py` — ahora usan `flush_biblioteca_
+    pendiente()` antes de mirar el disco, no es una regresión, es el
+    debounce funcionando como se diseñó) + suite de regresión completa
+    sin fallos nuevos (mismos 7 fallos preexistentes de siempre) +
+    smoke test de arranque limpio. **Sigue sin poder confirmarse en
+    hardware real**: falta que Santiago confirme en su notebook
+    (Celeron N2820) que ver una categoría grande ya no se siente
+    trabada — la primera vista de una categoría con ítems sin
+    duración cacheada TODAVÍA va a tardar un poco (mutagen tiene que
+    leer cada archivo una vez, inevitable), pero de ahí en más debería
+    ser instantánea, incluso después de cerrar y reabrir la app.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
@@ -7441,6 +7551,21 @@ todo el resto.
   de objeto. **Regla**: nunca comparar por identidad (`is`) un dict
   que salió de `item.data()`; comparar siempre por una clave de
   contenido estable (acá, `ruta`).
+  **Segunda variante de la misma trampa, mordió de nuevo (ronda de
+  rendimiento con bibliotecas grandes)**: no es solo la comparación
+  por identidad — MUTAR un dict/lista que salió de `.data()` tampoco
+  se refleja en lo que el ítem tiene guardado, a menos que se lo
+  vuelva a escribir con `.setData()` a propósito. La "migración
+  silenciosa" de duración de `_agregar_fila_archivo()` mutaba
+  `registro["duracion"]` sobre una copia descartable leída de
+  `item.data(0, ROL_ARCHIVOS)` — la migración nunca quedaba cacheada
+  de verdad, se repetía (con su costo real de mutagen) cada vez que
+  se volvía a leer esa categoría. **Regla ampliada**: cualquier
+  código que LEA `.data()` de un rol custom con la intención de
+  MUTAR lo leído (no solo comparar) tiene que volver a escribirlo con
+  `.setData()` explícito para que la mutación persista — leer y
+  mutar sin volver a escribir es un no-op silencioso sobre los datos
+  reales, por más que la variable local parezca haber cambiado.
 - **Otra trampa real de PySide6 — "los ítems desaparecen" al
   reordenar por arrastre**: si un `QTreeWidget` tiene
   `dragDropMode = DragDrop` (necesario para aceptar arrastres

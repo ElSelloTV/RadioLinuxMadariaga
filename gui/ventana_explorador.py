@@ -60,7 +60,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QInputDialog, QMenu, QAbstractItemView, QApplication,
     QLabel,
 )
-from PySide6.QtCore import Qt, Signal, QUrl, QProcess
+from PySide6.QtCore import Qt, Signal, QUrl, QProcess, QTimer
 from PySide6.QtGui import QColor, QBrush, QDesktopServices, QFont
 
 from gui.common_widgets import (
@@ -102,6 +102,21 @@ class VentanaExplorador(QWidget):
     solicitud_buscar_posicion_preview = Signal(int)   # 0-1000 (por mil)
     solicitud_alternar_expansion = Signal()
     busqueda_realizada = Signal(int)    # cantidad de resultados encontrados
+    # Pedido explícito ("una barra de preload, que sepa que la PC está
+    # trabajando"): emitida ANTES de una operación que puede demorarse
+    # con una biblioteca grande (ver `_UMBRAL_ITEMS_PRELOAD`) — MainWindow
+    # la conecta directo a su `_mostrar_preload()` de siempre (cursor de
+    # espera + mensaje en la barra de estado), mismo mecanismo ya usado
+    # para el arranque/cargar música/cargar programación.
+    solicitud_preload = Signal(str)
+
+    # Por debajo de esto, mostrar el preload es puro ruido visual (la
+    # operación ya es instantánea) — por encima, con una biblioteca de
+    # varios miles de ítems, vale la pena avisar que está trabajando.
+    _UMBRAL_ITEMS_PRELOAD = 300
+    # Milisegundos que se espera sin ninguna otra mutación antes de
+    # escribir biblioteca.json de verdad (ver `_guardar_biblioteca_debounced`).
+    _DEMORA_GUARDADO_MS = 600
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -113,6 +128,11 @@ class VentanaExplorador(QWidget):
         # invierte a Z-A.
         self._columna_orden_actual = None
         self._orden_ascendente = True
+        # Guardado de biblioteca.json DEBOUNCED (ver
+        # `_guardar_biblioteca_debounced`/`flush_biblioteca_pendiente`).
+        self._timer_guardado_biblioteca = QTimer(self)
+        self._timer_guardado_biblioteca.setSingleShot(True)
+        self._timer_guardado_biblioteca.timeout.connect(self._guardar_biblioteca)
         self._construir_ui()
         self._cargar_biblioteca_inicial()
 
@@ -181,7 +201,7 @@ class VentanaExplorador(QWidget):
         self.tree_categorias.setColumnCount(1)
         self.tree_categorias.currentItemChanged.connect(self._on_categoria_seleccionada)
         self.tree_categorias.archivos_soltados.connect(self._on_archivos_soltados_en_categoria)
-        self.tree_categorias.orden_cambiado.connect(self._guardar_biblioteca)
+        self.tree_categorias.orden_cambiado.connect(self._guardar_biblioteca_debounced)
         layout_categorias.addWidget(self.tree_categorias)
 
         # Misma razón que la fila de archivos de abajo: 2 filas de
@@ -371,7 +391,12 @@ class VentanaExplorador(QWidget):
         resultados = []
 
         def visitar(item):
-            for registro in (item.data(0, ROL_ARCHIVOS) or []):
+            # _registros_de_categoria() (no `item.data(0, ROL_ARCHIVOS)`
+            # directo) para que una búsqueda amplia también aproveche
+            # para migrar y persistir la duración cacheada de TODA
+            # categoría que toca en el camino — de paso "autocura" el
+            # resto de la biblioteca, no solo lo que matchea el texto.
+            for registro in self._registros_de_categoria(item):
                 titulo = (registro.get("titulo") or "").lower()
                 artista = (registro.get("artista") or "").lower()
                 if texto in titulo or texto in artista:
@@ -381,8 +406,7 @@ class VentanaExplorador(QWidget):
 
         self._en_busqueda = True
         self.tree_archivos.clear()
-        for registro in resultados:
-            self._agregar_fila_archivo(registro)
+        self._llenar_tree_archivos(resultados)
 
         self.busqueda_realizada.emit(len(resultados))
 
@@ -431,6 +455,44 @@ class VentanaExplorador(QWidget):
 
     def _guardar_biblioteca(self):
         guardar_biblioteca(self._serializar_biblioteca())
+
+    def _guardar_biblioteca_debounced(self):
+        """Bug real de fondo con una biblioteca de ~10-12mil archivos
+        ("el JSON parece trabarse"): `_guardar_biblioteca()` serializa
+        TODA la biblioteca (recursivo, todas las categorías) y reescribe
+        el archivo entero con `fsync()` — antes esto se disparaba
+        SINCRÓNICO en el hilo de la GUI ante CADA mutación individual
+        (agregar un archivo, moverlo, reordenar una categoría...), así
+        que una sesión de edición con varias acciones seguidas (ej.
+        arrastrar 20 archivos uno por uno a otra categoría) reescribía
+        el archivo entero 20 veces en fila, cada una bloqueando la UI
+        un instante.
+
+        Ahora la mayoría de los llamadores usan ESTA versión: arranca
+        (o reinicia, si ya había una en curso) un timer de
+        `_DEMORA_GUARDADO_MS` — varias mutaciones seguidas en ráfaga
+        terminan escribiendo el archivo UNA sola vez, recién cuando la
+        ráfaga se calma. Mismo patrón de debounce ya usado en este
+        proyecto para la persistencia de Emisión/Publicidad
+        (`core/gestor_emision.py`/`core/playlist_manager.py`).
+
+        La importación masiva (que ya hace UN solo guardado al final
+        de por sí, después de procesar todo el lote) y el cierre de la
+        aplicación (`flush_biblioteca_pendiente()`, para no perder la
+        última ráfaga de cambios si se cierra el programa antes de que
+        el timer llegue a disparar solo) siguen usando el guardado
+        INMEDIATO."""
+        self._timer_guardado_biblioteca.start(self._DEMORA_GUARDADO_MS)
+
+    def flush_biblioteca_pendiente(self):
+        """Si hay un guardado debounced esperando, lo aplica YA MISMO
+        — pensado para llamarse antes de cerrar la aplicación
+        (`MainWindow.closeEvent`), así ningún cambio reciente se
+        pierde por cerrar el programa antes de que el timer dispare
+        solo."""
+        if self._timer_guardado_biblioteca.isActive():
+            self._timer_guardado_biblioteca.stop()
+            self._guardar_biblioteca()
 
     def _serializar_biblioteca(self) -> list:
         return [
@@ -506,16 +568,68 @@ class VentanaExplorador(QWidget):
         self.tree_archivos.clear()
         if actual is None:
             return
-        registros = actual.data(0, ROL_ARCHIVOS) or []
-        for registro in registros:
-            self._agregar_fila_archivo(registro)
+        registros = self._registros_de_categoria(actual)
+        self._llenar_tree_archivos(registros)
 
-    def _agregar_fila_archivo(self, registro: dict):
+    def _registros_de_categoria(self, item_categoria: QTreeWidgetItem) -> list:
+        """Lee los archivos de una categoría (`ROL_ARCHIVOS`) y, si
+        alguno todavía no tiene la duración cacheada, la calcula y la
+        escribe DE VUELTA en el ítem de categoría.
+
+        Bug real de fondo encontrado en esta ronda, mucho más
+        importante que parecía a primera vista: `QTreeWidgetItem.data()`
+        para roles custom (por encima de `Qt.UserRole`, como
+        `ROL_ARCHIVOS`) devuelve una COPIA del objeto Python guardado
+        — trampa real de PySide6 ya documentada varias veces en este
+        proyecto para otros roles. La "migración silenciosa" de
+        duración (`_agregar_fila_archivo`) mutaba esa COPIA
+        (`registro["duracion"] = ...`), pero nunca la volvía a
+        escribir con `.setData()` — así que la migración NUNCA quedaba
+        cacheada de verdad: cada vez que se volvía a leer
+        `item.data(0, ROL_ARCHIVOS)` (cada click en la categoría, cada
+        búsqueda que la tocara) se obtenía una copia FRESCA sin la
+        duración, y volvía a recalcularse desde cero, pagando el costo
+        de mutagen por archivo una y otra vez, para siempre — no solo
+        "en cada sesión" como decía el comentario original, sino en
+        CADA VISTA. Con una biblioteca de varios miles de archivos sin
+        duración cacheada (ej. migrada por fuera de las altas
+        normales de la app, que sí la calculan al importar), esto
+        alcanza para explicar por completo el "se traba al ver los
+        ítems de la categoría" reportado.
+
+        Corregido acá, en el ÚNICO lugar que lee `ROL_ARCHIVOS` de una
+        categoría para MOSTRARLA (`_on_categoria_seleccionada` y
+        `_buscar`, ver más abajo): si migró algo, se escribe la lista
+        entera de vuelta con `item_categoria.setData(...)` (ahora sí
+        persiste en la data real del ítem, no en una copia
+        descartable) y se dispara un guardado debounced — la próxima
+        vez que se vea esta categoría, ya no hace falta recalcular
+        nada."""
+        registros = item_categoria.data(0, ROL_ARCHIVOS) or []
+        hubo_migracion = False
+        for registro in registros:
+            if not registro.get("duracion"):
+                registro["duracion"] = obtener_duracion_formateada(registro.get("ruta", ""))
+                hubo_migracion = True
+        if hubo_migracion:
+            item_categoria.setData(0, ROL_ARCHIVOS, registros)
+            self._guardar_biblioteca_debounced()
+        return registros
+
+    def _agregar_fila_archivo(self, registro: dict, insertar: bool = True):
+        """Arma el QTreeWidgetItem de una fila. Con `insertar=True`
+        (default, usado por las altas de UN solo archivo) lo agrega
+        directo al árbol y lo devuelve. Con `insertar=False` (usado
+        por `_llenar_tree_archivos`, ver más abajo) devuelve el ítem
+        SIN insertarlo — para que el llamador pueda insertar TODOS los
+        ítems de un lote de una sola vez con `addTopLevelItems()`."""
         duracion = registro.get("duracion")
         if not duracion:
-            # Migración silenciosa: registros guardados antes de que
-            # existiera la columna Duración la calculan una vez y
-            # quedan con ella cacheada de ahí en más.
+            # Red de seguridad, no el punto principal de cacheo (ver
+            # `_registros_de_categoria()`, que además persiste el
+            # cálculo de vuelta en la categoría) — cubre el caso de
+            # que ALGO llegue acá con la duración todavía sin calcular
+            # por otro camino, para no mostrar la columna vacía.
             duracion = obtener_duracion_formateada(registro.get("ruta", ""))
             registro["duracion"] = duracion
 
@@ -528,8 +642,62 @@ class VentanaExplorador(QWidget):
         item.setData(0, Qt.ItemDataRole.UserRole, registro.get("ruta", ""))  # para el drag
         item.setData(0, ROL_REGISTRO, registro)
         self._pintar_por_genero(item, registro.get("genero", ""))
-        self.tree_archivos.addTopLevelItem(item)
+        if insertar:
+            self.tree_archivos.addTopLevelItem(item)
         return item
+
+    def _llenar_tree_archivos(self, registros: list):
+        """Bug real de rendimiento con una biblioteca de ~10-12mil
+        archivos ("el JSON parece trabarse... al ver los ítems en la
+        categoría"): antes, ver una categoría con miles de archivos de
+        golpe (frecuente tras una importación masiva — un solo lote
+        grande suele caer en UNA sola categoría) armaba cada
+        QTreeWidgetItem con `addTopLevelItem()` UNO POR UNO, cada
+        inserción disparando su propio recálculo de layout/repintado
+        interno de Qt — con miles de ítems eso se siente como una
+        traba real, aunque los datos ya estén 100% en memoria (esto
+        NUNCA toca disco: `cargar_biblioteca()` ya leyó TODO
+        biblioteca.json una sola vez al arrancar la app).
+
+        Corregido en dos frentes, mismo criterio para cualquier
+        rebuild grande de `tree_archivos` (selección de categoría,
+        búsqueda, reordenar por columna):
+        1. `setUpdatesEnabled(False)` mientras se arman TODOS los
+           ítems, y recién se reactiva al final — Qt no repinta nada
+           intermedio, un solo repaint al terminar.
+        2. Los ítems se arman SUELTOS (`_agregar_fila_archivo(...,
+           insertar=False)`) y se insertan TODOS DE UNA con
+           `addTopLevelItems(lista)` en vez de una llamada por ítem.
+
+        Además, con una lista lo bastante grande (`_UMBRAL_ITEMS_PRELOAD`)
+        avisa que está trabajando (pedido explícito: "una barra de
+        preload, cuestión que sepa que la PC está trabajando") y
+        procesa eventos cada tanto durante el armado — mismo patrón ya
+        usado para la importación masiva — para que la ventana no se
+        vea "colgada" mientras arma miles de ítems en hardware modesto.
+
+        El cacheo REAL de la duración migrada (y su guardado en disco)
+        ya pasó por `_registros_de_categoria()` antes de llegar acá —
+        ver esa función para el bug de fondo que corrige (la copia que
+        devuelve `QTreeWidgetItem.data()` para roles custom)."""
+        cantidad = len(registros)
+        aviso_grande = cantidad >= self._UMBRAL_ITEMS_PRELOAD
+        if aviso_grande:
+            self.solicitud_preload.emit(f"Cargando {cantidad} archivos...")
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        self.tree_archivos.setUpdatesEnabled(False)
+        try:
+            items = []
+            for indice, registro in enumerate(registros):
+                items.append(self._agregar_fila_archivo(registro, insertar=False))
+                if aviso_grande and indice % 500 == 0:
+                    QApplication.processEvents()
+            self.tree_archivos.addTopLevelItems(items)
+        finally:
+            self.tree_archivos.setUpdatesEnabled(True)
+            if aviso_grande:
+                QApplication.restoreOverrideCursor()
 
     # ------------------------------------------------------------------
     # Ordenar por columna (pedido explícito): click en el encabezado.
@@ -568,8 +736,7 @@ class VentanaExplorador(QWidget):
         )
 
         self.tree_archivos.clear()
-        for registro in registros:
-            self._agregar_fila_archivo(registro)
+        self._llenar_tree_archivos(registros)
 
         orden_qt = Qt.SortOrder.AscendingOrder if self._orden_ascendente else Qt.SortOrder.DescendingOrder
         self.tree_archivos.header().setSortIndicator(columna, orden_qt)
@@ -610,7 +777,7 @@ class VentanaExplorador(QWidget):
             return
         item = self._crear_item_categoria(None, nombre.strip())
         self.tree_categorias.setCurrentItem(item)
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
 
     def _nueva_subcategoria(self):
         self._salir_de_busqueda_si_corresponde()
@@ -624,7 +791,7 @@ class VentanaExplorador(QWidget):
         item = self._crear_item_categoria(padre, nombre.strip())
         padre.setExpanded(True)
         self.tree_categorias.setCurrentItem(item)
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
 
     def _eliminar_categoria(self):
         self._salir_de_busqueda_si_corresponde()
@@ -647,7 +814,7 @@ class VentanaExplorador(QWidget):
         else:
             indice = self.tree_categorias.indexOfTopLevelItem(item)
             self.tree_categorias.takeTopLevelItem(indice)
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
 
     # ------------------------------------------------------------------
     # Alta de archivos: UNO -> diálogo completo (título/artista/género
@@ -714,7 +881,7 @@ class VentanaExplorador(QWidget):
         if item_categoria is self._categoria_actual() and not self._en_busqueda:
             self._agregar_fila_archivo(registro)
 
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
         self.archivo_agregado.emit(ruta)
 
     def _importar_archivos_masivo(self, rutas: list, categoria_sugerida):
@@ -872,7 +1039,7 @@ class VentanaExplorador(QWidget):
         if item_categoria is self._categoria_actual() and not self._en_busqueda:
             self._on_categoria_seleccionada(item_categoria, None)
 
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
         self.archivo_agregado.emit(f"{len(resultado['archivos'])} descarga(s) de YouTube")
 
         nombre_categoria = " > ".join(ruta_categoria)
@@ -956,7 +1123,7 @@ class VentanaExplorador(QWidget):
         item.setData(0, ROL_REGISTRO, registro)
         item.setText(COL_DURACION, registro["duracion"])
         self._sincronizar_registro_en_categoria(categoria, ruta_anterior, registro)
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
 
     def _editar_vigencia(self, item):
         """Vigencia de fecha (pedido explícito, inspirado en Dinesat):
@@ -984,7 +1151,7 @@ class VentanaExplorador(QWidget):
         registro["fecha_fin"] = fecha_fin
         item.setData(0, ROL_REGISTRO, registro)
         self._sincronizar_registro_en_categoria(categoria, registro.get("ruta"), registro)
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
 
     def _editar_informacion_archivo(self, item=None):
         """Pedido explícito: editar título/artista/género/categoría de
@@ -1045,7 +1212,7 @@ class VentanaExplorador(QWidget):
         else:
             self._sincronizar_registro_en_categoria(categoria_actual, ruta, registro)
 
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
 
         if self._en_busqueda:
             self._buscar()
@@ -1087,7 +1254,7 @@ class VentanaExplorador(QWidget):
             rutas_eliminadas.append(ruta)
 
         if rutas_eliminadas:
-            self._guardar_biblioteca()
+            self._guardar_biblioteca_debounced()
             for ruta in rutas_eliminadas:
                 self.archivo_eliminado.emit(ruta)
 
@@ -1168,7 +1335,7 @@ class VentanaExplorador(QWidget):
         if not self._en_busqueda:
             self._on_categoria_seleccionada(self._categoria_actual(), None)
 
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
         nombres = movidos[0] if len(movidos) == 1 else f"{len(movidos)} archivos"
         self.archivo_movido.emit(nombres, categoria_destino.text(0))
 
@@ -1420,7 +1587,7 @@ class VentanaExplorador(QWidget):
         if categoria is self._categoria_actual() and not self._en_busqueda:
             self._on_categoria_seleccionada(categoria, None)
 
-        self._guardar_biblioteca()
+        self._guardar_biblioteca_debounced()
         self.archivo_eliminado.emit(ruta)
         return True
 

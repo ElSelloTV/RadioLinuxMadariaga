@@ -304,6 +304,12 @@ class MainWindow(QMainWindow):
 
         self.ventana_explorador.solicitud_alternar_expansion.connect(self._alternar_expansion_explorador)
         self.ventana_explorador.busqueda_realizada.connect(self._on_busqueda_realizada)
+        # Pedido explícito ("una barra de preload, que sepa que la PC
+        # está trabajando"): ver Ventana 3 -> solicitud_preload, emitida
+        # al armar de golpe una vista grande de tree_archivos (miles de
+        # ítems con una biblioteca de ~10-12mil archivos) — reusa el
+        # mismo mecanismo de preload de siempre, sin agregar uno nuevo.
+        self.ventana_explorador.solicitud_preload.connect(self._mostrar_preload)
 
         self._restaurar_disposicion_guardada()
 
@@ -387,6 +393,16 @@ class MainWindow(QMainWindow):
                 registrar_evento("Cierre cancelado por el operador")
                 evento.ignore()
                 return
+
+        # Pedido explícito ("el JSON parece trabarse... con 10-12mil
+        # archivos"): la mayoría de las mutaciones de la biblioteca
+        # (Ventana 3) ahora se guardan DEBOUNCED (ver
+        # `VentanaExplorador._guardar_biblioteca_debounced`) para no
+        # reescribir el archivo entero ante cada click — acá se fuerza
+        # el guardado YA MISMO si había uno pendiente, para no perder
+        # la última ráfaga de cambios al cerrar el programa antes de
+        # que el timer del debounce llegara a disparar solo.
+        self.ventana_explorador.flush_biblioteca_pendiente()
 
         self._guardar_disposicion_actual()
         if self._ventana_auxiliar is not None:
