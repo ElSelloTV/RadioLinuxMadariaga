@@ -1237,7 +1237,11 @@ class VentanaExplorador(QWidget):
         duración/tamaño) y lo persiste -- usado tanto por "⟲ Reemplazar"
         (el operador elige el archivo a mano) como por "🔗 Vincular"
         (el operador elige uno de los candidatos encontrados al buscar
-        un archivo perdido, ver _buscar_archivo_perdido)."""
+        un archivo perdido, ver _buscar_archivo_perdido). `item` puede
+        ser None (registro que no está actualmente visible en
+        tree_archivos, ej. durante una verificación masiva que recorre
+        otras categorías) -- en ese caso solo se actualiza la
+        biblioteca persistida, sin tocar ninguna fila visual."""
         ruta_anterior = registro.get("ruta")
         config = cargar_configuracion()
         tolerancia = tolerancia_silencio_para_genero(config, registro.get("genero", ""))
@@ -1252,9 +1256,10 @@ class VentanaExplorador(QWidget):
         registro["ganancia_db"] = analisis["ganancia_db"]
         registro["analizado"] = analisis["analizado"]
 
-        item.setData(0, Qt.ItemDataRole.UserRole, ruta_nueva)
-        item.setData(0, ROL_REGISTRO, registro)
-        item.setText(COL_DURACION, registro["duracion"])
+        if item is not None:
+            item.setData(0, Qt.ItemDataRole.UserRole, ruta_nueva)
+            item.setData(0, ROL_REGISTRO, registro)
+            item.setText(COL_DURACION, registro["duracion"])
         self._sincronizar_registro_en_categoria(categoria, ruta_anterior, registro)
         self._guardar_biblioteca_debounced()
         return registro
@@ -1616,7 +1621,28 @@ class VentanaExplorador(QWidget):
         if decision == "eliminar":
             self._eliminar_registro_sin_confirmar(item)
         elif decision == "buscar":
-            self._buscar_archivo_perdido(item, registro)
+            categoria = self._buscar_categoria_de_ruta(ruta)
+            if categoria is None:
+                QMessageBox.warning(self, "Buscar archivo", "No se encontró la categoría de este archivo.")
+                return
+            # El botón "⏭ Saltar" del diálogo de candidatos (pedido
+            # explícito) sigue directo con el PRÓXIMO archivo sin
+            # vincular de la MISMA categoría -- se arma la cola acá
+            # (el elegido primero, con su item real; los siguientes
+            # sin item porque no están necesariamente visibles) y se
+            # delega en el mismo procesador que usa la verificación
+            # masiva de Configuración.
+            registros = categoria.data(0, ROL_ARCHIVOS) or []
+            try:
+                indice_actual = next(i for i, r in enumerate(registros) if r.get("ruta") == ruta)
+            except StopIteration:
+                indice_actual = -1
+            entradas = [(categoria, registro, item)]
+            for r in registros[indice_actual + 1:]:
+                r_ruta = r.get("ruta")
+                if not r_ruta or not os.path.exists(r_ruta):
+                    entradas.append((categoria, r, None))
+            self._procesar_lista_de_perdidos(entradas)
 
     def _localizar_en_explorador_de_archivos(self, ruta: str):
         for ejecutable, args_patron in self._GESTORES_ARCHIVOS_CON_SELECCION:
@@ -1708,7 +1734,38 @@ class VentanaExplorador(QWidget):
                 return candidata
         return None
 
-    def _buscar_archivo_perdido(self, item, registro: dict):
+    def _procesar_lista_de_perdidos(self, entradas: list) -> bool:
+        """Procesa una lista de (categoria, registro, item) con
+        vínculo roto, UNO POR UNO, con el mismo diálogo de "Buscar" --
+        usada tanto por un "Ubicar" individual (cola = el resto de la
+        MISMA categoría, para que "⏭ Saltar" tenga a dónde seguir)
+        como por la verificación masiva de Configuración (cola = TODA
+        la biblioteca). `item` puede ser None si ese registro no está
+        actualmente visible en tree_archivos. Se detiene del todo si
+        el operador cierra el diálogo de candidatos con "Cancelar"
+        (devuelve False); si termina de recorrer toda la lista,
+        devuelve True."""
+        if not entradas:
+            return True
+        carpeta_musica = self._resolver_carpeta_musica_real()
+        if not carpeta_musica:
+            QMessageBox.warning(
+                self, "Buscar archivo",
+                "No se encontró la carpeta de Música del sistema para poder buscar ahí.",
+            )
+            return False
+        for categoria, registro, item in entradas:
+            ruta = registro.get("ruta")
+            if ruta and os.path.exists(ruta):
+                # Ya se resolvió solo mientras tanto (ej. Vincular
+                # apuntó por casualidad al mismo archivo que otro
+                # registro roto) -- no hace falta volver a preguntar.
+                continue
+            if not self._buscar_archivo_perdido(item, registro, categoria, carpeta_musica):
+                return False
+        return True
+
+    def _buscar_archivo_perdido(self, item, registro: dict, categoria, carpeta_musica: str) -> bool:
         """Escanea TODA la carpeta Música real del sistema (pedido
         explícito, ver _resolver_carpeta_musica_real -- ignora las
         rutas configuradas en Configuración → Rutas) buscando
@@ -1719,24 +1776,15 @@ class VentanaExplorador(QWidget):
         segundo entre lecturas/formatos, y eso hacía que a veces "no
         encontrara nada" aunque el archivo real estuviera ahí. Si el
         registro no tiene tamaño guardado (import de antes de esa
-        función), se cae a la duración como único criterio posible."""
-        categoria = self._buscar_categoria_de_ruta(registro.get("ruta"))
-        if categoria is None:
-            QMessageBox.warning(self, "Buscar archivo", "No se encontró la categoría de este archivo.")
-            return
+        función), se cae a la duración como único criterio posible.
 
-        carpeta_musica = self._resolver_carpeta_musica_real()
-        if not carpeta_musica:
-            QMessageBox.warning(
-                self, "Buscar archivo",
-                "No se encontró la carpeta de Música del sistema para poder buscar ahí.",
-            )
-            return
-
+        Devuelve True si hay que SEGUIR con el próximo de la cola
+        (Vincular, Saltar, o sin candidatos), False si el operador
+        cerró el diálogo con Cancelar (detiene TODA la cola)."""
         duracion_objetivo = registro.get("duracion")
         tamano_objetivo = registro.get("tamaño_bytes")
 
-        self.solicitud_preload.emit("Buscando el archivo perdido...")
+        self.solicitud_preload.emit(f"Buscando: {registro.get('titulo', '')}...")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         candidatos = []
         try:
@@ -1780,9 +1828,10 @@ class VentanaExplorador(QWidget):
             criterio = f"el mismo tamaño ({tamano_objetivo} bytes)" if tamano_objetivo is not None else f"la misma duración ({duracion_objetivo})"
             QMessageBox.information(
                 self, "Buscar archivo",
-                f"No se encontró ningún archivo con {criterio}\nen la carpeta Música ({carpeta_musica}).",
+                f"No se encontró ningún archivo con {criterio} para '{registro.get('titulo', '')}'\n"
+                f"en la carpeta Música ({carpeta_musica}).",
             )
-            return
+            return True
 
         from gui.dialogo_vincular_archivo import DialogoVincularArchivo
         audio_cfg = cargar_configuracion()["audio"]
@@ -1792,16 +1841,63 @@ class VentanaExplorador(QWidget):
         dialogo = DialogoVincularArchivo(
             registro.get("titulo", ""), candidatos, id_dispositivo_preescucha, parent=self,
         )
-        if dialogo.exec() != DialogoVincularArchivo.DialogCode.Accepted:
-            return
+        resultado_codigo = dialogo.exec()
+
+        if resultado_codigo == DialogoVincularArchivo.SALTAR:
+            return True
+        if resultado_codigo != DialogoVincularArchivo.DialogCode.Accepted:
+            return False
+
         ruta_elegida = dialogo.resultado()
         if not ruta_elegida:
-            return
+            return False
 
         self._aplicar_nuevo_archivo(item, categoria, registro, ruta_elegida)
         QMessageBox.information(
             self, "Vincular", f"'{registro.get('titulo', '')}' quedó vinculado al archivo elegido.",
         )
+        return True
+
+    def verificar_archivos_perdidos_biblioteca(self):
+        """Pedido explícito (Configuración → Diagnóstico): "hacer esta
+        ubicación de archivos perdidos de manera masiva en todo el
+        explorador... verificación general de todos los archivos sin
+        vinculación". Recorre TODA la biblioteca, junta los registros
+        con el archivo roto/faltante, y los procesa uno por uno con el
+        MISMO mecanismo que ya usa "⏭ Saltar" en un "Ubicar" individual
+        (_procesar_lista_de_perdidos) -- sin tener que ir categoría por
+        categoría a mano."""
+        pendientes = []
+
+        def visitar(item_categoria):
+            for registro in (item_categoria.data(0, ROL_ARCHIVOS) or []):
+                ruta = registro.get("ruta")
+                if not ruta or not os.path.exists(ruta):
+                    pendientes.append((item_categoria, registro, None))
+
+        self._para_cada_categoria(visitar)
+
+        if not pendientes:
+            QMessageBox.information(
+                self, "Verificar archivos perdidos",
+                "No se encontró ningún archivo con vínculo roto en toda la biblioteca.",
+            )
+            return
+
+        respuesta = QMessageBox.question(
+            self, "Verificar archivos perdidos",
+            f"Se encontraron {len(pendientes)} archivo(s) con vínculo roto en toda la "
+            "biblioteca.\n¿Revisarlos ahora, uno por uno (Previo/Saltar/Vincular)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+
+        if self._procesar_lista_de_perdidos(pendientes):
+            QMessageBox.information(
+                self, "Verificar archivos perdidos",
+                "Verificación completa: se revisaron todos los archivos con vínculo roto.",
+            )
 
     # ------------------------------------------------------------------
     # API pública usada por core/playlist_manager.py (preview)

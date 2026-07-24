@@ -556,6 +556,30 @@ class VentanaConfiguracion(QDialog):
         if self._ventana_explorador is None:
             self.btn_verificar_biblioteca.setEnabled(False)
 
+        # Pedido explícito ("hacer esta ubicación de archivos perdidos
+        # de manera masiva en todo el explorador... verificación
+        # general de todos los archivos sin vinculación"): recorre
+        # TODA la biblioteca buscando archivos con el vínculo roto
+        # (movidos/borrados/renombrados por fuera de esta app) y los
+        # ofrece resolver uno por uno — mismo diálogo de "Buscar" que
+        # ya usa "📍 Ubicar" en el menú contextual de Ventana 3
+        # (Previo/Saltar/Vincular, más Tomar el nombre/Eliminar sobre
+        # los candidatos).
+        nota_perdidos = QLabel(
+            "Verificar archivos perdidos: recorre TODA la biblioteca\n"
+            "buscando materiales cuyo archivo de audio ya no está donde\n"
+            "el registro dice, y los revisa uno por uno con el mismo\n"
+            "buscador de \"Ubicar\" (Previo, Saltar, Vincular)."
+        )
+        nota_perdidos.setObjectName("lblTituloBloqueActivo")
+        nota_perdidos.setWordWrap(True)
+        layout.addWidget(nota_perdidos)
+        self.btn_verificar_perdidos = QPushButton("🔗 Verificar archivos perdidos (todos)")
+        self.btn_verificar_perdidos.clicked.connect(self._verificar_archivos_perdidos)
+        layout.addWidget(self.btn_verificar_perdidos)
+        if self._ventana_explorador is None:
+            self.btn_verificar_perdidos.setEnabled(False)
+
         layout.addStretch()
 
         if not actualizador.es_instalacion_git():
@@ -688,6 +712,13 @@ class VentanaConfiguracion(QDialog):
                 self, "Verificar biblioteca",
                 "No había nada pendiente — todos los archivos ya tenían la duración calculada.",
             )
+
+    def _verificar_archivos_perdidos(self):
+        """Delega TODA la lógica en VentanaExplorador — este botón
+        solo la dispara desde Configuración (ver ronda de "Ubicar")."""
+        if self._ventana_explorador is None:
+            return
+        self._ventana_explorador.verificar_archivos_perdidos_biblioteca()
 
     # ------------------------------------------------------------------
     # Tab: Actualizaciones

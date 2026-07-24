@@ -7842,6 +7842,117 @@ todo el resto.
     estimada), y que escanear toda la carpeta Música real —en vez de
     las rutas configuradas— no tarda demasiado con su biblioteca de
     varios miles de archivos.
+80. ~~Tres mejoras sobre "Ubicar"/"Vincular": Tomar el nombre/Eliminar
+    sobre los candidatos, botón "⏭ Saltar", verificación masiva desde
+    Configuración~~ — pedido explícito, 3 puntos (a-c), sobre el
+    diálogo de candidatos de la ronda anterior:
+
+    **a) Menú contextual sobre cada candidato — "✏ Tomar el nombre" /
+    "🗑 Eliminar"**: nuevo en `gui/dialogo_vincular_archivo.py`
+    (`QMenu` sobre `self.tree`, mismo patrón de `customContextMenuRequested`
+    ya usado en el resto de la app). "Tomar el nombre" renombra el
+    archivo candidato EN DISCO al título del registro roto (pedido
+    explícito: "respetando la extensión — sin pedir confirmación") —
+    `_sanitizar_nombre_archivo()` reemplaza los caracteres inválidos
+    de filesystem (`/ \ : * ? " < > |`) por `_`, y la extensión es la
+    REAL del archivo candidato (nunca inventada a partir del título).
+    Si ya existe un archivo con ese nombre en la carpeta, avisa y NO
+    pisa nada (nunca sobreescribe en silencio). "Eliminar" borra el
+    archivo candidato de la PC de forma definitiva, con
+    `QMessageBox.question` de confirmación SIEMPRE (pedido explícito
+    "con un aviso previo") — **aclaración importante de Santiago,
+    respetada al pie de la letra**: "eliminar el archivo de la
+    computadora no elimina el registro de la base JSON, lo utilizaré
+    por si hay 2 archivos iguales o las coincidencias no son las que
+    yo esperaba y sobra el archivo" — esta acción es pura limpieza de
+    disco sobre candidatos encontrados, NUNCA toca `biblioteca.json`
+    ni el registro roto que se está buscando (a propósito, un
+    concepto totalmente distinto de "Eliminar registro" del diálogo
+    inicial de "Ubicar", que sí borra la entrada JSON pero nunca toca
+    ningún archivo real).
+
+    **b) Botón "⏭ Saltar"**: pasa al PRÓXIMO archivo sin vincular sin
+    elegir ningún candidato de este — pedido explícito, "para que pase
+    al siguiente archivo no localizado de la Categoría". Implementado
+    con un código de resultado propio en `DialogoVincularArchivo`
+    (`SALTAR = 2`, vía `self.done(self.SALTAR)` — distinto de
+    `Accepted=1`/`Rejected=0`, así el llamador puede distinguir los 3
+    desenlaces). Del lado de `VentanaExplorador`
+    (`gui/ventana_explorador.py`), esto obligó un rediseño de fondo del
+    flujo de "Buscar" — antes una función aislada por ítem, ahora un
+    procesador de COLA compartido:
+    - `_buscar_archivo_perdido(item, registro, categoria, carpeta_musica)`
+      cambió de firma (`categoria`/`carpeta_musica` ahora los resuelve
+      el LLAMADOR, no la función — necesario para no repetir el
+      resolver de carpeta en cada ítem de una cola larga) y de
+      contrato: devuelve `True` ("seguir con el próximo de la cola" —
+      Vincular exitoso, Saltar, o sin candidatos) o `False` ("Cancelar"
+      del operador, corta TODA la cola).
+    - `_procesar_lista_de_perdidos(entradas: list[(categoria, registro,
+      item)]) -> bool` (nuevo): el driver único que recorre la cola,
+      resuelve la carpeta Música UNA sola vez al principio (no una vez
+      por ítem), y llama a `_buscar_archivo_perdido` por cada entrada
+      hasta que devuelva `False` o se acabe la lista. `item` puede ser
+      `None` (registro no visible en `tree_archivos` en ese momento —
+      típico de una cola que abarca otras categorías) — 
+      `_aplicar_nuevo_archivo()` se extendió para tolerar `item=None`
+      (solo actualiza la biblioteca persistida, sin tocar ninguna fila
+      visual en ese caso).
+    - `_ubicar_archivo()` (el "Ubicar" individual del menú contextual)
+      ahora arma la cola completa ANTES de arrancar: el ítem
+      clickeado (con su `item` real) + todo el resto de registros SIN
+      vincular de la MISMA categoría, en orden, buscados a partir de
+      su posición (con `item=None`, ya que no están necesariamente
+      visibles) — así "Saltar" siempre tiene a dónde seguir dentro de
+      esa categoría, tal cual pidió Santiago.
+
+    **c) Verificación masiva desde Configuración**: nuevo botón
+    "🔗 Verificar archivos perdidos (todos)" en Configuración →
+    Diagnóstico (mismo patrón de habilitación condicional que
+    "🔎 Verificar biblioteca"/"🔄 Reanalizar biblioteca" — deshabilitado
+    sin `ventana_explorador`). Nuevo método público
+    `VentanaExplorador.verificar_archivos_perdidos_biblioteca()`:
+    recorre TODA la biblioteca (`_para_cada_categoria`), arma la cola
+    de TODOS los registros con vínculo roto (sin ruta, o
+    `os.path.exists()` falso) en orden de categoría, pide confirmación
+    una sola vez ("¿Revisarlos ahora, uno por uno?"), y reusa el MISMO
+    `_procesar_lista_de_perdidos()` que ya usa "Saltar" — cero lógica
+    duplicada entre el caso "una categoría" y el caso "toda la
+    biblioteca", ambos son simplemente listas de entrada distintas
+    para el mismo procesador de cola. Al terminar la cola completa,
+    avisa "Verificación completa"; si el operador cierra algún
+    diálogo de candidatos con Cancelar a mitad de camino, la cola se
+    corta ahí (`_procesar_lista_de_perdidos` devuelve `False`) y ese
+    aviso final NO aparece — evita el mensaje engañoso de "completo"
+    sobre una revisión que en realidad se abandonó a mitad de camino.
+
+    Probado extendiendo `test_ubicar_vincular_archivo.py` (Saltar dos
+    veces avanza por los 3 pendientes de una categoría en orden, sin
+    vincular los saltados, vinculando solo el último con "Vincular";
+    verificación masiva: sin nada pendiente avisa sin preguntar, con
+    "No" no abre ningún diálogo, con "Sí" procesa la cola completa
+    entre categorías sin tocar el registro que ya estaba bien, cancelar
+    a mitad de camino corta la cola sin el mensaje de "completa" y sin
+    llegar a procesar el resto; botón de Configuración existe,
+    se deshabilita sin `ventana_explorador`, y delega correctamente) +
+    `test_dialogo_vincular_archivo.py` extendido (Saltar deja el código
+    propio sin ruta elegida; menú contextual con exactamente las 2
+    acciones nuevas; "Tomar el nombre" renombra de verdad en disco con
+    sanitización y extensión real, actualiza la fila, y avisa sin pisar
+    si el destino ya existe; "Eliminar" pide confirmación siempre,
+    borra el archivo real y la fila, deshabilita Vincular al vaciar la
+    lista, y con "No" no borra nada) — + suite de regresión completa
+    sin fallos nuevos (mismos 7 fallos preexistentes de siempre) +
+    smoke test de arranque limpio. **Sigue sin poder confirmarse con
+    hardware/biblioteca real**: falta que Santiago confirme (1) que
+    "Tomar el nombre" deja archivos con nombres reconocibles sin pisar
+    nada por accidente, (2) que "Eliminar" sobre un candidato de sobra
+    no le genera dudas sobre si toca o no su JSON (aclarado en el
+    código y en este archivo, pero vale la pena que lo confirme en la
+    práctica), (3) que "Saltar" se siente natural para revisar una
+    categoría entera de un tirón, y (4) que la verificación masiva de
+    Configuración es cómoda para una limpieza grande de toda la
+    biblioteca de una sola vez.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
