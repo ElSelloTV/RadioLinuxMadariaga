@@ -53,6 +53,7 @@ de luz a mitad de la escritura tampoco deje el archivo corrupto.
 import os
 import random
 import shutil
+import subprocess
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidget,
@@ -1582,8 +1583,8 @@ class VentanaExplorador(QWidget):
     # ------------------------------------------------------------------
     # "Ubicar" (pedido explícito): localizar el archivo en el explorador
     # de la PC sin ninguna acción sobre él; si el vínculo está roto
-    # (archivo movido/borrado), ofrece buscarlo por duración/tamaño en
-    # las carpetas de biblioteca configuradas, o eliminar el registro.
+    # (archivo movido/borrado), ofrece buscarlo por tamaño/duración en
+    # la carpeta Música real del sistema, o eliminar el registro.
     # ------------------------------------------------------------------
 
     # No hay un mecanismo universal en Linux (a diferencia de macOS/
@@ -1683,28 +1684,55 @@ class VentanaExplorador(QWidget):
         self._guardar_biblioteca_debounced()
         self.archivo_eliminado.emit(ruta)
 
+    # Pedido explícito ("que la búsqueda la haga en toda la carpeta
+    # Música sin tomar en cuenta las rutas de Configuraciones"): no usa
+    # `rutas.biblioteca_publicidad`/`biblioteca_musical` del config —
+    # busca la carpeta MÚSICA real del sistema, respetando el idioma
+    # (mismo mecanismo ya usado en instalar.sh para el Escritorio, que
+    # en Q4OS en español es "Escritorio", no "Desktop" — acá aplica
+    # igual para "Música" vs "Music"/"Musica" sin tilde).
+    def _resolver_carpeta_musica_real(self):
+        try:
+            resultado = subprocess.run(
+                ["xdg-user-dir", "MUSIC"], capture_output=True, text=True, timeout=3,
+            )
+            carpeta = resultado.stdout.strip()
+            if carpeta and os.path.isdir(carpeta):
+                return carpeta
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+        for nombre in ("Música", "Musica", "Music"):
+            candidata = os.path.expanduser(f"~/{nombre}")
+            if os.path.isdir(candidata):
+                return candidata
+        return None
+
     def _buscar_archivo_perdido(self, item, registro: dict):
-        """Escanea, en orden (pedido explícito: Publicidad primero,
-        Musical segundo), las carpetas base configuradas en Rutas
-        buscando candidatos con la MISMA duración (comparación exacta
-        de la cadena "HH:MM:SS", ya truncada al segundo por
-        obtener_duracion_formateada -- el nombre pudo haber cambiado,
-        la duración es la identidad real). El tamaño en bytes se
-        adjunta como dato INFORMATIVO por candidato (nunca como filtro
-        duro): muchos registros viejos no tienen tamaño guardado
-        todavía, y un archivo re-codificado puede compartir duración
-        con un tamaño distinto -- filtrar por los dos a la vez
-        rompería en silencio justo el caso que se quiere resolver."""
+        """Escanea TODA la carpeta Música real del sistema (pedido
+        explícito, ver _resolver_carpeta_musica_real -- ignora las
+        rutas configuradas en Configuración → Rutas) buscando
+        candidatos. Criterio PRIMARIO: tamaño en bytes (pedido
+        explícito, "primero por tamaño, y luego por duración") -- una
+        copia/renombrada del MISMO archivo pesa exactamente igual,
+        mientras que la duración estimada por mutagen puede variar un
+        segundo entre lecturas/formatos, y eso hacía que a veces "no
+        encontrara nada" aunque el archivo real estuviera ahí. Si el
+        registro no tiene tamaño guardado (import de antes de esa
+        función), se cae a la duración como único criterio posible."""
         categoria = self._buscar_categoria_de_ruta(registro.get("ruta"))
         if categoria is None:
             QMessageBox.warning(self, "Buscar archivo", "No se encontró la categoría de este archivo.")
             return
 
-        config = cargar_configuracion()
-        carpetas = [
-            config["rutas"].get("biblioteca_publicidad"),
-            config["rutas"].get("biblioteca_musical"),
-        ]
+        carpeta_musica = self._resolver_carpeta_musica_real()
+        if not carpeta_musica:
+            QMessageBox.warning(
+                self, "Buscar archivo",
+                "No se encontró la carpeta de Música del sistema para poder buscar ahí.",
+            )
+            return
+
         duracion_objetivo = registro.get("duracion")
         tamano_objetivo = registro.get("tamaño_bytes")
 
@@ -1713,43 +1741,51 @@ class VentanaExplorador(QWidget):
         candidatos = []
         try:
             contador = 0
-            for carpeta in carpetas:
-                if not carpeta or not os.path.isdir(carpeta):
-                    continue
-                for raiz, _dirs, archivos in os.walk(carpeta):
-                    for nombre in archivos:
-                        if not nombre.lower().endswith(EXTENSIONES_SOPORTADAS):
+            for raiz, _dirs, archivos in os.walk(carpeta_musica):
+                for nombre in archivos:
+                    if not nombre.lower().endswith(EXTENSIONES_SOPORTADAS):
+                        continue
+                    ruta_candidata = os.path.join(raiz, nombre)
+                    contador += 1
+                    if contador % 25 == 0:
+                        QApplication.processEvents()
+
+                    if tamano_objetivo is not None:
+                        # Filtro PRIMARIO por tamaño -- barato (no abre
+                        # el archivo), se calcula para TODOS antes de
+                        # pagar el costo de mutagen para la duración.
+                        tamano_candidato = self._tamano_bytes(ruta_candidata)
+                        if tamano_candidato != tamano_objetivo:
                             continue
-                        ruta_candidata = os.path.join(raiz, nombre)
-                        contador += 1
-                        if contador % 25 == 0:
-                            QApplication.processEvents()
+                        duracion_candidata = obtener_duracion_formateada(ruta_candidata)
+                    else:
+                        # Sin tamaño guardado en el registro, la
+                        # duración es el único criterio disponible.
                         duracion_candidata = obtener_duracion_formateada(ruta_candidata)
                         if duracion_objetivo and duracion_candidata != duracion_objetivo:
                             continue
                         tamano_candidato = self._tamano_bytes(ruta_candidata)
-                        candidatos.append({
-                            "ruta": ruta_candidata,
-                            "duracion": duracion_candidata,
-                            "tamaño_bytes": tamano_candidato,
-                            "tamaño_coincide": (
-                                tamano_objetivo is not None and tamano_candidato is not None
-                                and tamano_objetivo == tamano_candidato
-                            ),
-                        })
+
+                    candidatos.append({
+                        "ruta": ruta_candidata,
+                        "duracion": duracion_candidata,
+                        "tamaño_bytes": tamano_candidato,
+                        "tamaño_coincide": tamano_objetivo is not None and tamano_candidato == tamano_objetivo,
+                        "duracion_coincide": bool(duracion_objetivo) and duracion_candidata == duracion_objetivo,
+                    })
         finally:
             QApplication.restoreOverrideCursor()
 
         if not candidatos:
+            criterio = f"el mismo tamaño ({tamano_objetivo} bytes)" if tamano_objetivo is not None else f"la misma duración ({duracion_objetivo})"
             QMessageBox.information(
                 self, "Buscar archivo",
-                f"No se encontró ningún archivo con la misma duración ({duracion_objetivo})\n"
-                "en las carpetas de Biblioteca de Publicidad ni Biblioteca musical.",
+                f"No se encontró ningún archivo con {criterio}\nen la carpeta Música ({carpeta_musica}).",
             )
             return
 
         from gui.dialogo_vincular_archivo import DialogoVincularArchivo
-        audio_cfg = config["audio"]
+        audio_cfg = cargar_configuracion()["audio"]
         id_dispositivo_preescucha = (
             audio_cfg["dispositivo_preescucha"] if audio_cfg["dispositivo_preescucha"] != "default" else None
         )

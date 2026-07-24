@@ -7784,6 +7784,65 @@ todo el resto.
     candidato deja el material listo para reproducir con normalidad en
     Ventana 1/2/Auxiliar.
 
+    **Ajuste inmediato, pedido explícito tras probarlo en la práctica
+    ("no me encuentra nada y sé que debe encontrar")**: dos cambios de
+    fondo sobre el mecanismo de "Buscar" de arriba, ambos con la causa
+    real explicada:
+    - **a) Tamaño PRIMERO, duración segundo (se invirtió la
+      prioridad)**: el diseño original de esta misma ronda usaba la
+      duración como filtro DURO y el tamaño como dato informativo — la
+      sospecha real de por qué "no encontraba nada": la duración que
+      calcula `mutagen` puede variar un segundo entre lecturas/
+      formatos/encoders para el MISMO archivo, mientras que el tamaño
+      en bytes de una copia/movida real es siempre idéntico byte a
+      byte. Invertido: si el registro tiene `tamaño_bytes` guardado,
+      ESE es ahora el filtro duro (comparación barata,
+      `os.path.getsize()`, calculada para TODOS los candidatos antes
+      de pagar el costo de abrir el archivo con mutagen — mejora de
+      paso en rendimiento, ya que la duración solo se calcula para los
+      que YA pasaron el filtro de tamaño); si el registro es viejo y
+      no tiene tamaño guardado, se cae a duración como único criterio
+      posible (mismo comportamiento de siempre para ESE caso). Ambos
+      campos (`tamaño_coincide`/`duracion_coincide`) se siguen
+      mostrando en el diálogo como columnas informativas.
+    - **b) Ignora las rutas de Configuración, busca la carpeta Música
+      REAL del sistema**: nuevo `_resolver_carpeta_musica_real()`
+      (`gui/ventana_explorador.py`) — mismo mecanismo ya usado en
+      `instalar.sh` para el Escritorio (`xdg-user-dir DESKTOP`, porque
+      Q4OS en español usa "Escritorio", no "Desktop"): acá se usa
+      `xdg-user-dir MUSIC` primero, y si no responde, se prueba
+      `~/Música`/`~/Musica`/`~/Music` en ese orden. La sospecha real:
+      las rutas configuradas en Configuración → Rutas (Biblioteca de
+      Publicidad/musical) pueden no reflejar dónde vive realmente la
+      biblioteca completa de Santiago, o directamente no coincidir con
+      el nombre real de la carpeta del sistema (mismo tipo de bug ya
+      encontrado antes con "Escritorio"/"Desktop") — la búsqueda ahora
+      escanea SIEMPRE la carpeta Música real completa, sin depender de
+      que esos dos campos de Configuración estén bien seteados. Si no
+      se encuentra ninguna carpeta de Música válida, avisa en vez de
+      romper (mismo criterio fail-open de siempre).
+
+    Probado extendiendo `test_ubicar_vincular_archivo.py` (mockeando
+    `_resolver_carpeta_musica_real` a una carpeta de prueba única):
+    dos candidatos del mismo tamaño se encuentran —uno en la raíz, uno
+    en subcarpeta, recursivo—, un candidato de OTRO tamaño ahora queda
+    AFUERA (antes aparecía igual, solo sin la marca de coincidencia);
+    un registro sin tamaño guardado cae a duración como único
+    criterio; `_resolver_carpeta_musica_real()` probado con
+    `subprocess.run`/`os.path.isdir`/`os.path.expanduser` mockeados
+    para los 3 casos (xdg-user-dir responde, cae a `~/Musica`, no
+    encuentra nada -> `None`) — + `test_dialogo_vincular_archivo.py`
+    actualizado a las 6 columnas nuevas (se agregó "¿Duración
+    coincide?") + suite de regresión completa sin fallos nuevos
+    (mismos 7 fallos preexistentes de siempre) + smoke test de
+    arranque limpio. **Sigue sin poder confirmarse con la biblioteca
+    real de Santiago**: falta que confirme que ahora SÍ encuentra los
+    archivos perdidos (con la causa de fondo corregida, el tamaño
+    exacto en bytes debería ser mucho más confiable que la duración
+    estimada), y que escanear toda la carpeta Música real —en vez de
+    las rutas configuradas— no tarda demasiado con su biblioteca de
+    varios miles de archivos.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que

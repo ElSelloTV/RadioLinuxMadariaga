@@ -2,12 +2,14 @@
 gui/dialogo_vincular_archivo.py
 --------------------------------------------------------
 Diálogo de la función "Ubicar" -> "Buscarlo..." de Ventana 3
-(Explorador): muestra TODOS los archivos candidatos encontrados con
-la misma duración que el registro roto (el nombre pudo haber
-cambiado, así que la duración es la identidad real usada para
-matchear — ver VentanaExplorador._buscar_archivo_perdido), con un
-▶ Previo/■ Detener para escuchar cada uno antes de decidir, y un
-botón "🔗 Vincular" que confirma la elección.
+(Explorador): muestra TODOS los archivos candidatos encontrados en la
+carpeta Música real del sistema, matcheados PRIMERO por tamaño en
+bytes y luego por duración (pedido explícito -- el nombre pudo haber
+cambiado, y el tamaño es más confiable que la duración estimada por
+mutagen, que puede variar un segundo entre lecturas/formatos — ver
+VentanaExplorador._buscar_archivo_perdido), con un ▶ Previo/■ Detener
+para escuchar cada uno antes de decidir, y un botón "🔗 Vincular" que
+confirma la elección.
 
 Pedido explícito (punto i): la salida de audio de este previo es
 SIEMPRE la de "Salida Preescucha" configurada, nunca la Master — el
@@ -26,7 +28,7 @@ from PySide6.QtCore import Qt
 
 from core.audio_engine import MotorAudio
 
-COL_CARPETA, COL_ARCHIVO, COL_DURACION, COL_TAMANO, COL_TAMANO_COINCIDE = range(5)
+COL_CARPETA, COL_ARCHIVO, COL_TAMANO, COL_TAMANO_COINCIDE, COL_DURACION, COL_DURACION_COINCIDE = range(6)
 
 
 def _formatear_tamano(tamano_bytes) -> str:
@@ -51,25 +53,28 @@ class DialogoVincularArchivo(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
             f"No se encontró el archivo de '{titulo_registro}' en su ubicación original.\n"
-            "Estos son los candidatos encontrados con la misma duración "
-            "(el nombre pudo haber cambiado):"
+            "Estos son los candidatos encontrados en la carpeta Música "
+            "(primero por tamaño, luego por duración — el nombre pudo haber cambiado):"
         ))
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Carpeta", "Archivo", "Duración", "Tamaño", "¿Tamaño coincide?"])
+        self.tree.setHeaderLabels([
+            "Carpeta", "Archivo", "Tamaño", "¿Tamaño coincide?", "Duración", "¿Duración coincide?",
+        ])
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         for candidato in candidatos:
             item = QTreeWidgetItem([
                 os.path.dirname(candidato["ruta"]),
                 os.path.basename(candidato["ruta"]),
-                candidato.get("duracion", ""),
                 _formatear_tamano(candidato.get("tamaño_bytes")),
                 "Sí" if candidato.get("tamaño_coincide") else "—",
+                candidato.get("duracion", ""),
+                "Sí" if candidato.get("duracion_coincide") else "—",
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, candidato["ruta"])
             self.tree.addTopLevelItem(item)
-        for columna in range(5):
+        for columna in range(6):
             self.tree.resizeColumnToContents(columna)
         if self.tree.topLevelItemCount() > 0:
             self.tree.setCurrentItem(self.tree.topLevelItem(0))
