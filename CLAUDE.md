@@ -7621,6 +7621,168 @@ todo el resto.
     preexistentes de siempre) + smoke test de arranque limpio. Falta
     que Santiago confirme que el botón nuevo aparece en Configuración
     → Diagnóstico y funciona como espera.
+79. ~~"Ubicar" archivo en el explorador de la PC + recuperar vínculos
+    rotos (buscar por duración/tamaño y "Vincular")~~ — pedido
+    explícito, 9 puntos (a-i) sobre Ventana 3/Explorador:
+
+    **a) "Ubicar" nuevo en el menú contextual**: localiza el archivo
+    de un registro EN EL EXPLORADOR DE ARCHIVOS DEL SISTEMA, sin
+    ninguna acción sobre él — ni reproduce, ni edita. No existe un
+    mecanismo universal en Linux para "abrir seleccionando un archivo"
+    (a diferencia de macOS `open -R` / Windows `explorer /select,`) —
+    `_localizar_en_explorador_de_archivos()` (`gui/ventana_explorador.py`)
+    prueba, en orden, los gestores de archivos más comunes que sí
+    soportan selección directa por línea de comandos (`dolphin
+    --select`, `nautilus --select`, `nemo`, `pcmanfm-qt`, `pcmanfm`)
+    vía `shutil.which()` + `QProcess.startDetached()` — mismo patrón
+    ya usado para `mhwaveedit` en "🎚 Editar audio". Si ninguno está
+    instalado, cae a abrir la CARPETA contenedora con el programa
+    default del sistema (`QDesktopServices.openUrl`, sin selección
+    puntual pero siempre funciona); si ni eso funciona, avisa con la
+    ruta de la carpeta a mano. Como no se sabe de antemano qué gestor
+    de archivos tiene instalado Santiago (Q4OS suele traer TDE/Trinity
+    o Plasma), esta cadena de fallback queda documentada como
+    incierta hasta que él confirme cuál efectivamente selecciona el
+    archivo.
+
+    **b) Archivo faltante -> pregunta Buscar/Eliminar/Cancelar**: si
+    `os.path.exists(ruta)` da `False` (o nunca tuvo ruta),
+    `_preguntar_que_hacer_con_archivo_perdido()` arma un
+    `QMessageBox` con 3 botones de texto propio ("Buscarlo...",
+    "Eliminar registro", "Cancelar") — mismo patrón ya establecido por
+    `MainWindow._preguntar_actualizar_ahora()` (extraído en su propio
+    método para poder testear la decisión sin simular un click real,
+    algo que offscreen no puede). "Eliminar registro" usa
+    `_eliminar_registro_sin_confirmar()`, una versión liviana de
+    `_eliminar_archivo()` que NO vuelve a pedir confirmación (la
+    propia pregunta "¿Buscarlo o eliminar?" YA es la confirmación —
+    reusar `_eliminar_archivo()` tal cual hubiera disparado una
+    segunda, redundante, gateada por
+    `confirmar_antes_de_eliminar`).
+
+    **c+d) "Buscar" escanea Publicidad primero, Musical segundo, por
+    duración de identidad**: `_buscar_archivo_perdido()` recorre
+    (`os.walk`, recursivo) las DOS carpetas base de Configuración →
+    Rutas, en ese orden — Biblioteca de Publicidad primero, Biblioteca
+    musical segunda (pedido explícito, punto d) — filtrando por
+    `EXTENSIONES_SOPORTADAS` antes de calcular la duración de cada
+    candidato (`obtener_duracion_formateada`, mutagen — liviano,
+    nunca pydub/ffmpeg para esto). La duración es la identidad REAL
+    del match (el nombre del archivo pudo cambiar): se compara la
+    cadena "HH:MM:SS" exacta contra la guardada en el registro — ya
+    viene truncada al segundo por el propio formateador, así que la
+    comparación es naturalmente tolerante sin necesitar un margen
+    aparte. El tamaño en bytes (`tamaño_bytes`, campo NUEVO agregado
+    en esta ronda a los 3 puntos de alta existentes — "＋ Agregar",
+    Importar masivo, descarga de YouTube — y al nuevo "🔗 Vincular")
+    viaja como dato INFORMATIVO por candidato (columna "¿Tamaño
+    coincide?"), nunca como filtro duro — decisión propia, explicada
+    acá: muchos registros viejos no tienen tamaño guardado todavía, y
+    un archivo re-codificado puede compartir duración con un tamaño
+    distinto — filtrar por los dos a la vez rompería en silencio
+    justo el caso que se quiere resolver. Con listas grandes, un
+    `QApplication.processEvents()` cada 25 archivos evita que el
+    escaneo se sienta "colgado" (mismo patrón ya usado en import
+    masivo/migración de biblioteca), con `solicitud_preload` emitido
+    para el mensaje de estado.
+
+    **e+f+g) Diálogo de candidatos con Previo (por Preescucha) y
+    Vincular**: `gui/dialogo_vincular_archivo.py` (nuevo,
+    `DialogoVincularArchivo`) — un `QTreeWidget` con TODOS los
+    candidatos encontrados (columnas Carpeta/Archivo/Duración/Tamaño/
+    ¿Tamaño coincide?, pedido explícito punto e: "pueden haber 1, 2 o
+    más archivos... me dará TODOS"), botones "▶ Previo"/"■ Detener"
+    (punto f) que arrancan/detienen un `MotorAudio` PROPIO del
+    diálogo, y "🔗 Vincular" (punto g) que confirma la elección
+    (`.resultado()` devuelve la ruta elegida o `None`). El motor se
+    detiene siempre al cerrar/cancelar (`reject()`/`closeEvent()`
+    sobrescritos) — nunca queda sonando de fondo con el diálogo ya
+    cerrado.
+
+    **h) El archivo vinculado queda listo para reproducir**: nuevo
+    `VentanaExplorador._aplicar_nuevo_archivo(item, categoria,
+    registro, ruta_nueva)` — extraído de `_reemplazar_archivo()`
+    (mismo re-análisis de silencio/nivelado, misma actualización de
+    `ruta`/`duracion`/`tamaño_bytes`, mismo `setData()`+
+    `_sincronizar_registro_en_categoria()`+guardado debounced) para
+    que "⟲ Reemplazar" (el operador elige el archivo a mano) y
+    "🔗 Vincular" (el operador elige un candidato de la búsqueda)
+    compartan un solo camino, sin lógica duplicada — el registro queda
+    con el archivo nuevo ya analizado y persistido, tal como si se
+    hubiera reemplazado a mano.
+
+    **i) Previo por Salida Preescucha, nunca Master**: el
+    `MotorAudio` interno del diálogo se construye con
+    `aplicar_procesador=False` e `id_dispositivo=` el
+    `dispositivo_preescucha` configurado (resuelto en
+    `_buscar_archivo_perdido()` con el mismo criterio ya usado por
+    `GestorExplorador`, el ▶ Previo normal de Ventana 3: `"default"` →
+    `None`) — exactamente lo que Santiago pidió explícito, este previo
+    NUNCA sale por la salida que va al aire.
+
+    **Detalle real de testing, no de la app**: al escribir el test
+    del menú contextual apareció un problema real de offscreen no
+    documentado hasta ahora en este proyecto — parchear `QMenu.exec`
+    a nivel de CLASE (`patch.object(QMenu, "exec", ...)` o asignación
+    directa), la técnica que varios tests anteriores creían que
+    funcionaba, en realidad NO intercepta la llamada real para
+    `QMenu.exec(QPoint)` — el `exec()` nativo se ejecuta igual y
+    cuelga para siempre esperando un click que nunca llega (confirmado
+    con un repro mínimo aislado, `menu.exec(QPoint(0,0))` con la clase
+    parcheada sigue bloqueando). Lo que sí funciona de forma
+    confiable: parchear la INSTANCIA (`menu.exec = lambda ...`, no la
+    clase) — pero como `QMenu(self)` se crea DENTRO del método bajo
+    prueba, no hay forma de agarrar esa instancia de antemano.
+    Solución que sí probó andar: interceptar `QMenu.addAction`
+    (siempre patcheable, se ejecuta ANTES de `exec()`) y, la primera
+    vez que se llama sobre una instancia de menú nueva, agendar
+    `QTimer.singleShot(0, self.close)` sobre ESA instancia real — así
+    el `exec()` real, bloqueante, entra a su loop de eventos, procesa
+    el timer ya encolado, y se cierra solo casi de inmediato. **Regla
+    para el futuro**: cualquier test nuevo que necesite simular un
+    menú contextual sin bloquear debe usar este patrón (cerrar la
+    instancia real vía timer agendado desde `addAction`), no confiar
+    en parchear `QMenu.exec` a nivel de clase — varios tests
+    anteriores de este proyecto puede que hayan estado "pasando" sin
+    haber ejercitado de verdad la rama de `exec()` (por ejemplo, si el
+    menú resultaba estar vacío o el método retornaba antes de llegar
+    ahí) sin que nadie lo notara.
+
+    Probado con `test_ubicar_vincular_archivo.py` (nuevo, dedicado):
+    archivo existente dispara el localizador con la ruta correcta sin
+    preguntar nada; archivo faltante + "cancelar" no hace nada;
+    "eliminar" quita el registro de la lista Y de la categoría
+    persistida SIN una segunda confirmación (`QMessageBox.question`
+    nunca se llama); "buscar" encuentra candidatos en Publicidad
+    (raíz y subcarpeta, recursivo) Y en Musical (combina ambas
+    carpetas, nunca se detiene en la primera con resultados), ignora
+    archivos no-audio, le pasa el dispositivo de Preescucha correcto
+    al diálogo, marca `tamaño_coincide` como informativo sin filtrar
+    ningún candidato por eso; Vincular aplica el archivo elegido
+    (ruta/duración/tamaño actualizados) y lo persiste en disco; sin
+    candidatos avisa sin abrir el diálogo; el ítem "Ubicar" está en el
+    menú contextual — + `test_dialogo_vincular_archivo.py` (nuevo,
+    dedicado: lista candidatos, preselección, Previo/Detener degradan
+    limpio sin libVLC real, Vincular devuelve la ruta elegida, sin
+    candidatos el botón Vincular queda deshabilitado, cancelar no deja
+    ninguna ruta elegida) + suite de regresión completa sin fallos
+    nuevos (mismos 7 fallos preexistentes de siempre:
+    `test_audio_only_y_buffer.py`, `test_confirmaciones.py`,
+    `test_fade_in_declick_v1.py`, `test_log_git.py`,
+    `test_ronda_ajustes_dinesat2.py`, `test_ronda_dinesat3.py`,
+    `test_ventana3.py`) + smoke test de arranque limpio. **Sigue sin
+    poder confirmarse con hardware/gestor de archivos real** (el
+    sandbox no tiene ningún gestor de archivos gráfico instalado, y el
+    Previo usa libVLC que tampoco está disponible acá): falta que
+    Santiago confirme (1) que "Ubicar" abre su gestor de archivos real
+    (Dolphin, Nautilus, u otro — avisar cuál si ninguno de los
+    probados selecciona el archivo, para sumarlo a la lista), (2) que
+    la búsqueda por duración encuentra los candidatos esperados con su
+    biblioteca real (archivos movidos/renombrados de verdad), (3) que
+    el Previo del diálogo de candidatos suena por sus parlantes de
+    Preescucha, no por la salida al aire, y (4) que vincular un
+    candidato deja el material listo para reproducir con normalidad en
+    Ventana 1/2/Auxiliar.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

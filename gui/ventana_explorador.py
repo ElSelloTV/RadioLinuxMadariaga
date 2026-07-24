@@ -972,6 +972,7 @@ class VentanaExplorador(QWidget):
             "codigo": datos["codigo"],
             "ruta": ruta,
             "duracion": obtener_duracion_formateada(ruta),
+            "tamaño_bytes": self._tamano_bytes(ruta),
             "punto_inicio_ms": analisis["punto_inicio_ms"],
             "punto_fin_ms": analisis["punto_fin_ms"] or None,
             "ganancia_db": analisis["ganancia_db"],
@@ -1035,6 +1036,7 @@ class VentanaExplorador(QWidget):
                     "codigo": f"{prefijo}{siguiente_numero:05d}",
                     "ruta": ruta,
                     "duracion": obtener_duracion_formateada(ruta),
+                    "tamaño_bytes": self._tamano_bytes(ruta),
                     "punto_inicio_ms": analisis["punto_inicio_ms"],
                     "punto_fin_ms": analisis["punto_fin_ms"] or None,
                     "ganancia_db": analisis["ganancia_db"],
@@ -1135,6 +1137,7 @@ class VentanaExplorador(QWidget):
                 "codigo": f"{prefijo}{siguiente_numero:05d}",
                 "ruta": archivo["ruta"],
                 "duracion": archivo["duracion"],
+                "tamaño_bytes": self._tamano_bytes(archivo["ruta"]),
                 "punto_inicio_ms": archivo["punto_inicio_ms"],
                 "punto_fin_ms": archivo["punto_fin_ms"],
                 "ganancia_db": archivo["ganancia_db"],
@@ -1215,7 +1218,25 @@ class VentanaExplorador(QWidget):
             if respuesta != QMessageBox.StandardButton.Yes:
                 return
 
-        registro = item.data(0, ROL_REGISTRO)
+        self._aplicar_nuevo_archivo(item, categoria, item.data(0, ROL_REGISTRO), ruta_nueva)
+
+    @staticmethod
+    def _tamano_bytes(ruta: str):
+        """Tamaño en bytes del archivo, o None si no se puede leer
+        (archivo movido/borrado, permisos, etc. -- fail-open, nunca
+        rompe el alta/vínculo de un registro por esto)."""
+        try:
+            return os.path.getsize(ruta)
+        except OSError:
+            return None
+
+    def _aplicar_nuevo_archivo(self, item, categoria, registro: dict, ruta_nueva: str):
+        """Punto único que pisa el archivo de audio de un registro YA
+        existente por otro (re-analiza silencios/nivelado, recalcula
+        duración/tamaño) y lo persiste -- usado tanto por "⟲ Reemplazar"
+        (el operador elige el archivo a mano) como por "🔗 Vincular"
+        (el operador elige uno de los candidatos encontrados al buscar
+        un archivo perdido, ver _buscar_archivo_perdido)."""
         ruta_anterior = registro.get("ruta")
         config = cargar_configuracion()
         tolerancia = tolerancia_silencio_para_genero(config, registro.get("genero", ""))
@@ -1224,6 +1245,7 @@ class VentanaExplorador(QWidget):
 
         registro["ruta"] = ruta_nueva
         registro["duracion"] = obtener_duracion_formateada(ruta_nueva)
+        registro["tamaño_bytes"] = self._tamano_bytes(ruta_nueva)
         registro["punto_inicio_ms"] = analisis["punto_inicio_ms"]
         registro["punto_fin_ms"] = analisis["punto_fin_ms"] or None
         registro["ganancia_db"] = analisis["ganancia_db"]
@@ -1234,6 +1256,7 @@ class VentanaExplorador(QWidget):
         item.setText(COL_DURACION, registro["duracion"])
         self._sincronizar_registro_en_categoria(categoria, ruta_anterior, registro)
         self._guardar_biblioteca_debounced()
+        return registro
 
     def _editar_vigencia(self, item):
         """Vigencia de fecha (pedido explícito, inspirado en Dinesat):
@@ -1467,6 +1490,7 @@ class VentanaExplorador(QWidget):
         accion_info = menu.addAction("✏ Editar información...")
         accion_editar = menu.addAction("🎚 Editar audio")
         accion_vigencia = menu.addAction("📅 Vigencia...")
+        accion_ubicar = menu.addAction("📍 Ubicar")
         menu.addSeparator()
         texto_eliminar = "✕ Eliminar" if len(seleccionados) <= 1 else f"✕ Eliminar {len(seleccionados)}"
         accion_eliminar = menu.addAction(texto_eliminar)
@@ -1477,6 +1501,7 @@ class VentanaExplorador(QWidget):
         accion_info.setEnabled(hay_seleccion_unica)
         accion_editar.setEnabled(hay_seleccion_unica)
         accion_vigencia.setEnabled(hay_seleccion_unica)
+        accion_ubicar.setEnabled(hay_seleccion_unica)
         accion_eliminar.setEnabled(len(seleccionados) > 0)
 
         accion_elegida = menu.exec(self.tree_archivos.viewport().mapToGlobal(posicion))
@@ -1492,6 +1517,8 @@ class VentanaExplorador(QWidget):
             self._editar_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_vigencia:
             self._editar_vigencia(seleccionados[0] if seleccionados else None)
+        elif accion_elegida == accion_ubicar:
+            self._ubicar_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_eliminar:
             self._eliminar_archivo()
 
@@ -1551,6 +1578,194 @@ class VentanaExplorador(QWidget):
         ejecutable, _ = QFileDialog.getOpenFileName(self, "Elegir editor de audio", "/usr/bin")
         if ejecutable:
             QProcess.startDetached(ejecutable, [ruta])
+
+    # ------------------------------------------------------------------
+    # "Ubicar" (pedido explícito): localizar el archivo en el explorador
+    # de la PC sin ninguna acción sobre él; si el vínculo está roto
+    # (archivo movido/borrado), ofrece buscarlo por duración/tamaño en
+    # las carpetas de biblioteca configuradas, o eliminar el registro.
+    # ------------------------------------------------------------------
+
+    # No hay un mecanismo universal en Linux (a diferencia de macOS/
+    # Windows) para "abrir el explorador con este archivo YA
+    # seleccionado" -- se prueban gestores de archivos conocidos que sí
+    # soportan selección directa por línea de comandos, en orden.
+    _GESTORES_ARCHIVOS_CON_SELECCION = (
+        ("dolphin", ["--select", "{ruta}"]),
+        ("nautilus", ["--select", "{ruta}"]),
+        ("nemo", ["{ruta}"]),
+        ("pcmanfm-qt", ["{ruta}"]),
+        ("pcmanfm", ["{ruta}"]),
+    )
+
+    def _ubicar_archivo(self, item):
+        if item is None:
+            QMessageBox.information(self, "Ubicar", "Seleccioná un archivo.")
+            return
+        registro = item.data(0, ROL_REGISTRO)
+        if not registro:
+            return
+        ruta = registro.get("ruta")
+
+        if ruta and os.path.exists(ruta):
+            self._localizar_en_explorador_de_archivos(ruta)
+            return
+
+        decision = self._preguntar_que_hacer_con_archivo_perdido(registro.get("titulo", ""), ruta or "")
+        if decision == "eliminar":
+            self._eliminar_registro_sin_confirmar(item)
+        elif decision == "buscar":
+            self._buscar_archivo_perdido(item, registro)
+
+    def _localizar_en_explorador_de_archivos(self, ruta: str):
+        for ejecutable, args_patron in self._GESTORES_ARCHIVOS_CON_SELECCION:
+            ruta_ejecutable = shutil.which(ejecutable)
+            if not ruta_ejecutable:
+                continue
+            args = [arg.format(ruta=ruta) for arg in args_patron]
+            QProcess.startDetached(ruta_ejecutable, args)
+            return
+
+        # Ningún gestor con soporte de selección disponible -- se cae a
+        # abrir la carpeta contenedora con el programa default del
+        # sistema (sin selección puntual, pero siempre funciona).
+        carpeta = os.path.dirname(ruta)
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(carpeta)):
+            return
+
+        QMessageBox.warning(
+            self, "Ubicar",
+            f"No se pudo abrir el explorador de archivos del sistema.\nLa carpeta es:\n{carpeta}",
+        )
+
+    def _preguntar_que_hacer_con_archivo_perdido(self, titulo: str, ruta: str) -> str:
+        """Extraído en su propio método (mismo criterio que
+        MainWindow._preguntar_actualizar_ahora) para poder testear la
+        decisión sin simular un click real sobre un QMessageBox --
+        offscreen no puede. Devuelve "buscar" / "eliminar" / "cancelar"."""
+        caja = QMessageBox(self)
+        caja.setWindowTitle("Archivo no encontrado")
+        texto_ruta = ruta if ruta else "(sin ruta registrada)"
+        caja.setText(
+            f"No se encontró el archivo de '{titulo}' en su ubicación:\n{texto_ruta}\n\n"
+            "¿Qué querés hacer?"
+        )
+        boton_buscar = caja.addButton("Buscarlo...", QMessageBox.ButtonRole.AcceptRole)
+        boton_eliminar = caja.addButton("Eliminar registro", QMessageBox.ButtonRole.DestructiveRole)
+        caja.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
+        caja.setDefaultButton(boton_buscar)
+        caja.exec()
+        elegido = caja.clickedButton()
+        if elegido is boton_buscar:
+            return "buscar"
+        if elegido is boton_eliminar:
+            return "eliminar"
+        return "cancelar"
+
+    def _eliminar_registro_sin_confirmar(self, item):
+        """Quita UN registro sin pedir confirmación aparte -- usado
+        desde "Ubicar" sobre un archivo perdido, donde la propia
+        pregunta "¿Buscarlo o eliminar el registro?" YA es la
+        confirmación (reusar _eliminar_archivo() dispararía una
+        segunda, redundante, gateada por confirmar_antes_de_eliminar)."""
+        registro = item.data(0, ROL_REGISTRO)
+        ruta = registro.get("ruta") if registro else None
+        indice = self.tree_archivos.indexOfTopLevelItem(item)
+        if indice >= 0:
+            self.tree_archivos.takeTopLevelItem(indice)
+        if not ruta:
+            return
+        categoria = self._buscar_categoria_de_ruta(ruta)
+        if categoria is None:
+            return
+        registros = [r for r in (categoria.data(0, ROL_ARCHIVOS) or []) if r.get("ruta") != ruta]
+        categoria.setData(0, ROL_ARCHIVOS, registros)
+        self._guardar_biblioteca_debounced()
+        self.archivo_eliminado.emit(ruta)
+
+    def _buscar_archivo_perdido(self, item, registro: dict):
+        """Escanea, en orden (pedido explícito: Publicidad primero,
+        Musical segundo), las carpetas base configuradas en Rutas
+        buscando candidatos con la MISMA duración (comparación exacta
+        de la cadena "HH:MM:SS", ya truncada al segundo por
+        obtener_duracion_formateada -- el nombre pudo haber cambiado,
+        la duración es la identidad real). El tamaño en bytes se
+        adjunta como dato INFORMATIVO por candidato (nunca como filtro
+        duro): muchos registros viejos no tienen tamaño guardado
+        todavía, y un archivo re-codificado puede compartir duración
+        con un tamaño distinto -- filtrar por los dos a la vez
+        rompería en silencio justo el caso que se quiere resolver."""
+        categoria = self._buscar_categoria_de_ruta(registro.get("ruta"))
+        if categoria is None:
+            QMessageBox.warning(self, "Buscar archivo", "No se encontró la categoría de este archivo.")
+            return
+
+        config = cargar_configuracion()
+        carpetas = [
+            config["rutas"].get("biblioteca_publicidad"),
+            config["rutas"].get("biblioteca_musical"),
+        ]
+        duracion_objetivo = registro.get("duracion")
+        tamano_objetivo = registro.get("tamaño_bytes")
+
+        self.solicitud_preload.emit("Buscando el archivo perdido...")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        candidatos = []
+        try:
+            contador = 0
+            for carpeta in carpetas:
+                if not carpeta or not os.path.isdir(carpeta):
+                    continue
+                for raiz, _dirs, archivos in os.walk(carpeta):
+                    for nombre in archivos:
+                        if not nombre.lower().endswith(EXTENSIONES_SOPORTADAS):
+                            continue
+                        ruta_candidata = os.path.join(raiz, nombre)
+                        contador += 1
+                        if contador % 25 == 0:
+                            QApplication.processEvents()
+                        duracion_candidata = obtener_duracion_formateada(ruta_candidata)
+                        if duracion_objetivo and duracion_candidata != duracion_objetivo:
+                            continue
+                        tamano_candidato = self._tamano_bytes(ruta_candidata)
+                        candidatos.append({
+                            "ruta": ruta_candidata,
+                            "duracion": duracion_candidata,
+                            "tamaño_bytes": tamano_candidato,
+                            "tamaño_coincide": (
+                                tamano_objetivo is not None and tamano_candidato is not None
+                                and tamano_objetivo == tamano_candidato
+                            ),
+                        })
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not candidatos:
+            QMessageBox.information(
+                self, "Buscar archivo",
+                f"No se encontró ningún archivo con la misma duración ({duracion_objetivo})\n"
+                "en las carpetas de Biblioteca de Publicidad ni Biblioteca musical.",
+            )
+            return
+
+        from gui.dialogo_vincular_archivo import DialogoVincularArchivo
+        audio_cfg = config["audio"]
+        id_dispositivo_preescucha = (
+            audio_cfg["dispositivo_preescucha"] if audio_cfg["dispositivo_preescucha"] != "default" else None
+        )
+        dialogo = DialogoVincularArchivo(
+            registro.get("titulo", ""), candidatos, id_dispositivo_preescucha, parent=self,
+        )
+        if dialogo.exec() != DialogoVincularArchivo.DialogCode.Accepted:
+            return
+        ruta_elegida = dialogo.resultado()
+        if not ruta_elegida:
+            return
+
+        self._aplicar_nuevo_archivo(item, categoria, registro, ruta_elegida)
+        QMessageBox.information(
+            self, "Vincular", f"'{registro.get('titulo', '')}' quedó vinculado al archivo elegido.",
+        )
 
     # ------------------------------------------------------------------
     # API pública usada por core/playlist_manager.py (preview)
