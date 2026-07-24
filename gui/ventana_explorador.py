@@ -117,6 +117,11 @@ class VentanaExplorador(QWidget):
     # Milisegundos que se espera sin ninguna otra mutación antes de
     # escribir biblioteca.json de verdad (ver `_guardar_biblioteca_debounced`).
     _DEMORA_GUARDADO_MS = 600
+    # Cuántos archivos migra por tick `iniciar_migracion_duracion_al_arrancar()`
+    # antes de ceder el control a Qt (vía QTimer.singleShot(0, ...)) --
+    # chico a propósito para que la barra de progreso se vea moverse
+    # con fluidez en vez de "saltar" en lotes grandes.
+    _TAMANO_LOTE_MIGRACION = 25
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -615,6 +620,111 @@ class VentanaExplorador(QWidget):
             item_categoria.setData(0, ROL_ARCHIVOS, registros)
             self._guardar_biblioteca_debounced()
         return registros
+
+    def iniciar_migracion_duracion_al_arrancar(self, callback_iniciar=None, callback_progreso=None, callback_terminado=None):
+        """Pedido explícito ("necesito fluidez... se congela al leer
+        una categoría"): en vez de migrar la duración faltante de
+        forma LAZY (la primera vez que se ve cada categoría — ver
+        `_registros_de_categoria()` — que es justo lo que se sentía
+        como una traba real, incluso con esa función ya corrigiendo
+        que quede persistida), esto la migra TODA de una sola vez al
+        ARRANCAR el programa, con una barra de progreso GRÁFICA real
+        (`gui/dialogo_preload_biblioteca.py`).
+
+        Encaja con un dato clave que dio Santiago: la PC se reinicia
+        sola todos los días a las 00hs — pagar este costo (real,
+        mutagen tiene que abrir cada archivo) UNA VEZ por reinicio
+        (en la práctica, una sola vez EN TOTAL — una vez persistido,
+        el próximo reinicio no encuentra nada para migrar y esto
+        directamente no hace nada) es mucho mejor que pagarlo a los
+        tropezones cada vez que se abre una categoría distinta
+        durante el uso real del día.
+
+        NUNCA es un solo bucle síncrono gigante — corre en LOTES
+        chicos (`_TAMANO_LOTE_MIGRACION`) encadenados vía
+        `QTimer.singleShot(0, ...)`, cediendo el control a Qt entre
+        lotes para que la interfaz (el medidor de nivel decorativo,
+        la propia barra de progreso) siga respirando en vez de
+        congelarse de punta a punta — sigue siendo trabajo síncrono en
+        el hilo principal (esta app nunca usó threading), pero
+        PARTIDO en pedazos con puntos de respiro reales.
+
+        Para cada categoría, se lee la copia UNA sola vez
+        (`item.data(0, ROL_ARCHIVOS)`, guardada en `estado` mientras
+        dura el trabajo de esa categoría — puede abarcar varios
+        lotes/ticks si es grande) y se escribe de vuelta UNA sola vez
+        al terminarla (`item.setData(...)`) — evita tanto el bug real
+        de la copia descartable de PySide6 (ver
+        `_registros_de_categoria`) como recopiar la lista entera en
+        cada tick de más.
+
+        `callback_iniciar(total)`: se llama UNA vez, ANTES de empezar
+        a migrar nada, con el total de archivos pendientes — si es 0
+        (el caso normal tras el primer arranque con esta ronda), no se
+        llama a ningún otro callback y no se hace nada más.
+        `callback_progreso(hechos, total)`: en cada lote.
+        `callback_terminado(hechos)`: al final, ya con todo guardado
+        en disco."""
+        categorias_con_archivos = []
+
+        def recolectar(item):
+            if item.data(0, ROL_ARCHIVOS):
+                categorias_con_archivos.append(item)
+
+        self._para_cada_categoria(recolectar)
+
+        total_pendientes = sum(
+            1
+            for item in categorias_con_archivos
+            for registro in (item.data(0, ROL_ARCHIVOS) or [])
+            if not registro.get("duracion")
+        )
+
+        if callback_iniciar:
+            callback_iniciar(total_pendientes)
+        if total_pendientes == 0:
+            return
+
+        estado = {"idx_categoria": 0, "idx_archivo": 0, "hechos": 0, "registros_en_curso": None}
+
+        def procesar_lote():
+            procesados_este_lote = 0
+            while procesados_este_lote < self._TAMANO_LOTE_MIGRACION and estado["idx_categoria"] < len(categorias_con_archivos):
+                item = categorias_con_archivos[estado["idx_categoria"]]
+                if estado["registros_en_curso"] is None:
+                    estado["registros_en_curso"] = item.data(0, ROL_ARCHIVOS) or []
+                registros = estado["registros_en_curso"]
+
+                i = estado["idx_archivo"]
+                while i < len(registros) and procesados_este_lote < self._TAMANO_LOTE_MIGRACION:
+                    if not registros[i].get("duracion"):
+                        registros[i]["duracion"] = obtener_duracion_formateada(registros[i].get("ruta", ""))
+                        estado["hechos"] += 1
+                        procesados_este_lote += 1
+                    i += 1
+                estado["idx_archivo"] = i
+
+                if i >= len(registros):
+                    item.setData(0, ROL_ARCHIVOS, registros)
+                    estado["idx_categoria"] += 1
+                    estado["idx_archivo"] = 0
+                    estado["registros_en_curso"] = None
+
+            if callback_progreso:
+                callback_progreso(estado["hechos"], total_pendientes)
+
+            if estado["idx_categoria"] < len(categorias_con_archivos):
+                QTimer.singleShot(0, procesar_lote)
+            else:
+                # Guardado INMEDIATO (no debounced) a propósito acá:
+                # esto corre antes de mostrar la ventana principal, y
+                # queremos la garantía de que ya quedó escrito en disco
+                # antes de avisar "terminado" y dejar seguir el arranque.
+                self._guardar_biblioteca()
+                if callback_terminado:
+                    callback_terminado(estado["hechos"])
+
+        QTimer.singleShot(0, procesar_lote)
 
     def _agregar_fila_archivo(self, registro: dict, insertar: bool = True):
         """Arma el QTreeWidgetItem de una fila. Con `insertar=True`

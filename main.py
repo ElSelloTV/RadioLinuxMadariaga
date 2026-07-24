@@ -22,6 +22,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtCore import Qt, QTimer
 
 from gui.main_window import MainWindow
+from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 from gui.styles import QSS_APLICACION
 from config.settings import cargar_configuracion, registrar_error, registrar_evento
 
@@ -78,6 +79,44 @@ def main():
     registrar_evento("Aplicación iniciada")
 
     ventana = MainWindow()
+
+    # Migración de duración pendiente, con barra de progreso GRÁFICA
+    # (pedido explícito: "necesito fluidez... se congela al leer una
+    # categoría" + "podés agregar una barra gráfica de preload al
+    # inicio"). Antes, la duración faltante de un archivo se calculaba
+    # LAZY la primera vez que se veía su categoría — eso era justo la
+    # traba real que reportó Santiago. Ahora se migra TODA de una sola
+    # vez ACÁ, antes de mostrar la ventana, en lotes chicos (nunca un
+    # bucle síncrono gigante) — encaja con que la PC se reinicia sola
+    # todos los días a las 00hs: pagar este costo (real, mutagen tiene
+    # que abrir cada archivo) una vez por reinicio es mucho mejor que
+    # pagarlo a los tropezones durante el uso real del día. Con una
+    # biblioteca ya migrada (el caso normal de acá en más) esto no
+    # hace nada — ni siquiera llega a mostrar el diálogo.
+    dialogo_migracion = {"instancia": None}
+
+    def _migracion_iniciar(total):
+        if total > 0:
+            dialogo_migracion["instancia"] = DialogoPreloadBiblioteca(total)
+
+    def _migracion_progreso(hechos, total):
+        if dialogo_migracion["instancia"] is not None:
+            dialogo_migracion["instancia"].actualizar(hechos, total)
+
+    def _migracion_terminada(hechos):
+        if dialogo_migracion["instancia"] is not None:
+            dialogo_migracion["instancia"].close()
+        if hechos:
+            registrar_evento(f"Migración de duración al arrancar: {hechos} archivo(s) analizados y guardados")
+
+    ventana.ventana_explorador.iniciar_migracion_duracion_al_arrancar(
+        callback_iniciar=_migracion_iniciar,
+        callback_progreso=_migracion_progreso,
+        callback_terminado=_migracion_terminada,
+    )
+    if dialogo_migracion["instancia"] is not None:
+        dialogo_migracion["instancia"].exec()
+
     ventana.show()
 
     if splash is not None:

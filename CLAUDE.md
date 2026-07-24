@@ -7469,6 +7469,98 @@ todo el resto.
     duración cacheada TODAVÍA va a tardar un poco (mutagen tiene que
     leer cada archivo una vez, inevitable), pero de ahí en más debería
     ser instantánea, incluso después de cerrar y reabrir la app.
+77. ~~La ronda anterior no alcanzaba: migración de duración movida de
+    LAZY (por categoría, la primera vez que se ve) a UN SOLO PASO al
+    ARRANCAR, con barra de progreso GRÁFICA real~~ — Santiago probó la
+    ronda 76 y la gráfica SEGUÍA congelándose al leer una categoría
+    (visible incluso en el medidor de nivel decorativo, que dejaba de
+    animarse) — el fix de persistencia de la ronda anterior era
+    correcto (ya no se repetía la migración en cada sesión), pero la
+    PRIMERA vez que se ve cada categoría con ítems sin duración
+    cacheada TODAVÍA paga el costo real de mutagen de punta a punta,
+    de forma síncrona, en el hilo único de la GUI — con una categoría
+    de miles de archivos migrados por fuera de la app, eso es
+    perceptible como una traba real, no cosmética. Dato clave que dio
+    Santiago para la solución: la PC se reinicia sola todos los días a
+    las 00hs — "a cada reinicio del programa podemos agregar alguna
+    instancia... que (aunque tarde) me ofrezca fluidez".
+
+    **Rediseño**: la migración ya NO espera a que el operador abra
+    cada categoría — se hace TODA de una sola vez, ANTES de mostrar la
+    ventana principal, con una barra de progreso GRÁFICA real (pedido
+    explícito: "una barra gráfica de preload al inicio", a diferencia
+    del cursor de espera + texto que ya usa el resto de la app).
+    - `gui/dialogo_preload_biblioteca.py` (nuevo): `QDialog` chico con
+      `QLabel` + `QProgressBar` determinado (`%v / %m archivos`).
+    - `VentanaExplorador.iniciar_migracion_duracion_al_arrancar()`
+      (nuevo): en vez de un bucle síncrono gigante, recorre TODAS las
+      categorías en LOTES de `_TAMANO_LOTE_MIGRACION = 25` archivos,
+      encadenados vía `QTimer.singleShot(0, ...)` — cada lote cede el
+      control a Qt antes del siguiente, así cualquier animación
+      (el medidor de nivel, la propia barra de progreso) sigue
+      respirando entre lotes en vez de congelarse de punta a punta.
+      Por categoría, la copia de `ROL_ARCHIVOS` se lee UNA sola vez
+      (guardada en un `estado` que sobrevive entre lotes mientras esa
+      categoría no termine) y se escribe de vuelta UNA sola vez al
+      terminarla — ni recopia la lista completa en cada tick de más,
+      ni cae de nuevo en la trampa de la copia descartable de PySide6
+      (misma clase de bug que la ronda anterior, evitada desde el
+      diseño esta vez). Contrato de 3 callbacks: `callback_iniciar(total)`
+      (una vez, ANTES de migrar nada — si `total == 0`, que es el caso
+      normal después de la primera vez que corre esto, no se llama a
+      ningún otro callback ni se hace nada más), `callback_progreso(
+      hechos, total)` (por lote), `callback_terminado(hechos)` (al
+      final, con el guardado YA hecho en disco, inmediato — no
+      debounced, para tener la garantía de que quedó escrito antes de
+      seguir con el arranque).
+    - `main.py`: entre construir `MainWindow()` y `ventana.show()`, se
+      llama a `iniciar_migracion_duracion_al_arrancar()`; si hay algo
+      pendiente, se arma el diálogo y se lo bloquea con `.exec()`
+      (nested event loop de Qt — los `QTimer.singleShot(0, ...)`
+      encadenados de la migración SÍ se procesan durante ese loop
+      anidado, igual que cualquier otro timer de la app, confirmado
+      con un smoke test real). Con la biblioteca ya migrada (el caso
+      normal de acá en más, incluidos TODOS los reinicios diarios
+      siguientes) el diálogo ni siquiera llega a construirse.
+    - `_registros_de_categoria()` (ronda anterior) queda como red de
+      seguridad, no como mecanismo principal — solo entraría en juego
+      si algo agrega un ítem sin duración a mitad de una sesión (fuera
+      del flujo normal de alta, que siempre la calcula al importar).
+    - **Aclaración importante, respondiendo la otra parte del pedido
+      ("optimizar la entrega veloz del JSON y su lectura")**: medido
+      con datos realistas (12.000 registros con todos los campos que
+      usa la app) — serializar + escribir biblioteca.json compacto
+      tarda ~50ms, leer + parsearlo tarda ~35ms. El JSON en sí NUNCA
+      fue el cuello de botella — el costo real, de punta a punta,
+      siempre fue mutagen abriendo cada archivo de audio para leer su
+      duración. No hay nada más para optimizar del lado del JSON.
+
+    Probado con `test_migracion_duracion_arranque.py` (nuevo,
+    dedicado): sin nada pendiente no dispara ningún callback de más
+    (ni arma el diálogo); con archivos repartidos en categorías chicas
+    y una categoría más grande que un solo lote, migra TODO, el
+    progreso avanza monótono y termina en 100%, cada categoría queda
+    con la duración cacheada de verdad (vía `.data()` fresco, no la
+    copia vieja) y persistida en disco; una `VentanaExplorador` nueva
+    simulando un reinicio ya no tiene nada pendiente; el diálogo se
+    arma y actualiza sin romperse — + smoke test de punta a punta real
+    corriendo `main.py` completo con una biblioteca de 120 ítems sin
+    duración (offscreen, sin ventana real pero con el mismo
+    `QDialog.exec()`/`QTimer` real): la app arranca sin excepción y
+    los 120 registros terminan con duración persistida en
+    `biblioteca.json` al final — + suite de regresión completa sin
+    fallos nuevos (mismos 7 fallos preexistentes de siempre) + smoke
+    test de arranque limpio sin biblioteca pendiente. **Sigue sin
+    poder confirmarse en hardware real**: falta que Santiago reinicie
+    su PC (o simplemente reabra la app una vez, ya que el escaneo
+    corre igual al abrir) con su biblioteca real de ~10-12mil
+    archivos y confirme (1) que ve la barra de progreso gráfica
+    avanzar en vez de una pantalla congelada, (2) que aunque tarde un
+    rato la primera vez, el arranque en sí no se siente "tildado" (los
+    lotes de a 25 deberían mantener la interfaz respirando), y (3) que
+    DESPUÉS de esa migración inicial, explorar cualquier categoría —
+    incluso las que nunca había abierto — ya es instantáneo, sin
+    ningún tranco.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
