@@ -15,7 +15,14 @@ VentanaExplorador._buscar_archivo_perdido), con:
 - ⏭ Saltar, para pasar al próximo archivo sin vincular sin elegir
   ningún candidato de este (VentanaExplorador._procesar_lista_de_perdidos
   sigue con el siguiente de la cola).
-- 🔗 Vincular, que confirma el candidato seleccionado.
+- 🔗 Vincular, que confirma el candidato seleccionado Y de paso lo
+  renombra en disco al título del registro roto (pedido explícito:
+  "cuando vincule, automáticamente además también tome el nombre del
+  archivo del JSON, me parece más práctico y rápido" — ya no hace
+  falta "Tomar el nombre" a mano antes de vincular, aunque sigue
+  disponible por separado; si el renombre falla por lo que sea, el
+  vínculo se hace igual con la ruta original, nunca se bloquea por
+  eso).
 - Menú contextual sobre cada candidato: "✏ Tomar el nombre" (renombra
   el ARCHIVO EN DISCO al título del registro roto, sin pedir
   confirmación) y "🗑 Eliminar" (borra el archivo de la PC, con aviso
@@ -159,7 +166,15 @@ class DialogoVincularArchivo(QDialog):
         item = self.tree.currentItem()
         if item is None:
             return
-        self._ruta_elegida = item.data(0, Qt.ItemDataRole.UserRole)
+        # Pedido explícito ("cuando vincule, automáticamente además
+        # también tome el nombre del archivo del JSON... más práctico
+        # y rápido"): antes había que hacer "Tomar el nombre" a mano Y
+        # RECIÉN DESPUÉS "Vincular" -- ahora Vincular hace las dos
+        # cosas de una sola vez. Si el renombre falla por lo que sea
+        # (ya existe un archivo con ese nombre, permisos), se vincula
+        # igual con la ruta ORIGINAL -- nunca bloquear el vínculo por
+        # un problema de nombre.
+        self._ruta_elegida = self._renombrar_a_titulo_registro(item, avisar_si_falla=False)
         self._detener()
         self.accept()
 
@@ -201,7 +216,18 @@ class DialogoVincularArchivo(QDialog):
         registrado en la ventana 3 respetando la extensión -- sin
         pedir confirmación"): renombra el archivo EN DISCO, dejando la
         extensión real del candidato tal cual está (nunca inventada a
-        partir del título)."""
+        partir del título). Con aviso si falla -- acción manual del
+        operador sobre un candidato puntual, a diferencia del renombre
+        automático de _vincular()."""
+        self._renombrar_a_titulo_registro(item, avisar_si_falla=True)
+
+    def _renombrar_a_titulo_registro(self, item, avisar_si_falla: bool) -> str:
+        """Renombra el ARCHIVO EN DISCO de `item` al título del
+        registro roto (respetando su extensión real) -- compartido por
+        "✏ Tomar el nombre" (manual, avisa si falla) y por "🔗 Vincular"
+        (automático, silencioso ante un fallo: nunca bloquear el
+        vínculo por un problema de nombre). Devuelve la ruta final
+        (la nueva si el renombre salió bien, la original si no)."""
         ruta_actual = item.data(0, Qt.ItemDataRole.UserRole)
         extension = os.path.splitext(ruta_actual)[1]
         nombre_nuevo = _sanitizar_nombre_archivo(self._titulo_registro) + extension
@@ -209,21 +235,24 @@ class DialogoVincularArchivo(QDialog):
         ruta_nueva = os.path.join(carpeta, nombre_nuevo)
 
         if ruta_nueva == ruta_actual:
-            return
+            return ruta_actual
         if os.path.exists(ruta_nueva):
-            QMessageBox.warning(
-                self, "Tomar el nombre",
-                f"Ya existe un archivo con ese nombre en la carpeta:\n{ruta_nueva}",
-            )
-            return
+            if avisar_si_falla:
+                QMessageBox.warning(
+                    self, "Tomar el nombre",
+                    f"Ya existe un archivo con ese nombre en la carpeta:\n{ruta_nueva}",
+                )
+            return ruta_actual
         try:
             os.rename(ruta_actual, ruta_nueva)
         except OSError as error:
-            QMessageBox.warning(self, "Tomar el nombre", f"No se pudo renombrar el archivo:\n{error}")
-            return
+            if avisar_si_falla:
+                QMessageBox.warning(self, "Tomar el nombre", f"No se pudo renombrar el archivo:\n{error}")
+            return ruta_actual
 
         item.setData(0, Qt.ItemDataRole.UserRole, ruta_nueva)
         item.setText(COL_ARCHIVO, os.path.basename(ruta_nueva))
+        return ruta_nueva
 
     def _eliminar_candidato(self, item):
         """Pedido explícito ("eliminar el tema musical de la

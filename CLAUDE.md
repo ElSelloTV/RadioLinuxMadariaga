@@ -8164,6 +8164,44 @@ todo el resto.
     aire, y que el buscador de duplicados encuentra y permite resolver
     duplicados reales de su biblioteca.
 
+84. ~~"Ubicar" archivos perdidos: Vincular ahora también toma el
+    nombre del JSON automáticamente~~ — pedido explícito: "cuando
+    vincule, automáticamente además también tome el nombre del
+    archivo del JSON, me parece más práctico y rápido". Antes había
+    que hacer DOS pasos (clic derecho → "✏ Tomar el nombre" sobre el
+    candidato, y RECIÉN DESPUÉS "🔗 Vincular") — ahora Vincular hace
+    las dos cosas de una sola vez. `gui/dialogo_vincular_archivo.py`:
+    la lógica de renombrar el archivo EN DISCO al título del registro
+    roto (respetando su extensión real) se extrajo a un único método
+    compartido, `_renombrar_a_titulo_registro(item, avisar_si_falla)`
+    — `_tomar_nombre()` (la acción manual del menú contextual) lo
+    llama con `avisar_si_falla=True` (mismo comportamiento de siempre:
+    avisa si el nombre ya existe o si el renombre falla); `_vincular()`
+    lo llama PRIMERO, con `avisar_si_falla=False`, y usa la ruta que
+    devuelve (la nueva si el renombre salió bien, la original si no)
+    como el vínculo final — si el renombre falla por lo que sea (ya
+    existe un archivo con ese nombre, permisos), el vínculo se hace
+    igual con la ruta ORIGINAL, nunca se bloquea por un problema de
+    nombre. "✏ Tomar el nombre" sigue disponible por separado en el
+    menú contextual, para el caso de querer renombrar sin vincular
+    todavía (ej. mientras se decide entre varios candidatos).
+
+    Probado extendiendo `test_dialogo_vincular_archivo.py`: Vincular
+    sobre un candidato real en disco confirma que el archivo queda
+    renombrado al título del registro (extensión real preservada) y
+    que la ruta devuelta es la nueva; un caso de colisión (ya existe
+    un archivo con el nombre destino) confirma que Vincular sigue
+    funcionando igual, usando la ruta ORIGINAL sin romperse — + suite
+    de regresión completa sin fallos nuevos (mismos 7 fallos
+    preexistentes de siempre: `test_audio_only_y_buffer.py`,
+    `test_confirmaciones.py`, `test_fade_in_declick_v1.py`,
+    `test_log_git.py`, `test_ronda_ajustes_dinesat2.py`,
+    `test_ronda_dinesat3.py`, `test_ventana3.py`) + smoke test de
+    arranque limpio. Falta que Santiago confirme en la práctica que
+    vincular un archivo perdido deja el nombre del archivo en disco
+    igual al título que tiene registrado, sin tener que hacer el paso
+    de "Tomar el nombre" por separado.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
