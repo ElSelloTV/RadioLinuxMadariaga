@@ -59,7 +59,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidget,
     QTreeWidgetItem, QPushButton, QFileDialog, QSplitter, QLineEdit,
     QMessageBox, QInputDialog, QMenu, QAbstractItemView, QApplication,
-    QLabel,
+    QDialog,
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QProcess, QTimer
 from PySide6.QtGui import QColor, QBrush, QDesktopServices, QFont
@@ -76,7 +76,7 @@ from gui.dialogo_vigencia import DialogoVigencia
 from gui.estado_ui import guardar_columnas, restaurar_columnas
 from core.analizador_audio import analizar_audio
 from core.audio_engine import obtener_duracion_formateada
-from core import descargador_youtube
+from core.buscador_duplicados import buscar_grupos_duplicados
 from config.settings import (
     cargar_configuracion, cargar_biblioteca, guardar_biblioteca, tolerancia_silencio_para_genero,
 )
@@ -325,25 +325,25 @@ class VentanaExplorador(QWidget):
         self.slider_preview.sliderReleased.connect(self._on_slider_preview_soltado)
         layout_archivos.addWidget(self.slider_preview)
 
-        # --- Descarga de YouTube (pedido explícito, pensado como
-        # "módulo" autocontenido: solo toca este archivo y
-        # core/descargador_youtube.py, nunca el resto del programa) ---
-        grupo_youtube = QGroupBox("⬇ Descargar de YouTube")
-        layout_youtube = QVBoxLayout(grupo_youtube)
-        fila_url = QHBoxLayout()
-        self.txt_url_youtube = QLineEdit()
-        self.txt_url_youtube.setPlaceholderText("Pegá acá el enlace de YouTube (video o playlist)...")
-        self.txt_url_youtube.returnPressed.connect(self._descargar_de_youtube)
-        self.btn_descargar_youtube = QPushButton("⬇ Descargar")
-        self.btn_descargar_youtube.setProperty("class", "btnCompacto")
-        self.btn_descargar_youtube.clicked.connect(self._descargar_de_youtube)
-        fila_url.addWidget(self.txt_url_youtube)
-        fila_url.addWidget(self.btn_descargar_youtube)
-        layout_youtube.addLayout(fila_url)
-        self.lbl_estado_youtube = QLabel("")
-        self.lbl_estado_youtube.setStyleSheet("color: #999; font-size: 8pt;")
-        layout_youtube.addWidget(self.lbl_estado_youtube)
-        layout_archivos.addWidget(grupo_youtube)
+        # --- Herramientas: Bays (grabador/editor externo ya instalado
+        # en la PC, pedido explícito -- reemplaza a la descarga de
+        # YouTube, que se sacó del todo) + Buscar duplicados ---
+        grupo_herramientas = QGroupBox("🧰 Herramientas")
+        layout_herramientas = QHBoxLayout(grupo_herramientas)
+        self.btn_abrir_bays = QPushButton("🎙 Bays")
+        self.btn_abrir_bays.setToolTip("Abrir el comando \"bays\" (ya instalado en la PC)")
+        self.btn_abrir_bays.setProperty("class", "btnCompacto")
+        self.btn_abrir_bays.clicked.connect(self._abrir_bays)
+        self.btn_buscar_duplicados_avanzado = QPushButton("🧩 Buscar duplicados")
+        self.btn_buscar_duplicados_avanzado.setToolTip(
+            "Buscar archivos duplicados (nombre parecido + duración/tamaño) "
+            "en toda la biblioteca o en una categoría puntual"
+        )
+        self.btn_buscar_duplicados_avanzado.setProperty("class", "btnCompacto")
+        self.btn_buscar_duplicados_avanzado.clicked.connect(self._buscar_duplicados_avanzado)
+        layout_herramientas.addWidget(self.btn_abrir_bays)
+        layout_herramientas.addWidget(self.btn_buscar_duplicados_avanzado)
+        layout_archivos.addWidget(grupo_herramientas)
 
         self.splitter.addWidget(panel_categorias)
         self.splitter.addWidget(panel_archivos)
@@ -1097,129 +1097,204 @@ class VentanaExplorador(QWidget):
         self.archivo_agregado.emit(f"{len(rutas)} archivos")
 
     # ------------------------------------------------------------------
-    # Descarga de YouTube (pedido explícito, "módulo" autocontenido:
-    # core/descargador_youtube.py hace el trabajo pesado sin Qt, acá
-    # solo se arma la UI y se da de alta lo que devuelve).
+    # "Bays" (pedido explícito, reemplaza a la descarga de YouTube):
+    # solo abre el comando externo, ya instalado en la PC -- ningún
+    # otro tipo de integración con el programa.
     # ------------------------------------------------------------------
-    def _descargar_de_youtube(self):
-        url = self.txt_url_youtube.text().strip()
-        if not url:
-            return
+    COMANDO_BAYS = "bays"
 
-        if not descargador_youtube.es_url_youtube(url):
-            self.lbl_estado_youtube.setStyleSheet("color: #e57373; font-size: 8pt;")
-            self.lbl_estado_youtube.setText(
-                "⚠ Solo se aceptan enlaces de YouTube (youtube.com o youtu.be)."
+    def _abrir_bays(self):
+        ruta_ejecutable = shutil.which(self.COMANDO_BAYS)
+        if not ruta_ejecutable:
+            QMessageBox.warning(
+                self, "Bays",
+                f"No se encontró el comando \"{self.COMANDO_BAYS}\" en el sistema.",
             )
             return
+        QProcess.startDetached(ruta_ejecutable, [])
 
-        config = cargar_configuracion()
-        carpeta_base = config["rutas"]["biblioteca_musical"]
-        tolerancia = tolerancia_silencio_para_genero(config, "Musica")
-        umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
+    # ------------------------------------------------------------------
+    # Buscador de duplicados AVANZADO (pedido explícito: coincidencia
+    # aproximada en 3 niveles de prioridad -- ver
+    # core/buscador_duplicados.py y gui/dialogo_buscar_duplicados_avanzado.py).
+    # Primero pregunta el ALCANCE (toda la biblioteca, o una categoría
+    # puntual); si es una categoría, ofrece además el "modo automático
+    # en masa" como bonus (pedido explícito: solo ahí, no para toda la
+    # biblioteca de una).
+    # ------------------------------------------------------------------
+    def _buscar_duplicados_avanzado(self):
+        alcance = self._preguntar_alcance_duplicados()
+        if alcance == "cancelar":
+            return
 
-        self.lbl_estado_youtube.setStyleSheet("color: #999; font-size: 8pt;")
-        self.btn_descargar_youtube.setEnabled(False)
-        self.txt_url_youtube.setEnabled(False)
+        item_categoria = None
+        modo_masa = False
+        if alcance == "categoria":
+            from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
+            dialogo_cat = DialogoSeleccionarCategoria(
+                self.tree_categorias, titulo="Elegir categoría para buscar duplicados", parent=self,
+            )
+            if dialogo_cat.exec() != QDialog.DialogCode.Accepted:
+                return
+            ruta_elegida = dialogo_cat.ruta_elegida()
+            if not ruta_elegida:
+                return
+            item_categoria = self.buscar_categoria_por_ruta(ruta_elegida)
+            if item_categoria is None:
+                return
+            modo_masa = self._preguntar_modo_masa()
+
+        self.solicitud_preload.emit("Buscando duplicados...")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-
-        def _progreso(texto: str):
-            self.lbl_estado_youtube.setText(texto)
-            QApplication.processEvents()
-
-        self.lbl_estado_youtube.setText("Analizando enlace...")
-        QApplication.processEvents()
         try:
-            exito, mensaje, resultado = descargador_youtube.descargar(
-                url, carpeta_base,
-                tolerancia_silencio_segundos=tolerancia,
-                umbral_silencio_dbfs=umbral_silencio,
-                callback_progreso=_progreso,
-            )
+            grupos = self.buscar_duplicados_avanzado(item_categoria)
         finally:
             QApplication.restoreOverrideCursor()
-            self.btn_descargar_youtube.setEnabled(True)
-            self.txt_url_youtube.setEnabled(True)
 
-        if not exito:
-            self.lbl_estado_youtube.setText("")
-            QMessageBox.warning(self, "Descargar de YouTube", mensaje)
+        if not grupos:
+            QMessageBox.information(
+                self, "Buscar duplicados",
+                "No se encontraron duplicados con los criterios de coincidencia "
+                "(nombre parecido + duración/tamaño).",
+            )
             return
 
-        self.lbl_estado_youtube.setText("")
-        self.txt_url_youtube.clear()
-        self._dar_de_alta_descarga_youtube(resultado)
-
-    def _dar_de_alta_descarga_youtube(self, resultado: dict):
-        """Sube a la biblioteca lo que bajó `descargador_youtube.descargar()`.
-        Pedido explícito: SIEMPRE aterriza en la categoría "Descargas YT"
-        (subcategoría con el título de la playlist si corresponde) —
-        nunca se elige/adivina la categoría real, eso queda a mano del
-        operador arrastrándolo después (ver el aviso de abajo)."""
-        if resultado["es_playlist"]:
-            ruta_categoria = ["Descargas YT", resultado["titulo_playlist"]]
-        else:
-            ruta_categoria = ["Descargas YT"]
-
-        item_categoria = self._obtener_o_crear_categoria_por_ruta(ruta_categoria)
-
-        registros = item_categoria.data(0, ROL_ARCHIVOS) or []
-        siguiente_numero = len(registros) + 1
-        prefijo = GENERO_PREFIJOS_CODIGO.get("Musica", "MUS")
-
-        for archivo in resultado["archivos"]:
-            registro = {
-                "titulo": archivo["titulo"],
-                "artista": "",
-                "genero": "Musica",
-                "codigo": f"{prefijo}{siguiente_numero:05d}",
-                "ruta": archivo["ruta"],
-                "duracion": archivo["duracion"],
-                "tamaño_bytes": self._tamano_bytes(archivo["ruta"]),
-                "punto_inicio_ms": archivo["punto_inicio_ms"],
-                "punto_fin_ms": archivo["punto_fin_ms"],
-                "ganancia_db": archivo["ganancia_db"],
-                "analizado": archivo["analizado"],
-                "fecha_inicio": None,
-                "fecha_fin": None,
-            }
-            registros.append(registro)
-            siguiente_numero += 1
-
-        item_categoria.setData(0, ROL_ARCHIVOS, registros)
-        if item_categoria is self._categoria_actual() and not self._en_busqueda:
-            self._on_categoria_seleccionada(item_categoria, None)
-
-        self._guardar_biblioteca_debounced()
-        self.archivo_agregado.emit(f"{len(resultado['archivos'])} descarga(s) de YouTube")
-
-        nombre_categoria = " > ".join(ruta_categoria)
-        QMessageBox.information(
-            self, "Descarga completa",
-            f"Se descargaron {len(resultado['archivos'])} archivo(s) a la categoría "
-            f"\"{nombre_categoria}\".\n\n"
-            "Quedaron ahí en espera — arrastralos a la categoría que "
-            "corresponda cuando quieras.",
+        audio_cfg = cargar_configuracion()["audio"]
+        id_dispositivo_preescucha = (
+            audio_cfg["dispositivo_preescucha"] if audio_cfg["dispositivo_preescucha"] != "default" else None
         )
 
-    def _obtener_o_crear_categoria_por_ruta(self, ruta_nombres: list) -> QTreeWidgetItem:
-        """Como `buscar_categoria_por_ruta()`, pero CREA los tramos que
-        falten en vez de devolver None -- usado por la descarga de
-        YouTube para asegurar que "Descargas YT" (y la subcategoría de
-        la playlist, si aplica) existan siempre."""
-        item_padre = None
-        for nombre in ruta_nombres:
-            cantidad = item_padre.childCount() if item_padre else self.tree_categorias.topLevelItemCount()
-            candidato = None
-            for i in range(cantidad):
-                item = item_padre.child(i) if item_padre else self.tree_categorias.topLevelItem(i)
-                if item.text(0) == nombre:
-                    candidato = item
-                    break
-            if candidato is None:
-                candidato = self._crear_item_categoria(item_padre, nombre)
-            item_padre = candidato
-        return item_padre
+        if modo_masa:
+            self._ejecutar_modo_masa_duplicados(grupos, id_dispositivo_preescucha)
+        else:
+            self._revisar_grupos_duplicados_uno_por_uno(grupos, id_dispositivo_preescucha)
+
+    def _preguntar_alcance_duplicados(self) -> str:
+        """Extraído en su propio método (mismo criterio que
+        _preguntar_que_hacer_con_archivo_perdido) para poder testear
+        la decisión sin simular un click real. Devuelve "toda" /
+        "categoria" / "cancelar"."""
+        caja = QMessageBox(self)
+        caja.setWindowTitle("Buscar duplicados")
+        caja.setText("¿Sobre qué querés buscar duplicados?")
+        boton_toda = caja.addButton("Toda la base de datos", QMessageBox.ButtonRole.AcceptRole)
+        boton_categoria = caja.addButton("Una categoría específica...", QMessageBox.ButtonRole.ActionRole)
+        caja.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
+        caja.setDefaultButton(boton_toda)
+        caja.exec()
+        elegido = caja.clickedButton()
+        if elegido is boton_toda:
+            return "toda"
+        if elegido is boton_categoria:
+            return "categoria"
+        return "cancelar"
+
+    def _preguntar_modo_masa(self) -> bool:
+        """Bonus, pedido explícito: SOLO se ofrece tras elegir una
+        categoría específica."""
+        respuesta = QMessageBox.question(
+            self, "Buscar duplicados",
+            "¿Revisar los duplicados UNO POR UNO, o usar el MODO AUTOMÁTICO EN MASA\n"
+            "(el sistema arma un plan completo con una sugerencia por grupo -- lo\n"
+            "podés aprobar de una, o ajustar algún ítem puntual antes de aplicar)?\n\n"
+            "Sí = modo automático en masa.   No = revisar uno por uno.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        return respuesta == QMessageBox.StandardButton.Yes
+
+    def buscar_duplicados_avanzado(self, item_categoria=None) -> list:
+        """Motor de agrupamiento (core.buscador_duplicados) aplicado
+        sobre el alcance elegido -- `item_categoria=None` recorre TODA
+        la biblioteca; con una categoría, solo ahí (recursivo, incluye
+        subcategorías). Devuelve una lista de grupos:
+        `{"nivel": 1|2|3, "miembros": [(registro, categoria), ...]}`,
+        ya ordenados del nivel más estricto al más laxo."""
+        entradas = []  # list[(registro, categoria)]
+
+        def visitar(item):
+            for registro in (item.data(0, ROL_ARCHIVOS) or []):
+                entradas.append((registro, item))
+
+        if item_categoria is None:
+            self._para_cada_categoria(visitar)
+        else:
+            visitar(item_categoria)
+            self._para_cada_categoria(visitar, item_categoria)
+
+        entradas_para_motor = [
+            {"titulo": r.get("titulo", ""), "duracion": r.get("duracion"), "tamano_bytes": r.get("tamaño_bytes")}
+            for r, _c in entradas
+        ]
+        grupos_indices = buscar_grupos_duplicados(
+            entradas_para_motor, callback_progreso=lambda _h, _t: QApplication.processEvents(),
+        )
+
+        return [
+            {"nivel": grupo["nivel"], "miembros": [entradas[i] for i in grupo["indices"]]}
+            for grupo in grupos_indices
+        ]
+
+    def _revisar_grupos_duplicados_uno_por_uno(self, grupos: list, id_dispositivo_preescucha):
+        from gui.dialogo_buscar_duplicados_avanzado import DialogoRevisarGrupoDuplicado
+
+        total_grupos = len(grupos)
+        grupos_con_cambios = 0
+        grupos_omitidos = 0
+        archivos_eliminados = 0
+
+        for indice, grupo in enumerate(grupos, start=1):
+            miembros = grupo["miembros"]
+            dialogo = DialogoRevisarGrupoDuplicado(
+                nivel=grupo["nivel"], miembros=miembros, resolver_ruta_categoria=self.ruta_de_categoria,
+                id_dispositivo_preescucha=id_dispositivo_preescucha,
+                indice_grupo=indice, total_grupos=total_grupos, parent=self,
+            )
+            codigo = dialogo.exec()
+            if codigo == DialogoRevisarGrupoDuplicado.SALTAR:
+                grupos_omitidos += 1
+                continue
+            if codigo != DialogoRevisarGrupoDuplicado.DialogCode.Accepted:
+                break  # Cancelar corta TODA la revisión, no solo este grupo.
+
+            indices_a_eliminar = dialogo.indices_a_eliminar()
+            if not indices_a_eliminar:
+                continue
+            grupos_con_cambios += 1
+            for i in indices_a_eliminar:
+                registro, categoria = miembros[i]
+                if self.eliminar_registro_de_categoria(registro, categoria):
+                    archivos_eliminados += 1
+
+        QMessageBox.information(
+            self, "Buscar duplicados -- reporte",
+            f"Revisión terminada.\n\n"
+            f"Grupos con cambios: {grupos_con_cambios} de {total_grupos}\n"
+            f"Grupos omitidos: {grupos_omitidos}\n"
+            f"Archivos eliminados de la biblioteca: {archivos_eliminados}",
+        )
+
+    def _ejecutar_modo_masa_duplicados(self, grupos: list, id_dispositivo_preescucha):
+        from gui.dialogo_buscar_duplicados_avanzado import DialogoPlanMasivoDuplicados
+
+        dialogo = DialogoPlanMasivoDuplicados(
+            grupos=grupos, resolver_ruta_categoria=self.ruta_de_categoria,
+            id_dispositivo_preescucha=id_dispositivo_preescucha, parent=self,
+        )
+        if dialogo.exec() != DialogoPlanMasivoDuplicados.DialogCode.Accepted:
+            return
+
+        plan = dialogo.plan_aprobado()
+        archivos_eliminados = 0
+        for registro, categoria in plan:
+            if self.eliminar_registro_de_categoria(registro, categoria):
+                archivos_eliminados += 1
+
+        QMessageBox.information(
+            self, "Buscar duplicados -- reporte",
+            f"Plan aplicado.\n\n"
+            f"Grupos procesados: {len(grupos)}\n"
+            f"Archivos eliminados de la biblioteca: {archivos_eliminados}",
+        )
 
     # ------------------------------------------------------------------
     # Reemplazar / Eliminar (Eliminar admite selección múltiple)

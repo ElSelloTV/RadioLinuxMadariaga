@@ -8293,6 +8293,171 @@ todo el resto.
     edición masiva de Información/Exportar/Vigencia se siente natural
     con selección múltiple real, y que "Editar información" en lote
     (con la categoría tildada) mueve todo lo esperado sin sorpresas.
+86. ~~Se saca la descarga de YouTube (reemplazada por un botón "Bays")
+    + buscador de duplicados AVANZADO con coincidencia aproximada en 3
+    niveles de prioridad~~ — pedido explícito, dos partes en el mismo
+    mensaje ("estamos casi sobre el final"):
+
+    **a) YouTube afuera, botón "Bays" en su lugar**: `core/
+    descargador_youtube.py` eliminado por completo (el módulo de
+    `yt-dlp`, ronda 53) junto con toda su UI en Ventana 3 (el
+    `QGroupBox` "⬇ Descargar de YouTube", el campo de URL, y los
+    métodos `_descargar_de_youtube()`/`_dar_de_alta_descarga_youtube()`/
+    `_obtener_o_crear_categoria_por_ruta()`) y la dependencia `yt-dlp`
+    de `requirements.txt`. En su lugar, un `QGroupBox` nuevo
+    "🧰 Herramientas" con dos botones: **"🎙 Bays"**
+    (`VentanaExplorador._abrir_bays()`) — mismo patrón ya usado para
+    `mhwaveedit`/los gestores de archivos con selección (`shutil.which`
+    + `QProcess.startDetached`, sin ningún argumento) — solo lanza el
+    comando `bays` ya instalado en la PC, sin ninguna otra integración
+    con el programa; si no está instalado, avisa con un mensaje claro
+    en vez de fallar en silencio. Y **"🧩 Buscar duplicados"** (ver
+    abajo). El buscador SIMPLE de criterios exactos combinables
+    (`gui/dialogo_duplicados.py`, ronda 83, accesible desde
+    Configuración → Diagnóstico) NO se tocó — sigue existiendo como
+    una opción más liviana, en paralelo al nuevo.
+
+    **b) Buscador de duplicados AVANZADO — coincidencia APROXIMADA en
+    3 niveles de prioridad** (pedido explícito, con las reglas exactas
+    dadas por Santiago): a diferencia del buscador simple (coincidencia
+    exacta por criterios combinables), este evalúa cada PAR de
+    registros contra 3 niveles, del más estricto al más laxo, y se
+    queda con el MEJOR que cumplan (nunca los evalúa en más de un
+    nivel a la vez):
+    - **Nivel 1**: nombre 100% + duración 100% + tamaño 100%.
+    - **Nivel 2**: nombre 80%+ (similitud de texto) + duración 100%
+      (exacta).
+    - **Nivel 3**: nombre 50%+ (similitud de texto) + duración 90%+
+      (similitud, no exacta).
+
+    **Motor puro, sin Qt** (`core/buscador_duplicados.py`, mismo
+    espíritu que `core/musicalizador.py`/`core/hth.py`):
+    `similitud_nombres()` usa `difflib.SequenceMatcher` sobre el
+    título normalizado (minúsculas, espacios colapsados);
+    `duracion_a_segundos()`/`similitud_duracion()` parsean "HH:MM:SS"
+    y comparan por proporción menor/mayor; `nivel_de_coincidencia()`
+    aplica las 3 reglas en orden. `buscar_grupos_duplicados()` agrupa
+    con **Union-Find**: dos registros que matchean en CUALQUIER nivel
+    quedan en el MISMO grupo — transitivamente (A~B~C aunque A y C no
+    matcheen directo entre sí), soportando de una el pedido explícito
+    "pueden existir más de 2 archivos duplicados, la lista debe ser
+    completa". `sugerir_indice_a_mantener()` es la heurística del modo
+    en masa (ver abajo): prioriza el miembro con ruta vinculada +
+    artista + tamaño cacheado (el más "completo"), con el primero como
+    desempate estable.
+
+    **Rendimiento — pensado para bibliotecas grandes desde el diseño**
+    (ver rondas 76-78 de rendimiento con ~10-12 mil registros): en vez
+    de comparar TODOS los pares (O(n²), inaceptable en el hardware
+    modesto de Santiago), se ordenan los registros por duración y cada
+    uno se compara solo contra una VENTANA de vecinos dentro del 90%
+    de similitud de duración (el caso más laxo, nivel 3 — los niveles
+    1 y 2, que exigen duración EXACTA, son un subconjunto de esa misma
+    ventana, así que un solo recorrido cubre los 3). Dentro de la
+    ventana, `similitud_nombres()` prueba DOS cotas superiores baratas
+    antes de pagar el costo completo de `SequenceMatcher.ratio()`
+    (cuadrático en el peor caso): una por longitud (O(1), sin
+    construir nada) y `real_quick_ratio()` (O(n)) — si ninguna de las
+    dos llega al umbral más bajo (0.5), la similitud real tampoco
+    puede llegar (son cotas superiores garantizadas), así que se
+    descarta el par sin calcular el ratio exacto. **Limitación de
+    rendimiento CONOCIDA y documentada a propósito** (en el docstring
+    del módulo): una biblioteca con MUCHOS temas agrupados en un rango
+    de duración chico (frecuente en una radio real: cientos de
+    canciones "de 3 minutos más o menos") puede tener una ventana
+    ancha en esa zona y tardar un rato en esa franja — se priorizó
+    CORRECCIÓN sobre velocidad extrema en el peor caso, ya que es una
+    acción MANUAL y ocasional (mismo criterio que "Reanalizar
+    biblioteca"), con cursor de espera y un `callback_progreso`
+    opcional (`buscar_grupos_duplicados(entradas, callback_progreso=...)`)
+    que la GUI usa para llamar `QApplication.processEvents()` cada 20
+    ítems, así la ventana nunca se siente "colgada" mientras corre.
+
+    **Flujo en la GUI** (`gui/dialogo_buscar_duplicados_avanzado.py` +
+    orquestación en `VentanaExplorador`): el botón "🧩 Buscar
+    duplicados" primero pregunta el ALCANCE
+    (`_preguntar_alcance_duplicados()`, `QMessageBox` de 3 botones
+    propios, mismo patrón que `_preguntar_que_hacer_con_archivo_perdido`)
+    — **toda la base de datos** o **una categoría específica**
+    (`gui/dialogo_seleccionar_categoria.py`, ya existente). Con una
+    categoría elegida, se ofrece además el **bonus del modo automático
+    en masa** (pedido explícito: "SOLO si eligió una categoría
+    específica", nunca para toda la base de una) vía
+    `_preguntar_modo_masa()`. `VentanaExplorador.
+    buscar_duplicados_avanzado(item_categoria=None)` recorre el
+    alcance elegido (toda la biblioteca vía `_para_cada_categoria()`,
+    o una categoría + sus subcategorías, mismo patrón ya usado por
+    `listar_registros_de_categoria()`) y arma los grupos con el motor.
+    - **Revisión UNO POR UNO** (`DialogoRevisarGrupoDuplicado`,
+      siempre disponible): un diálogo por grupo, secuencial — muestra
+      TODOS los miembros con checkbox "Eliminar" (pre-tildado según
+      `sugerir_indice_a_mantener()`, el resto queda implícitamente
+      "mantenido"), botón **▶ Previo** (SIEMPRE la salida de
+      Preescucha, nunca la Master que va al aire — mismo criterio que
+      todo el resto de la app, `MotorAudio(id, aplicar_procesador=False)`),
+      **✅ Aplicar y seguir** (con aviso si se tildó TODO el grupo,
+      "no quedaría ninguno"), **⏭ Omitir este grupo** (código de
+      resultado propio `SALTAR=2`, mismo patrón que
+      `DialogoVincularArchivo`), y **Cancelar** (corta TODA la
+      revisión, no solo ese grupo). `VentanaExplorador.
+      _revisar_grupos_duplicados_uno_por_uno()` es el driver: itera
+      los grupos, aplica lo tildado con `eliminar_registro_de_categoria()`
+      (mismo método ya existente del buscador simple — "Eliminar"
+      borra el REGISTRO, nunca el archivo físico, mismo criterio
+      documentado desde la ronda 83) y termina con un reporte
+      (`QMessageBox.information`: grupos con cambios, omitidos,
+      archivos eliminados).
+    - **MODO AUTOMÁTICO EN MASA** (`DialogoPlanMasivoDuplicados`,
+      bonus solo-categoría): arma un PLAN completo de una — TODOS los
+      grupos juntos en un árbol (nodo = grupo, hijos = miembros), cada
+      uno con la MISMA sugerencia por defecto — y dos botones: **✅
+      Aprobar plan completo** (aplica TODO lo tildado de una sola vez)
+      o simplemente tildar/destildar cualquier ítem puntual ANTES de
+      aprobar (satisface "drill down to edit plan per-item" sin una UI
+      de "modo edición" separada — el propio árbol de checkboxes ES la
+      edición). Mismo aviso de "grupo que quedaría vacío" que el flujo
+      uno-por-uno, pero juntando TODOS los grupos afectados en un solo
+      mensaje antes de aprobar. `VentanaExplorador.
+      _ejecutar_modo_masa_duplicados()` aplica el plan aprobado y
+      muestra el mismo tipo de reporte final.
+
+    Probado con `test_buscador_duplicados_motor.py` (nuevo, motor
+    puro: normalización/similitud de nombres y duración, los 3 niveles
+    evaluados en orden correcto incluyendo el caso "duración exacta
+    pero sin tamaño en ninguno de los dos, no puede ser nivel 1",
+    agrupamiento por Union-Find transitivo con 3+ miembros y el nivel
+    reportado es el MEJOR del grupo, `sugerir_indice_a_mantener()`, y
+    2 pruebas de rendimiento — una con datos "realistas" de biblioteca
+    de radio y otra deliberadamente adversarial — confirmando que el
+    motor queda ACOTADO incluso en el peor caso, no que sea
+    instantáneo) + `test_dialogo_buscar_duplicados_avanzado.py` (nuevo,
+    construcción real de los 2 diálogos: checkboxes con la sugerencia
+    correcta por defecto, `indices_a_eliminar()`/`plan_aprobado()`
+    reflejan lo tildado, detección de "grupo que quedaría vacío",
+    Previo/Detener degradan limpio sin libVLC) +
+    `test_bays_y_duplicados_avanzado.py` (nuevo, integración GUI
+    completa: YouTube 100% ausente —módulo, UI, dependencia—, "Bays"
+    lanza el proceso encontrado y avisa si no está, el motor aplicado
+    sobre el árbol real encuentra duplicados aunque estén en
+    categorías/subcategorías distintas, alcance "toda"/categoría
+    puntual, los 3 desenlaces del flujo uno-por-uno —Aplicar/Omitir/
+    Cancelar—, el modo masa —Aprobar/Cancelar—, y el entry point
+    `_buscar_duplicados_avanzado()` despachando al flujo correcto
+    según la elección de alcance) + suite de regresión completa sin
+    fallos nuevos (mismos 7 fallos preexistentes de siempre:
+    `test_audio_only_y_buffer.py`, `test_confirmaciones.py`,
+    `test_fade_in_declick_v1.py`, `test_log_git.py`,
+    `test_ronda_ajustes_dinesat2.py`, `test_ronda_dinesat3.py`,
+    `test_ventana3.py`) + smoke test de arranque limpio. **Sigue sin
+    poder confirmarse con hardware/biblioteca real**: falta que
+    Santiago confirme que "Bays" abre el programa esperado, y que
+    pruebe el buscador de duplicados con su biblioteca real — en
+    particular (1) si el nivel 3 (50% nombre + 90% duración) resulta
+    demasiado laxo o demasiado estricto con sus nombres de archivo
+    reales, (2) si el modo automático en masa sobre una categoría
+    grande tarda un tiempo razonable, y (3) si la sugerencia por
+    defecto de qué mantener (el más "completo": con ruta+artista+
+    tamaño) coincide con su propio criterio la mayoría de las veces.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
