@@ -1312,7 +1312,10 @@ class VentanaExplorador(QWidget):
         registro = item.data(0, ROL_REGISTRO)
         if not registro:
             return
-        categoria = self._buscar_categoria_de_ruta(registro.get("ruta"))
+        # ROL_CATEGORIA_ORIGEN, no _buscar_categoria_de_ruta -- mismo
+        # criterio ya corregido en _eliminar_archivo() para no
+        # depender de una `ruta` no vacía (ver "Cosas ya resueltas").
+        categoria = item.data(0, ROL_CATEGORIA_ORIGEN)
         if categoria is None:
             QMessageBox.warning(self, "Vigencia", "No se encontró la categoría de este archivo.")
             return
@@ -1324,11 +1327,52 @@ class VentanaExplorador(QWidget):
             return
 
         fecha_inicio, fecha_fin = dialogo.resultado()
-        registro["fecha_inicio"] = fecha_inicio
-        registro["fecha_fin"] = fecha_fin
-        item.setData(0, ROL_REGISTRO, registro)
-        self._sincronizar_registro_en_categoria(categoria, registro.get("ruta"), registro)
+        registros = categoria.data(0, ROL_ARCHIVOS) or []
+        indice = self._buscar_indice_registro(registros, registro)
+        if indice < 0:
+            return
+        registros[indice]["fecha_inicio"] = fecha_inicio
+        registros[indice]["fecha_fin"] = fecha_fin
+        categoria.setData(0, ROL_ARCHIVOS, registros)
+        item.setData(0, ROL_REGISTRO, registros[indice])
         self._guardar_biblioteca_debounced()
+
+    def _editar_vigencia_masiva(self, items: list):
+        """Pedido explícito ("selección múltiple... Vigencia: establecer
+        una vigencia general para todos"): UN solo diálogo de Vigencia
+        (mismo DialogoVigencia de siempre, ya genérico) cuyo resultado
+        se aplica IGUAL a todos los seleccionados de una -- a diferencia
+        de "Editar información" en lote, acá no hace falta un checkbox
+        "cambiar o no": el pedido es fijar la MISMA vigencia para el
+        lote entero, incluyendo dejarla sin restricción si no se tilda
+        ninguna fecha."""
+        if not items:
+            return
+        dialogo = DialogoVigencia(f"{len(items)} archivos seleccionados", None, None, parent=self)
+        if dialogo.exec() != DialogoVigencia.DialogCode.Accepted:
+            return
+        fecha_inicio, fecha_fin = dialogo.resultado()
+
+        tocados = 0
+        for item in list(items):
+            registro = item.data(0, ROL_REGISTRO)
+            if not registro:
+                continue
+            categoria = item.data(0, ROL_CATEGORIA_ORIGEN)
+            if categoria is None:
+                continue
+            registros = categoria.data(0, ROL_ARCHIVOS) or []
+            indice = self._buscar_indice_registro(registros, registro)
+            if indice < 0:
+                continue
+            registros[indice]["fecha_inicio"] = fecha_inicio
+            registros[indice]["fecha_fin"] = fecha_fin
+            categoria.setData(0, ROL_ARCHIVOS, registros)
+            item.setData(0, ROL_REGISTRO, registros[indice])
+            tocados += 1
+
+        self._guardar_biblioteca_debounced()
+        QMessageBox.information(self, "Vigencia", f"Vigencia actualizada en {tocados} archivo(s).")
 
     def _editar_informacion_archivo(self, item=None):
         """Pedido explícito: editar título/artista/género/categoría de
@@ -1343,8 +1387,10 @@ class VentanaExplorador(QWidget):
         registro = item.data(0, ROL_REGISTRO)
         if not registro:
             return
-        ruta = registro.get("ruta")
-        categoria_actual = self._buscar_categoria_de_ruta(ruta)
+        # ROL_CATEGORIA_ORIGEN, no _buscar_categoria_de_ruta -- mismo
+        # criterio ya corregido en _eliminar_archivo() para no
+        # depender de una `ruta` no vacía (ver "Cosas ya resueltas").
+        categoria_actual = item.data(0, ROL_CATEGORIA_ORIGEN)
         if categoria_actual is None:
             QMessageBox.warning(self, "Editar información", "No se encontró la categoría de este archivo.")
             return
@@ -1372,23 +1418,28 @@ class VentanaExplorador(QWidget):
                 if respuesta != QMessageBox.StandardButton.Yes:
                     return
 
-        registro["titulo"] = resultado["titulo"]
-        registro["artista"] = resultado["artista"]
-        registro["genero"] = resultado["genero"]
+        registros_actuales = categoria_actual.data(0, ROL_ARCHIVOS) or []
+        indice = self._buscar_indice_registro(registros_actuales, registro)
+        if indice < 0:
+            return
+        registro_vivo = registros_actuales[indice]
+        registro_vivo["titulo"] = resultado["titulo"]
+        registro_vivo["artista"] = resultado["artista"]
+        registro_vivo["genero"] = resultado["genero"]
 
         if cambia_categoria:
             # Mismo patrón que _mover_archivos_a_categoria: se saca de
             # la categoría vieja y se agrega a la nueva, código y
-            # demás metadata SIN tocar — comparar por ruta, no por
-            # identidad (ver nota en _sincronizar_registro_en_categoria).
-            registros_origen = [r for r in (categoria_actual.data(0, ROL_ARCHIVOS) or []) if r.get("ruta") != ruta]
-            categoria_actual.setData(0, ROL_ARCHIVOS, registros_origen)
+            # demás metadata SIN tocar.
+            registros_actuales.pop(indice)
+            categoria_actual.setData(0, ROL_ARCHIVOS, registros_actuales)
             registros_destino = categoria_nueva.data(0, ROL_ARCHIVOS) or []
-            registros_destino.append(registro)
+            registros_destino.append(registro_vivo)
             categoria_nueva.setData(0, ROL_ARCHIVOS, registros_destino)
         else:
-            self._sincronizar_registro_en_categoria(categoria_actual, ruta, registro)
+            categoria_actual.setData(0, ROL_ARCHIVOS, registros_actuales)
 
+        item.setData(0, ROL_REGISTRO, registro_vivo)
         self._guardar_biblioteca_debounced()
 
         if self._en_busqueda:
@@ -1397,7 +1448,79 @@ class VentanaExplorador(QWidget):
             self._on_categoria_seleccionada(self._categoria_actual(), None)
 
         if cambia_categoria:
-            self.archivo_movido.emit(registro["titulo"], categoria_nueva.text(0))
+            self.archivo_movido.emit(registro_vivo["titulo"], categoria_nueva.text(0))
+
+    def _editar_informacion_masivo(self, items: list):
+        """Pedido explícito ("selección múltiple... Editar Información
+        -- todos, menos el nombre, poder darle la categoría"): un solo
+        diálogo con checkboxes por campo (gui/dialogo_editar_informacion_masivo.py)
+        -- Artista/Género/Categoría, cada uno "cambiar o no tocar" --
+        aplicado a TODOS los seleccionados de una. El título/nombre
+        editorial NUNCA se toca acá (cada archivo conserva el suyo,
+        a diferencia de "Editar información" de un solo archivo)."""
+        if not items:
+            return
+        from gui.dialogo_editar_informacion_masivo import DialogoEditarInformacionMasivo
+        dialogo = DialogoEditarInformacionMasivo(len(items), self.tree_categorias, parent=self)
+        if dialogo.exec() != DialogoEditarInformacionMasivo.DialogCode.Accepted:
+            return
+        cambios = dialogo.resultado()
+        categoria_nueva = cambios["item_categoria"]
+        if cambios["artista"] is None and cambios["genero"] is None and categoria_nueva is None:
+            QMessageBox.information(self, "Editar información", "No se tildó ningún campo para cambiar.")
+            return
+
+        if categoria_nueva is not None:
+            config = cargar_configuracion()
+            if config["general"]["confirmar_antes_de_eliminar"]:
+                respuesta = QMessageBox.question(
+                    self, "Editar información",
+                    f"Además de los demás cambios, esto mueve {len(items)} archivo(s)\n"
+                    f"a la categoría '{categoria_nueva.text(0)}'. ¿Continuar?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if respuesta != QMessageBox.StandardButton.Yes:
+                    return
+
+        tocados = 0
+        for item in list(items):
+            registro = item.data(0, ROL_REGISTRO)
+            if not registro:
+                continue
+            categoria_actual = item.data(0, ROL_CATEGORIA_ORIGEN)
+            if categoria_actual is None:
+                continue
+            registros_actuales = categoria_actual.data(0, ROL_ARCHIVOS) or []
+            indice = self._buscar_indice_registro(registros_actuales, registro)
+            if indice < 0:
+                continue
+            registro_vivo = registros_actuales[indice]
+
+            if cambios["artista"] is not None:
+                registro_vivo["artista"] = cambios["artista"]
+            if cambios["genero"] is not None:
+                registro_vivo["genero"] = cambios["genero"]
+
+            if categoria_nueva is not None and categoria_nueva is not categoria_actual:
+                registros_actuales.pop(indice)
+                categoria_actual.setData(0, ROL_ARCHIVOS, registros_actuales)
+                registros_destino = categoria_nueva.data(0, ROL_ARCHIVOS) or []
+                registros_destino.append(registro_vivo)
+                categoria_nueva.setData(0, ROL_ARCHIVOS, registros_destino)
+            else:
+                categoria_actual.setData(0, ROL_ARCHIVOS, registros_actuales)
+
+            item.setData(0, ROL_REGISTRO, registro_vivo)
+            tocados += 1
+
+        self._guardar_biblioteca_debounced()
+
+        if self._en_busqueda:
+            self._buscar()
+        else:
+            self._on_categoria_seleccionada(self._categoria_actual(), None)
+
+        QMessageBox.information(self, "Editar información", f"Se actualizaron {tocados} de {len(items)} archivo(s).")
 
     @staticmethod
     def _quitar_registro_de_lista(registros: list, registro: dict) -> list:
@@ -1419,6 +1542,29 @@ class VentanaExplorador(QWidget):
             r for r in registros
             if not (not r.get("ruta") and r.get("codigo") == codigo and r.get("titulo") == titulo)
         ]
+
+    @staticmethod
+    def _buscar_indice_registro(registros: list, registro_referencia: dict) -> int:
+        """Índice de `registro_referencia` dentro de `registros`
+        (lista ROL_ARCHIVOS de una categoría) — MISMO criterio de
+        identidad que `_quitar_registro_de_lista` (ruta si la tiene,
+        código+título si no), pero para MUTAR el registro en el lugar
+        en vez de filtrarlo afuera (usado por las ediciones en lote:
+        Información/Vigencia). -1 si no se encuentra. Nunca por
+        identidad de objeto Python -- ver la trampa de PySide6
+        documentada en 'Cosas ya resueltas'."""
+        ruta = registro_referencia.get("ruta") or ""
+        if ruta:
+            for i, r in enumerate(registros):
+                if r.get("ruta") == ruta:
+                    return i
+            return -1
+        codigo = registro_referencia.get("codigo")
+        titulo = registro_referencia.get("titulo")
+        for i, r in enumerate(registros):
+            if not r.get("ruta") and r.get("codigo") == codigo and r.get("titulo") == titulo:
+                return i
+        return -1
 
     def _eliminar_archivo(self):
         items = self.tree_archivos.selectedItems()
@@ -1549,25 +1695,37 @@ class VentanaExplorador(QWidget):
             self.tree_archivos.setCurrentItem(item_bajo_cursor)
             seleccionados = [item_bajo_cursor]
 
+        hay_seleccion_unica = len(seleccionados) == 1
+        hay_seleccion_multiple = len(seleccionados) > 1
+
         menu = QMenu(self)
         accion_importar = menu.addAction("📥 Importar...")
         menu.addSeparator()
-        accion_exportar = menu.addAction("📤 Exportar...")
+        texto_exportar = "📤 Exportar..." if not hay_seleccion_multiple else f"📤 Exportar {len(seleccionados)}..."
+        accion_exportar = menu.addAction(texto_exportar)
         accion_reemplazar = menu.addAction("⟲ Reemplazar...")
-        accion_info = menu.addAction("✏ Editar información...")
+        texto_info = "✏ Editar información..." if not hay_seleccion_multiple else f"✏ Editar información {len(seleccionados)}..."
+        accion_info = menu.addAction(texto_info)
         accion_editar = menu.addAction("🎚 Editar audio")
-        accion_vigencia = menu.addAction("📅 Vigencia...")
+        texto_vigencia = "📅 Vigencia..." if not hay_seleccion_multiple else f"📅 Vigencia {len(seleccionados)}..."
+        accion_vigencia = menu.addAction(texto_vigencia)
         accion_ubicar = menu.addAction("📍 Ubicar")
         menu.addSeparator()
         texto_eliminar = "✕ Eliminar" if len(seleccionados) <= 1 else f"✕ Eliminar {len(seleccionados)}"
         accion_eliminar = menu.addAction(texto_eliminar)
 
-        hay_seleccion_unica = len(seleccionados) == 1
-        accion_exportar.setEnabled(hay_seleccion_unica)
+        # Pedido explícito ("selección múltiple... poder editar
+        # masivamente Editar Información / Exportar / Vigencia"):
+        # estas 3 ahora admiten cualquier cantidad >0 -- Reemplazar,
+        # Editar audio y Ubicar siguen acotadas a UN solo archivo a la
+        # vez (cambiar el archivo de audio, abrir un editor externo, o
+        # buscar un archivo perdido puntual no son operaciones que
+        # tenga sentido aplicar en lote sin ambigüedad).
+        accion_exportar.setEnabled(len(seleccionados) > 0)
         accion_reemplazar.setEnabled(hay_seleccion_unica)
-        accion_info.setEnabled(hay_seleccion_unica)
+        accion_info.setEnabled(len(seleccionados) > 0)
         accion_editar.setEnabled(hay_seleccion_unica)
-        accion_vigencia.setEnabled(hay_seleccion_unica)
+        accion_vigencia.setEnabled(len(seleccionados) > 0)
         accion_ubicar.setEnabled(hay_seleccion_unica)
         accion_eliminar.setEnabled(len(seleccionados) > 0)
 
@@ -1575,38 +1733,64 @@ class VentanaExplorador(QWidget):
         if accion_elegida == accion_importar:
             self._agregar_archivos()
         elif accion_elegida == accion_exportar:
-            self._exportar_archivo(seleccionados[0] if seleccionados else None)
+            self._exportar_archivos(seleccionados)
         elif accion_elegida == accion_reemplazar:
             self._reemplazar_archivo()
         elif accion_elegida == accion_info:
-            self._editar_informacion_archivo(seleccionados[0] if seleccionados else None)
+            if hay_seleccion_multiple:
+                self._editar_informacion_masivo(seleccionados)
+            else:
+                self._editar_informacion_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_editar:
             self._editar_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_vigencia:
-            self._editar_vigencia(seleccionados[0] if seleccionados else None)
+            if hay_seleccion_multiple:
+                self._editar_vigencia_masiva(seleccionados)
+            else:
+                self._editar_vigencia(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_ubicar:
             self._ubicar_archivo(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_eliminar:
             self._eliminar_archivo()
 
-    def _exportar_archivo(self, item):
-        if item is None:
+    def _exportar_archivos(self, items: list):
+        """Exporta uno o varios archivos seleccionados (pedido
+        explícito: "selección múltiple... Exportar, exportar todos
+        los archivos seleccionados") a UNA carpeta elegida una sola
+        vez -- cada archivo se copia con su nombre de archivo real
+        (basename), sin renombrar."""
+        if not items:
             return
-        ruta_origen = item.data(0, Qt.ItemDataRole.UserRole)
-        if not ruta_origen or not os.path.exists(ruta_origen):
-            QMessageBox.warning(self, "Exportar", "No se encontró el archivo fuente.")
+        rutas = [item.data(0, Qt.ItemDataRole.UserRole) for item in items]
+        rutas_validas = [r for r in rutas if r and os.path.exists(r)]
+        if not rutas_validas:
+            QMessageBox.warning(self, "Exportar", "No se encontró ningún archivo fuente.")
             return
 
         carpeta_destino = QFileDialog.getExistingDirectory(self, "Exportar a carpeta", os.path.expanduser("~"))
         if not carpeta_destino:
             return
 
-        destino = os.path.join(carpeta_destino, os.path.basename(ruta_origen))
-        try:
-            shutil.copy2(ruta_origen, destino)
-            QMessageBox.information(self, "Exportar", f"Copiado a:\n{destino}")
-        except OSError as error:
-            QMessageBox.warning(self, "Exportar", f"No se pudo copiar el archivo:\n{error}")
+        copiados = 0
+        errores = []
+        for ruta_origen in rutas_validas:
+            destino = os.path.join(carpeta_destino, os.path.basename(ruta_origen))
+            try:
+                shutil.copy2(ruta_origen, destino)
+                copiados += 1
+            except OSError as error:
+                errores.append(f"{os.path.basename(ruta_origen)}: {error}")
+
+        if len(rutas_validas) == 1 and not errores:
+            QMessageBox.information(self, "Exportar", f"Copiado a:\n{os.path.join(carpeta_destino, os.path.basename(rutas_validas[0]))}")
+            return
+
+        mensaje = f"Copiados {copiados} de {len(rutas_validas)} archivo(s) a:\n{carpeta_destino}"
+        if errores:
+            mensaje += "\n\nErrores:\n" + "\n".join(errores)
+            QMessageBox.warning(self, "Exportar", mensaje)
+        else:
+            QMessageBox.information(self, "Exportar", mensaje)
 
     # Pedido explícito ("editor de audio ultra liviano para acortar y/o
     # edición básica de subir volumen o introducir un fade in/out"):

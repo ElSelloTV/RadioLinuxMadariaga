@@ -8202,6 +8202,98 @@ todo el resto.
     igual al título que tiene registrado, sin tener que hacer el paso
     de "Tomar el nombre" por separado.
 
+85. ~~Ventana 3: edición masiva sobre selección múltiple — Editar
+    información, Exportar, Vigencia (Eliminar ya lo tenía)~~ — pedido
+    explícito: "en la ventana 3, cuando hago selección múltiple, me
+    gustaria poder editar masivamente las siguientes opciones: Editar
+    Información (todos, menos el nombre, poder darle la categoria),
+    Exportar (exportar todos los archivos seleccionados), Vigencia
+    (establecer una vigencia general para todos), Eliminar (Borrar de
+    la base JSON los seleccionados previa confirmación)". De las 4,
+    "Eliminar" ya admitía selección múltiple desde la ronda de
+    persistencia de Ventana 3 (`_eliminar_archivo()`, con una sola
+    confirmación para todo el lote) — se reconfirmó con un test, sin
+    tocar código. Las otras 3 se extendieron esta ronda:
+
+    - **Exportar en lote**: `_exportar_archivo(item)` se reemplazó por
+      `_exportar_archivos(items: list)` — pide la carpeta destino UNA
+      sola vez y copia cada archivo con su nombre real (basename),
+      salteando sin romper el resto los que no tengan archivo (ej. un
+      registro sin vincular) y avisando al final cuántos se copiaron
+      de cuántos, con el detalle de errores si hubo alguno.
+    - **Editar información en lote** (pedido explícito "todos, menos
+      el nombre, poder darle la categoría"): nuevo diálogo
+      `gui/dialogo_editar_informacion_masivo.py` — SIN campo de título
+      (cada archivo conserva el suyo, a propósito), con un checkbox
+      "Cambiar a" por cada campo (Artista/Género/Categoría): sin
+      tildar, ese campo queda intacto en todos los seleccionados;
+      tildado, se aplica el MISMO valor a todos de una (incluido dejar
+      el Artista vacío a propósito, si se tilda con el campo en
+      blanco). Nuevo `VentanaExplorador._editar_informacion_masivo(items)`.
+    - **Vigencia en lote** (pedido explícito "establecer una vigencia
+      general para todos"): reutiliza el mismo `DialogoVigencia` de
+      siempre (ya genérico, sin cambios) — UN solo diálogo, aplicado
+      igual a todos los seleccionados (a diferencia de Información,
+      acá no hace falta un checkbox "cambiar o no": el pedido es fijar
+      la MISMA vigencia para todo el lote, incluyendo dejarla sin
+      restricción si no se tilda ninguna fecha). Nuevo
+      `VentanaExplorador._editar_vigencia_masiva(items)`.
+
+    **Bug real de fondo evitado de raíz en las ediciones nuevas (y
+    corregido de paso en las dos versiones de UN solo archivo que ya
+    existían)**: `_editar_informacion_archivo()`/`_editar_vigencia()`
+    (single-ítem) ubicaban la categoría de un registro con
+    `_buscar_categoria_de_ruta(ruta)` — la MISMA función cuyo problema
+    con `ruta` vacía (archivo nunca vinculado) ya se había corregido
+    para "Eliminar" en la ronda anterior (`ROL_CATEGORIA_ORIGEN`), pero
+    acá había quedado sin tocar. Corregido en las CUATRO funciones
+    (single y masivo, Información y Vigencia) usando siempre
+    `item.data(0, ROL_CATEGORIA_ORIGEN)` — nunca vuelve a fallar
+    silenciosamente ("No se encontró la categoría") sobre un archivo
+    sin vincular. De paso, se agregó `_buscar_indice_registro()`
+    (nuevo, función pura junto a `_quitar_registro_de_lista()`): mismo
+    criterio de identidad (ruta si la tiene, código+título si no) pero
+    para MUTAR un registro en su lugar dentro de la lista viva de la
+    categoría, en vez de filtrarlo afuera — reemplaza a
+    `_sincronizar_registro_en_categoria()` en estos cuatro caminos
+    (esa función seguía comparando solo por ruta, con el mismo
+    problema latente).
+
+    Menú contextual: "📤 Exportar...", "✏ Editar información..." y
+    "📅 Vigencia..." ahora quedan HABILITADAS con cualquier cantidad de
+    seleccionados (antes solo con exactamente 1), con el conteo en el
+    texto ("Exportar 3...", etc.) cuando hay selección múltiple.
+    "⟲ Reemplazar...", "🎚 Editar audio" y "📍 Ubicar" siguen acotadas a
+    UN solo archivo a la vez a propósito — cambiar el archivo de audio,
+    abrir un editor externo, o buscar un archivo perdido puntual no
+    son operaciones que tengan sentido aplicar en lote sin ambigüedad.
+
+    Probado con `test_edicion_masiva_ventana3.py` (nuevo, dedicado, 18
+    verificaciones): Exportar copia los archivos reales y saltea sin
+    romper el que no tiene ruta; Editar información en lote mueve los
+    3 registros a la categoría destino, deja el TÍTULO de cada uno
+    intacto, aplica el artista tildado a los 3 (incluido el que nunca
+    tuvo ruta) y NO toca el género (checkbox sin tildar); Vigencia en
+    lote aplica la misma fecha de inicio/fin a los 3; Eliminar en lote
+    pide confirmación UNA sola vez y saca los 3 de la vista Y de la
+    biblioteca persistida; el menú contextual habilita Exportar/
+    Información/Vigencia y mantiene deshabilitadas Reemplazar/Editar
+    audio/Ubicar con 2+ seleccionados — + actualización de un test
+    preexistente (`test_ronda_hth_update_preload_editar.py`, su ítem
+    de prueba de "Editar información" no traía `ROL_CATEGORIA_ORIGEN`
+    seteado, un requisito nuevo desde la ronda anterior que ese test
+    nunca necesitó hasta ahora — no es una regresión, es el mismo tipo
+    de actualización de fixture ya documentado en rondas previas) +
+    suite de regresión completa sin fallos nuevos (mismos 7 fallos
+    preexistentes de siempre: `test_audio_only_y_buffer.py`,
+    `test_confirmaciones.py`, `test_fade_in_declick_v1.py`,
+    `test_log_git.py`, `test_ronda_ajustes_dinesat2.py`,
+    `test_ronda_dinesat3.py`, `test_ventana3.py`) + smoke test de
+    arranque limpio. Falta que Santiago confirme en la práctica que la
+    edición masiva de Información/Exportar/Vigencia se siente natural
+    con selección múltiple real, y que "Editar información" en lote
+    (con la categoría tildada) mueve todo lo esperado sin sorpresas.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
