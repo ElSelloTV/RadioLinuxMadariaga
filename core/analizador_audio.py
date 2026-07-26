@@ -201,14 +201,40 @@ def verificar_motor_disponible() -> dict:
     Nunca lanza excepción -- degrada a un mensaje claro de qué falta."""
     resultado = {"pydub_ok": False, "ffmpeg_ok": False, "prueba_ok": False, "mensaje": ""}
 
+    # Bug real corregido, encontrado con el log real de Santiago: acá
+    # SOLO se atrapaba `ImportError` y se asumía "pydub no está
+    # instalado" -- pero en Python 3.13+ el módulo `audioop` de la
+    # librería estándar fue ELIMINADO (PEP 594), y pydub (sin
+    # actualizarse desde 2021) todavía depende de él en su propio
+    # `pydub/utils.py`. Con pydub YA instalado pero `audioop`
+    # faltante, `import pydub` igual revienta con un
+    # `ModuleNotFoundError` (subclase de `ImportError`) -- el mensaje
+    # decía "Falta instalar pydub. pip install pydub", mandando a
+    # reinstalar algo que ya estaba instalado y ocultando la causa
+    # real. Corregido distinguiendo los dos casos con
+    # `importlib.util.find_spec()` (confirma si el PAQUETE existe en
+    # disco sin ejecutar su código, así nunca dispara el mismo error
+    # que se está diagnosticando) antes de intentar el `import` real.
+    import importlib.util
+    pydub_instalado_en_disco = importlib.util.find_spec("pydub") is not None
     try:
         import pydub  # noqa: F401
         resultado["pydub_ok"] = True
-    except ImportError:
-        resultado["mensaje"] = (
-            "Falta instalar pydub. Con el entorno virtual activado:\n"
-            "pip install pydub"
-        )
+    except Exception as error:
+        if pydub_instalado_en_disco:
+            resultado["mensaje"] = (
+                f"pydub está instalado, pero falló al importarlo: {error}\n\n"
+                "Causa más probable en Python 3.13 o más nuevo: el módulo "
+                "\"audioop\" de la librería estándar fue ELIMINADO de Python "
+                "(PEP 594) y pydub todavía depende de él. Instalá el "
+                "reemplazo (con el entorno virtual activado):\n"
+                "pip install audioop-lts"
+            )
+        else:
+            resultado["mensaje"] = (
+                "Falta instalar pydub. Con el entorno virtual activado:\n"
+                "pip install pydub"
+            )
         return resultado
 
     import shutil

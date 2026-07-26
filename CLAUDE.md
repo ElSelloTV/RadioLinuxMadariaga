@@ -8598,6 +8598,77 @@ todo el resto.
     da — recién con ese dato real se sabe si la causa era esta, y si
     corregirla (instalar lo que falte) resuelve el recorte de silencio
     de una vez.
+88. ~~LA CAUSA DE FONDO real del "Falta instalar pydub" que no se
+    iba: Python 3.13 sacó el módulo `audioop` de la librería estándar~~
+    — Santiago corrió el diagnóstico de la ronda anterior y, tras
+    instalar pydub/ffmpeg como se le indicó, seguía viendo EXACTAMENTE
+    el mismo mensaje "Falta instalar pydub" — investigado con su log
+    real (mismo criterio "ground truth de tu máquina real" ya usado
+    para EasyEffects/PipeWire en su momento): `pip install -r
+    requirements.txt` mostraba `pydub` como "already satisfied"
+    (0.25.1, correctamente instalado) — el mensaje de diagnóstico
+    estaba MINTIENDO por una razón distinta a la que decía.
+
+    **Causa real, confirmada con el traceback real que pegó Santiago**:
+    su Python es la versión 3.13 (`venv/bin/python3 -> /usr/bin/python3`,
+    3.13.12) — Python 3.13 **eliminó el módulo `audioop`** de la
+    librería estándar (PEP 594, deprecado desde 3.11); pydub (sin
+    actualizarse desde 2021) todavía depende de él en
+    `pydub/utils.py`, con un intento de `import audioop` y, si falla,
+    un fallback a `import pyaudioop as audioop` — ninguno de los dos
+    existe en su instalación, así que `import pydub` revienta con
+    `ModuleNotFoundError: No module named 'pyaudioop'`. Como
+    `ModuleNotFoundError` es subclase de `ImportError`, el `except
+    ImportError` de `verificar_motor_disponible()` (ronda anterior) SÍ
+    lo atrapaba — pero el código ASUMÍA que cualquier `ImportError` ahí
+    significaba "pydub no está instalado", mostrando "Falta instalar
+    pydub. pip install pydub" — instrucción que Santiago ya había
+    seguido al pie de la letra, sin que cambiara nada, porque el
+    paquete YA estaba instalado: el problema era una dependencia
+    INTERNA de pydub (`audioop`), no pydub en sí.
+
+    **Corregido distinguiendo los dos casos de verdad**, en vez de
+    asumir uno solo: `verificar_motor_disponible()`
+    (`core/analizador_audio.py`) ahora llama primero a
+    `importlib.util.find_spec("pydub")` — confirma si el PAQUETE
+    existe en disco SIN ejecutar su código (así nunca dispara el mismo
+    error que se está diagnosticando) — y solo si el intento real de
+    `import pydub` falla DESPUÉS de eso arma el mensaje:
+    - Si `find_spec` no lo encontró: pydub genuinamente no está
+      instalado → mensaje de siempre ("pip install pydub").
+    - Si `find_spec` SÍ lo encontró pero el `import` real igual
+      revienta: mensaje NUEVO, con el error real incluido
+      (`{error}`, ej. "No module named 'pyaudioop'") y la causa
+      probable explicada (Python 3.13+ sin `audioop`), con la
+      instrucción correcta: `pip install audioop-lts` — el backport
+      oficial de PyPI que repone ese módulo específicamente para
+      Python 3.13+.
+    - `requirements.txt` ganó `audioop-lts>=0.2.1; python_version >=
+      "3.13"` — con marcador de versión de pip, así una instalación
+      en Python < 3.13 (donde `audioop` todavía es parte de la
+      librería estándar) directamente SALTEA esa línea sin instalar
+      nada de más; confirmado contra el índice real de PyPI que el
+      paquete existe con exactamente ese requisito de versión.
+
+    Probado extendiendo `test_marcas_in_out.py`: caso "pydub NO
+    instalado en absoluto" (mockeando `importlib.util.find_spec` para
+    que no lo encuentre) sigue devolviendo el mensaje de siempre, SIN
+    mencionar `audioop-lts`; caso NUEVO "pydub instalado pero el
+    import revienta" (find_spec real -- lo encuentra porque
+    genuinamente está instalado en este sandbox -- combinado con un
+    `import` mockeado para fallar con el mismo error real de Santiago,
+    `ModuleNotFoundError: No module named 'pyaudioop'`) confirma que el
+    mensaje YA NO dice "pip install pydub", SÍ menciona `audioop-lts`
+    como la causa/solución real, y conserva el detalle exacto del
+    error para poder diagnosticar cualquier variante futura — + suite
+    de regresión completa sin fallos nuevos (mismos 7 fallos
+    preexistentes de siempre) + smoke test de arranque limpio.
+    **Pendiente de confirmar con Santiago**: que corriendo `pip install
+    audioop-lts` (con el venv activado) el diagnóstico pase a "Todo en
+    orden", y que el recorte de silencio finalmente se escuche en la
+    práctica — sería la primera confirmación real de que la CADENA
+    COMPLETA (bug de reporte + causa real de Python 3.13) queda
+    resuelta de punta a punta.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
