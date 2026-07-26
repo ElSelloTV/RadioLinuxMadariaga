@@ -2,3 +2,8 @@ PySide6>=6.6.0
 python-vlc>=3.0.20123
 mutagen>=1.47.0
 pydub>=0.25.1
+# Python 3.13 sacó "audioop" de la librería estándar (PEP 594); pydub
+# (sin actualizarse desde 2021) todavía depende de él -- este paquete
+# lo repone. El marcador de versión hace que pip lo salte solo en
+# Python < 3.13, donde el módulo de la librería estándar ya alcanza.
+audioop-lts>=0.2.1; python_version >= "3.13"
