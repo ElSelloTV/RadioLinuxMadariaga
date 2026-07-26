@@ -555,3 +555,37 @@ def icono_error():
         pintor.end()
         _ICONO_ITEM_CON_ERROR = QIcon(pixmap)
     return _ICONO_ITEM_CON_ERROR
+
+
+_ICONO_SIN_MARCAS_IN_OUT = None
+
+
+def icono_sin_marcas_in_out():
+    """Triángulo de aviso ámbar "sin marcas IN/OUT" (pedido explícito,
+    "veo que nunca funciona el recorte de silencio" -- Ventana 3
+    ahora marca a simple vista qué archivos de MÚSICA se importaron
+    SIN que el análisis de silencio/nivelado pudiera calcular sus
+    marcas, en vez de descubrirlo recién al aire). Mismo patrón de
+    QPainter cacheado que icono_reproducido()/icono_error() -- color
+    ámbar (`#f39c12`) para no confundirlo con la X roja de "archivo no
+    encontrado" (icono_error) ni con el tilde verde de "ya
+    reproducido"."""
+    global _ICONO_SIN_MARCAS_IN_OUT
+    if _ICONO_SIN_MARCAS_IN_OUT is None:
+        from PySide6.QtGui import QIcon, QPixmap, QPainter, QPen, QBrush, QPolygon, QColor as _QColor
+        from PySide6.QtCore import Qt as _Qt, QPoint
+
+        pixmap = QPixmap(14, 14)
+        pixmap.fill(_Qt.GlobalColor.transparent)
+        pintor = QPainter(pixmap)
+        pintor.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        color = _QColor("#f39c12")
+        pintor.setPen(QPen(color, 1))
+        pintor.setBrush(QBrush(color))
+        pintor.drawPolygon(QPolygon([QPoint(7, 1), QPoint(13, 12), QPoint(1, 12)]))
+        pintor.setPen(QPen(_QColor("#2c2c2c"), 2))
+        pintor.drawLine(7, 5, 7, 9)
+        pintor.drawPoint(7, 11)
+        pintor.end()
+        _ICONO_SIN_MARCAS_IN_OUT = QIcon(pixmap)
+    return _ICONO_SIN_MARCAS_IN_OUT

@@ -62,14 +62,14 @@ from PySide6.QtWidgets import (
     QDialog,
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QProcess, QTimer
-from PySide6.QtGui import QColor, QBrush, QDesktopServices, QFont
+from PySide6.QtGui import QColor, QBrush, QDesktopServices, QFont, QIcon
 
 from gui.common_widgets import (
     ArbolOrigenArrastre, ArbolConDrop, ArbolCategoriasConDrop,
     configurar_columnas_ajustables, SliderBusqueda,
 )
 from gui.indicador_en_vivo import IndicadorEnVivo
-from gui.styles import GENERO_COLORES, GENERO_PREFIJOS_CODIGO, color_texto_legible
+from gui.styles import GENERO_COLORES, GENERO_PREFIJOS_CODIGO, color_texto_legible, icono_sin_marcas_in_out
 from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
 from gui.dialogo_agregar_archivos_masivo import DialogoAgregarArchivosMasivo
 from gui.dialogo_vigencia import DialogoVigencia
@@ -772,6 +772,7 @@ class VentanaExplorador(QWidget):
         item.setData(0, ROL_CATEGORIA_ORIGEN, item_categoria)
         self._pintar_por_genero(item, registro.get("genero", ""))
         self._actualizar_vinculo_item(item, registro)
+        self._actualizar_marcas_item(item, registro)
         if insertar:
             self.tree_archivos.addTopLevelItem(item)
         return item
@@ -790,6 +791,27 @@ class VentanaExplorador(QWidget):
             fuente = item.font(columna)
             fuente.setUnderline(sin_vinculo)
             item.setFont(columna, fuente)
+
+    def _actualizar_marcas_item(self, item: QTreeWidgetItem, registro: dict):
+        """Pedido explícito ("veo que nunca funciona el recorte de
+        silencio"): un archivo de MÚSICA importado sin que el análisis
+        de silencio/nivelado pudiera calcular sus marcas IN/OUT
+        (`analizado is False` -- típico si falta pydub/ffmpeg en la
+        instalación, ver core.analizador_audio.verificar_motor_disponible)
+        queda marcado con un triángulo ámbar a simple vista, en vez de
+        quedar indistinguible de un archivo que sí tiene sus marcas
+        bien calculadas. Acotado a género "Musica" a propósito -- es
+        el caso que le importa a Ventana 2/Emisión (inicio + fundido
+        de salida); Publicidad/Separador ya usan corte estricto
+        (tolerancia 0) y su propio criterio."""
+        sin_marcas = registro.get("genero") == "Musica" and registro.get("analizado") is False
+        item.setIcon(COL_TITULO, icono_sin_marcas_in_out() if sin_marcas else QIcon())
+        item.setToolTip(
+            COL_TITULO,
+            "Sin marcas IN/OUT: el análisis de silencio/nivelado falló al importar "
+            "este archivo (revisá Configuración → Diagnóstico → \"Verificar motor "
+            "de análisis de audio\")." if sin_marcas else "",
+        )
 
     def _llenar_tree_archivos(self, entradas: list):
         """`entradas`: list[tuple[dict, QTreeWidgetItem]] -- cada
@@ -1032,6 +1054,25 @@ class VentanaExplorador(QWidget):
 
         self._guardar_biblioteca_debounced()
         self.archivo_agregado.emit(ruta)
+        self._avisar_si_sin_marcas(registro)
+
+    def _avisar_si_sin_marcas(self, registro: dict):
+        """Pedido explícito ("veo que nunca funciona el recorte de
+        silencio"): avisa DE INMEDIATO, al momento de importar, si un
+        archivo de Música quedó sin marcas IN/OUT (en vez de dejar que
+        el operador lo descubra recién al aire, o nunca) -- antes esto
+        fallaba en TOTAL silencio (solo un `print()` a una consola que
+        nadie ve al lanzar desde el ícono de escritorio)."""
+        if registro.get("genero") == "Musica" and registro.get("analizado") is False:
+            QMessageBox.warning(
+                self, "Sin marcas IN/OUT",
+                f"\"{registro.get('titulo', '')}\" se importó, pero el análisis de "
+                "silencio/nivelado FALLÓ -- va a sonar sin recorte de silencio ni "
+                "nivelado de volumen.\n\n"
+                "Probablemente falte pydub/ffmpeg en esta instalación. Revisá "
+                "Configuración → Diagnóstico → \"Verificar motor de análisis de "
+                "audio\" para confirmar qué falta.",
+            )
 
     def _importar_archivos_masivo(self, rutas: list, categoria_sugerida):
         """Un solo diálogo para TODO el lote: se elige una categoría y
@@ -1061,6 +1102,7 @@ class VentanaExplorador(QWidget):
         # esta app (nunca se usó, ver CLAUDE.md), el cursor de espera +
         # un `processEvents()` periódico es lo que evita que se vea
         # "colgada" mientras procesa, aunque siga siendo bloqueante.
+        fallidos_musica = 0
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             for indice, ruta in enumerate(rutas):
@@ -1082,6 +1124,8 @@ class VentanaExplorador(QWidget):
                     "fecha_inicio": None,
                     "fecha_fin": None,
                 }
+                if genero == "Musica" and not analisis["analizado"]:
+                    fallidos_musica += 1
                 registros.append(registro)
                 siguiente_numero += 1
                 if indice % 15 == 0:
@@ -1095,6 +1139,21 @@ class VentanaExplorador(QWidget):
 
         self._guardar_biblioteca()
         self.archivo_agregado.emit(f"{len(rutas)} archivos")
+
+        # Mismo criterio que _avisar_si_sin_marcas() para el alta de UN
+        # solo archivo -- acá se resume en UN aviso para todo el lote,
+        # en vez de uno por archivo.
+        if fallidos_musica:
+            QMessageBox.warning(
+                self, "Sin marcas IN/OUT",
+                f"{fallidos_musica} de {len(rutas)} archivo(s) de Música se "
+                "importaron SIN que el análisis de silencio/nivelado pudiera "
+                "calcular sus marcas IN/OUT -- van a sonar sin recorte de "
+                "silencio ni nivelado (quedan marcados con ⚠ en la lista).\n\n"
+                "Probablemente falte pydub/ffmpeg en esta instalación. Revisá "
+                "Configuración → Diagnóstico → \"Verificar motor de análisis de "
+                "audio\" para confirmar qué falta.",
+            )
 
     # ------------------------------------------------------------------
     # "Bays" (pedido explícito, reemplaza a la descarga de YouTube):
@@ -1373,6 +1432,7 @@ class VentanaExplorador(QWidget):
             item.setData(0, ROL_REGISTRO, registro)
             item.setText(COL_DURACION, registro["duracion"])
             self._actualizar_vinculo_item(item, registro)
+            self._actualizar_marcas_item(item, registro)
         self._sincronizar_registro_en_categoria(categoria, ruta_anterior, registro)
         self._guardar_biblioteca_debounced()
         return registro

@@ -531,6 +531,28 @@ class VentanaConfiguracion(QDialog):
         if self._ventana_explorador is None:
             self.btn_reanalizar_biblioteca.setEnabled(False)
 
+        # Pedido explícito ("veo que nunca funciona el recorte de
+        # silencio") -- bug real de fondo encontrado: "Reanalizar
+        # biblioteca" contaba TODO intento como éxito sin fijarse si
+        # pydub/ffmpeg realmente estaban disponibles, así que un
+        # sistema con ese motor roto igual mostraba "N reanalizados"
+        # dando una falsa sensación de que funcionó. Este botón NUEVO
+        # corre una prueba real (sin tocar la biblioteca) para saber
+        # de antemano si el motor de marcas IN/OUT puede correr en
+        # esta instalación, y con qué falta exactamente si no.
+        nota_verificar_motor = QLabel(
+            "Verificar motor de análisis: confirma si pydub + ffmpeg están\n"
+            "disponibles (necesarios para calcular las marcas IN/OUT de\n"
+            "silencio y el nivelado) con una prueba real, sin tocar ningún\n"
+            "archivo de la biblioteca."
+        )
+        nota_verificar_motor.setObjectName("lblTituloBloqueActivo")
+        nota_verificar_motor.setWordWrap(True)
+        layout.addWidget(nota_verificar_motor)
+        self.btn_verificar_motor_audio = QPushButton("🩺 Verificar motor de análisis de audio")
+        self.btn_verificar_motor_audio.clicked.connect(self._verificar_motor_audio)
+        layout.addWidget(self.btn_verificar_motor_audio)
+
         # Pedido explícito ("¿esta verificación se puede hacer también
         # manual desde Configuraciones?"): la migración de duración
         # faltante ya corre sola al arrancar la app
@@ -679,16 +701,61 @@ class VentanaConfiguracion(QDialog):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         QApplication.processEvents()
         try:
-            cantidad = reanalizar_biblioteca(config_temporal)
+            stats = reanalizar_biblioteca(config_temporal)
             self._ventana_explorador.recargar_biblioteca_desde_disco()
         finally:
             QApplication.restoreOverrideCursor()
             self.btn_reanalizar_biblioteca.setEnabled(True)
             self.btn_reanalizar_biblioteca.setText(texto_original)
-        QMessageBox.information(
-            self, "Reanalizar biblioteca",
-            f"Listo: {cantidad} archivo(s) reanalizado(s) con los valores nuevos.",
-        )
+
+        # Bug real corregido ("nunca funciona el recorte de silencio"):
+        # antes este mensaje solo decía "N reanalizados", contando
+        # como éxito CUALQUIER intento aunque pydub/ffmpeg hubieran
+        # fallado y el archivo quedara con marcas IN/OUT vacías -- ver
+        # config/settings.py:reanalizar_biblioteca(). Ahora desglosa
+        # cuántos quedaron con marcas REALES vs. cuántos fallaron, y
+        # destaca Música (lo que le importa a Ventana 2/Emisión).
+        if stats["fallidos"] > 0:
+            QMessageBox.warning(
+                self, "Reanalizar biblioteca",
+                f"Terminado, pero con fallas: {stats['analizados']} de {stats['total']} "
+                f"archivo(s) quedaron con marcas IN/OUT reales; "
+                f"{stats['fallidos']} FALLARON (quedaron sin recorte de silencio "
+                f"ni nivelado).\n\n"
+                f"De género Música: {stats['musica_analizados']} de {stats['musica_total']} "
+                f"con marcas reales.\n\n"
+                "Los fallos suelen ser por falta de pydub/ffmpeg -- corré "
+                "\"🩺 Verificar motor de análisis de audio\" (más abajo) para "
+                "confirmar qué falta, y el detalle de cada archivo queda en el log.",
+            )
+        else:
+            QMessageBox.information(
+                self, "Reanalizar biblioteca",
+                f"Listo: {stats['analizados']} de {stats['total']} archivo(s) quedaron "
+                f"con marcas IN/OUT reales (de género Música: "
+                f"{stats['musica_analizados']} de {stats['musica_total']}).",
+            )
+
+    def _verificar_motor_audio(self):
+        """Pedido explícito ("veo que nunca funciona el recorte de
+        silencio"): confirma de antemano, con una prueba real (audio
+        sintético generado en memoria, sin tocar ningún archivo de la
+        biblioteca), si el motor de marcas IN/OUT puede correr en esta
+        instalación -- y con qué falta exactamente si no, en vez de
+        descubrirlo recién cuando un archivo real falla en silencio."""
+        from core.analizador_audio import verificar_motor_disponible
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            resultado = verificar_motor_disponible()
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if resultado["prueba_ok"]:
+            QMessageBox.information(self, "Verificar motor de análisis de audio", resultado["mensaje"])
+        else:
+            QMessageBox.warning(self, "Verificar motor de análisis de audio", resultado["mensaje"])
 
     def _verificar_biblioteca(self):
         """Corre a mano el mismo chequeo de duración faltante que ya
