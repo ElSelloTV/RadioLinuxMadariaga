@@ -396,11 +396,19 @@ class VentanaProgramador(QDialog):
         dialogo = DialogoInsertarItemAleatorio(self._ventana_explorador.tree_categorias, parent=self)
         if dialogo.exec() != DialogoInsertarItemAleatorio.DialogCode.Accepted:
             return
-        categoria, recursivo = dialogo.resultado()
-        if categoria:
-            self._agregar_item_aleatorio_a_bloque(
-                bloque, categoria, recursivo, self._indice_insercion_actual(bloque),
-            )
+        categoria, recursivo, cantidad = dialogo.resultado()
+        if not categoria:
+            return
+        # Pedido explícito: insertar varios ítems aleatorios de una
+        # (2, 3, 4, 5...) — cada inserción sucesiva se coloca DESPUÉS
+        # de la anterior, en el mismo orden en que se van agregando
+        # (recalculando el índice de inserción cada vez, para que
+        # queden uno después del otro y no todos apilados al revés).
+        indice = self._indice_insercion_actual(bloque)
+        for _ in range(cantidad):
+            self._agregar_item_aleatorio_a_bloque(bloque, categoria, recursivo, indice)
+            if indice is not None:
+                indice += 1
 
     def _insertar_comando_fmt(self):
         bloque = self._bloque_destino_actual()

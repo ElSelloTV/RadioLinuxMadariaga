@@ -73,6 +73,7 @@ from gui.styles import GENERO_COLORES, GENERO_PREFIJOS_CODIGO, color_texto_legib
 from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
 from gui.dialogo_agregar_archivos_masivo import DialogoAgregarArchivosMasivo
 from gui.dialogo_vigencia import DialogoVigencia
+from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 from gui.estado_ui import guardar_columnas, restaurar_columnas
 from core.analizador_audio import analizar_audio
 from core.audio_engine import obtener_duracion_formateada
@@ -1095,14 +1096,26 @@ class VentanaExplorador(QWidget):
         siguiente_numero = len(registros) + 1
         prefijo = GENERO_PREFIJOS_CODIGO.get(genero, "GEN")
 
-        # Pedido explícito ("hay operaciones que demoran... deberíamos
-        # poner un preload"): importar en lote analiza CADA archivo
-        # (pydub/ffmpeg), lento de verdad con una biblioteca grande
-        # (700 archivos, caso real de Santiago) — sin threading en
-        # esta app (nunca se usó, ver CLAUDE.md), el cursor de espera +
-        # un `processEvents()` periódico es lo que evita que se vea
-        # "colgada" mientras procesa, aunque siga siendo bloqueante.
+        # Pedido explícito ("que me indique el progreso... que me
+        # indique si se hacen o no"): importar en lote analiza CADA
+        # archivo (pydub/ffmpeg), lento de verdad con una biblioteca
+        # grande (miles de archivos, caso real de Santiago) — sin
+        # threading en esta app (nunca se usó, ver CLAUDE.md), acá el
+        # trabajo en sí sigue siendo sincrónico (no amerita un proceso
+        # aparte como el reanálisis completo: es incremental, archivo
+        # por archivo, casi siempre un lote chico) pero se muestra una
+        # barra de progreso GRÁFICA real (mismo widget que ya usa la
+        # migración de duración al arrancar y el reanálisis en
+        # segundo plano) en vez de solo un cursor de espera — así el
+        # operador ve avanzar "X / Y archivos" en vivo, nunca se
+        # pregunta si el programa quedó colgado.
         fallidos_musica = 0
+        dialogo_progreso = DialogoPreloadBiblioteca(
+            len(rutas), parent=self, titulo="Importando archivos",
+            texto=f"Importando {len(rutas)} archivo(s) (análisis de silencio/nivelado)...",
+            nota="Corre en el mismo proceso -- el programa queda a la espera hasta terminar.",
+        )
+        dialogo_progreso.show()
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             for indice, ruta in enumerate(rutas):
@@ -1128,10 +1141,12 @@ class VentanaExplorador(QWidget):
                     fallidos_musica += 1
                 registros.append(registro)
                 siguiente_numero += 1
-                if indice % 15 == 0:
+                dialogo_progreso.actualizar(indice + 1, len(rutas))
+                if indice % 5 == 0:
                     QApplication.processEvents()
         finally:
             QApplication.restoreOverrideCursor()
+            dialogo_progreso.close()
 
         item_categoria.setData(0, ROL_ARCHIVOS, registros)
         if item_categoria is self._categoria_actual() and not self._en_busqueda:

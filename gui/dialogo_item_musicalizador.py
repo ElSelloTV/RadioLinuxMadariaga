@@ -47,6 +47,7 @@ class DialogoItemMusicalizador(QDialog):
         self._ruta_categoria_pisador = None
         self._registro_pisador_especifico = None
         self._resultado = None
+        self._es_edicion = item_config is not None
 
         self._construir_ui()
         if item_config:
@@ -92,6 +93,18 @@ class DialogoItemMusicalizador(QDialog):
         form_aleatorio.addRow(self.lbl_categoria_aleatorio)
         form_aleatorio.addRow(btn_elegir_categoria)
         form_aleatorio.addRow(self.chk_recursivo)
+        # Pedido explícito ("poder incorporar un número de ítem
+        # aleatorios... 2 o 3 o 4 o 5"): agregar varios ítems Aleatorio
+        # de una en vez de repetir "＋ Añadir Ítem..." a mano — cada
+        # copia es independiente, la serie ya garantiza no repetir el
+        # mismo archivo entre ítems Aleatorio de la MISMA pasada (ver
+        # core/musicalizador.py, rutas_a_evitar). Solo tiene sentido al
+        # AGREGAR (no al editar un ítem puntual ya existente).
+        self.spin_cantidad_aleatorio = QSpinBox()
+        self.spin_cantidad_aleatorio.setRange(1, 20)
+        self.spin_cantidad_aleatorio.setValue(1)
+        if not self._es_edicion:
+            form_aleatorio.addRow("Cantidad a agregar:", self.spin_cantidad_aleatorio)
         self.pila.addWidget(pagina_aleatorio)
 
         # --- Subformato ---
@@ -353,3 +366,11 @@ class DialogoItemMusicalizador(QDialog):
 
     def resultado(self) -> dict | None:
         return self._resultado
+
+    def resultado_cantidad(self) -> int:
+        """Cuántas copias del ítem hay que agregar de una (pedido
+        explícito de insertar varios Aleatorio a la vez) — siempre 1
+        para Específico/Subformato o al editar un ítem existente."""
+        if self._es_edicion or self._resultado is None or self._resultado.get("tipo") != TIPO_ALEATORIO:
+            return 1
+        return self.spin_cantidad_aleatorio.value()
