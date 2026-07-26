@@ -17,7 +17,9 @@ necesario para emitir publicidad y música de forma automática.
 --------------------------------------------------------
 """
 
+import json
 import os
+import sys
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget, QWidget,
@@ -25,11 +27,11 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QDialogButtonBox, QFileDialog, QApplication,
     QMessageBox, QColorDialog, QGroupBox
 )
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QProcess
 from PySide6.QtGui import QColor, QDesktopServices
 
 from config.settings import (
-    cargar_configuracion, guardar_configuracion, reanalizar_biblioteca,
+    cargar_configuracion, guardar_configuracion,
     ARCHIVO_LOG, ARCHIVO_HISTORIAL_REPRODUCCION,
 )
 from core.audio_engine import MotorAudio
@@ -668,6 +670,15 @@ class VentanaConfiguracion(QDialog):
             QMessageBox.warning(self, "Subir log", mensaje)
 
     def _reanalizar_biblioteca(self):
+        """Pedido explícito ("tengo 9800 elementos... se trabó por
+        obvias razones, necesitamos hacerlo con otro proceso aparte,
+        que me indique el progreso"): corre `core/reanalizador_batch.py`
+        como PROCESO APARTE vía QProcess (mismo mecanismo ya usado para
+        EasyEffects/git/actualizaciones en este proyecto — nunca
+        threading) — el programa entero queda RESPONSIVE mientras
+        procesa una biblioteca grande, con una barra de progreso real
+        (X / Y archivos) en vez de "quedarse sin responder" varios
+        minutos sin ninguna señal de vida."""
         if self._ventana_explorador is None:
             return
         respuesta = QMessageBox.question(
@@ -676,52 +687,105 @@ class VentanaConfiguracion(QDialog):
             "TODOS los archivos ya importados, con los valores de tolerancia/\n"
             "umbral que están puestos AHORA MISMO en la pestaña Reproducción\n"
             "y Automatización (aunque todavía no hayas apretado Guardar).\n"
-            "Puede tardar varios minutos con una biblioteca grande, y el\n"
-            "programa queda sin responder mientras tanto.\n\n"
+            "Corre en SEGUNDO PLANO (proceso aparte, con barra de progreso) —\n"
+            "el programa sigue respondiendo mientras tanto.\n\n"
             "¿Confirmás que querés continuar?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if respuesta != QMessageBox.StandardButton.Yes:
             return
 
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core", "reanalizador_batch.py")
         # Usa los valores YA TIPEADOS en esta ventana, no self._config
         # (que todavía tiene los viejos hasta que se guarde) — así el
         # operador puede ajustar la tolerancia y reanalizar de una,
         # sin tener que guardar-cerrar-reabrir primero.
-        config_temporal = {
-            "reproduccion": {
-                "tolerancia_silencio_segundos": self.spin_tolerancia_silencio.value(),
-                "tolerancia_silencio_v1_segundos": self.spin_tolerancia_silencio_v1.value(),
-                "umbral_silencio_dbfs": self.spin_umbral_silencio.value(),
-            },
-        }
-        texto_original = self.btn_reanalizar_biblioteca.text()
+        argumentos = [
+            script,
+            "--tolerancia-general", str(self.spin_tolerancia_silencio.value()),
+            "--tolerancia-v1", str(self.spin_tolerancia_silencio_v1.value()),
+            "--umbral", str(self.spin_umbral_silencio.value()),
+        ]
+
+        self._dialogo_reanalisis = DialogoPreloadBiblioteca(
+            1, parent=self, titulo="Reanalizando biblioteca",
+            texto="Reanalizando biblioteca (recorte de silencio / nivelado)...",
+            nota="Corre en un proceso aparte -- el programa sigue respondiendo mientras tanto.",
+        )
+        self._dialogo_reanalisis.show()
+
+        self._buffer_stdout_reanalisis = ""
+        self._resultado_reanalisis = None
+        self._proceso_reanalisis = QProcess(self)
+        self._proceso_reanalisis.setProgram(sys.executable)
+        self._proceso_reanalisis.setArguments(argumentos)
+        self._proceso_reanalisis.readyReadStandardOutput.connect(self._leer_progreso_reanalisis)
+        self._proceso_reanalisis.finished.connect(self._al_terminar_reanalisis)
         self.btn_reanalizar_biblioteca.setEnabled(False)
-        self.btn_reanalizar_biblioteca.setText("Reanalizando... (puede tardar)")
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        QApplication.processEvents()
-        try:
-            stats = reanalizar_biblioteca(config_temporal)
+        self._proceso_reanalisis.start()
+
+    def _leer_progreso_reanalisis(self):
+        """Parsea las líneas "PROGRESO hechos total" / "RESULTADO
+        {json}" que imprime core/reanalizador_batch.py -- bufferea
+        hasta tener una línea completa, ya que readyReadStandardOutput
+        puede entregar los datos en pedazos arbitrarios."""
+        self._buffer_stdout_reanalisis += bytes(
+            self._proceso_reanalisis.readAllStandardOutput()
+        ).decode("utf-8", errors="replace")
+        while "\n" in self._buffer_stdout_reanalisis:
+            linea, self._buffer_stdout_reanalisis = self._buffer_stdout_reanalisis.split("\n", 1)
+            linea = linea.strip()
+            if linea.startswith("PROGRESO "):
+                partes = linea.split()
+                if len(partes) == 3:
+                    try:
+                        hechos, total = int(partes[1]), int(partes[2])
+                    except ValueError:
+                        continue
+                    if self._dialogo_reanalisis is not None:
+                        self._dialogo_reanalisis.actualizar(hechos, total)
+            elif linea.startswith("RESULTADO "):
+                try:
+                    self._resultado_reanalisis = json.loads(linea[len("RESULTADO "):])
+                except ValueError:
+                    pass
+
+    def _al_terminar_reanalisis(self, codigo_salida, _estado_salida):
+        if self._dialogo_reanalisis is not None:
+            self._dialogo_reanalisis.close()
+            self._dialogo_reanalisis = None
+        self.btn_reanalizar_biblioteca.setEnabled(True)
+
+        if self._ventana_explorador is not None:
             self._ventana_explorador.recargar_biblioteca_desde_disco()
-        finally:
-            QApplication.restoreOverrideCursor()
-            self.btn_reanalizar_biblioteca.setEnabled(True)
-            self.btn_reanalizar_biblioteca.setText(texto_original)
+
+        stats = self._resultado_reanalisis
+        if stats is None:
+            error = bytes(self._proceso_reanalisis.readAllStandardError()).decode("utf-8", errors="replace").strip()
+            QMessageBox.warning(
+                self, "Reanalizar biblioteca",
+                f"El proceso de reanálisis terminó sin devolver un resultado válido "
+                f"(código {codigo_salida}).\n\n{error}",
+            )
+            return
 
         # Bug real corregido ("nunca funciona el recorte de silencio"):
         # antes este mensaje solo decía "N reanalizados", contando
         # como éxito CUALQUIER intento aunque pydub/ffmpeg hubieran
-        # fallado y el archivo quedara con marcas IN/OUT vacías -- ver
-        # config/settings.py:reanalizar_biblioteca(). Ahora desglosa
-        # cuántos quedaron con marcas REALES vs. cuántos fallaron, y
-        # destaca Música (lo que le importa a Ventana 2/Emisión).
+        # fallado y el archivo quedara con marcas IN/OUT vacías. Ahora
+        # desglosa cuántos quedaron con marcas REALES, cuántos
+        # fallaron, y cuántos se PRESERVARON intactos (ya tenían
+        # marcas buenas de antes, un fallo nuevo nunca las destruye) —
+        # destacando además el género Música.
         if stats["fallidos"] > 0:
             QMessageBox.warning(
                 self, "Reanalizar biblioteca",
                 f"Terminado, pero con fallas: {stats['analizados']} de {stats['total']} "
                 f"archivo(s) quedaron con marcas IN/OUT reales; "
-                f"{stats['fallidos']} FALLARON (quedaron sin recorte de silencio "
-                f"ni nivelado).\n\n"
+                f"{stats['fallidos']} FALLARON de verdad (nunca tuvieron marcas, "
+                f"quedan sin recorte de silencio ni nivelado); "
+                f"{stats.get('preservados', 0)} ya tenían marcas buenas de antes y "
+                f"se preservaron SIN TOCAR pese a fallar esta vuelta.\n\n"
                 f"De género Música: {stats['musica_analizados']} de {stats['musica_total']} "
                 f"con marcas reales.\n\n"
                 "Los fallos suelen ser por falta de pydub/ffmpeg -- corré "

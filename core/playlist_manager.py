@@ -132,6 +132,19 @@ class GestorPublicidad:
         # Referencia al ítem cuyo fade-out automático ya se disparó —
         # evita redispararlo en cada tick de restante_ms_cambio.
         self._item_fade_out_v1_disparado = None
+        # Pedido explícito ("no puede repetir la misma publicidad 2
+        # veces en el mismo bloque"): garantía EXPLÍCITA de no-repetir
+        # DENTRO de un mismo bloque, independiente de cualquier timing
+        # del historial de reproducción (que ya ayuda, pero acá se
+        # refuerza sin depender de que el archivo haya llegado a
+        # escribirse en disco a tiempo). Un set en memoria con las
+        # rutas ya elegidas para ítems Aleatorio del bloque EN CURSO —
+        # se resetea solo al cruzar a un bloque distinto (comparado
+        # por identidad de QTreeWidgetItem, ver _resolver_item_aleatorio),
+        # sin importar si el cruce fue por horario automático, avance
+        # continuo, o Play manual — un solo lugar cubre los tres casos.
+        self._bloque_para_no_repetir_aleatorio = None
+        self._rutas_usadas_aleatorio_en_bloque = set()
         # "Stop diferido" (Dinesat): armado, deja terminar el ítem
         # actual y recién ahí detiene TODO — no avanza al siguiente.
         self._stop_diferido_armado = False
@@ -435,6 +448,18 @@ class GestorPublicidad:
     # (rutas_recientes_en_historial), así nunca repite un archivo hasta
     # agotar los demás de esa categoría.
     # ------------------------------------------------------------------
+    def _actualizar_bloque_para_no_repetir_aleatorio(self, item):
+        """Resetea el set de "ya usados en este bloque" al cruzar a un
+        bloque DISTINTO del que se venía rastreando -- comparado por
+        identidad del QTreeWidgetItem del bloque (item.parent()), no
+        por índice ni por hora, así cubre por igual el disparo
+        automático por horario, el avance continuo natural, y un Play
+        manual sobre una tanda/ítem aleatorio puntual."""
+        bloque = item.parent()
+        if bloque is not self._bloque_para_no_repetir_aleatorio:
+            self._bloque_para_no_repetir_aleatorio = bloque
+            self._rutas_usadas_aleatorio_en_bloque = set()
+
     def _resolver_item_aleatorio(self, item):
         if self._ventana_explorador is None:
             return None
@@ -447,8 +472,26 @@ class GestorPublicidad:
         if not candidatos:
             return None
         rutas_candidatas = {r.get("ruta") for r in candidatos if r.get("ruta")}
+        self._actualizar_bloque_para_no_repetir_aleatorio(item)
         evitar = rutas_recientes_en_historial(rutas_candidatas, max(0, len(rutas_candidatas) - 1))
-        return self._ventana_explorador.elegir_aleatorio_de_categoria(categoria, recursivo, excluir_rutas=evitar)
+        # OBJETIVO explícito de Santiago: "que un bloque horario sea lo
+        # más diferente posible al anterior, no puede repetir la misma
+        # publicidad 2 veces en el mismo bloque" -- se une la exclusión
+        # de siempre (historial persistente) con la garantía nueva
+        # (rutas ya usadas en ESTE bloque, esta pasada). Mismo criterio
+        # de "nunca dejar hueco" de toda la app: si excluir todo vaciara
+        # los candidatos (menos ítems en la categoría que los
+        # programados en el bloque), elegir_aleatorio_de_categoria
+        # ignora la exclusión antes que dejar silencio -- ahí SÍ toca
+        # repetir, a propósito ("solo se admite repetición si ya se
+        # completó la reproducción de todos los demás").
+        evitar_total = evitar | (self._rutas_usadas_aleatorio_en_bloque & rutas_candidatas)
+        registro = self._ventana_explorador.elegir_aleatorio_de_categoria(
+            categoria, recursivo, excluir_rutas=evitar_total,
+        )
+        if registro and registro.get("ruta"):
+            self._rutas_usadas_aleatorio_en_bloque.add(registro["ruta"])
+        return registro
 
     def _reproducir_item_aleatorio(self, item):
         registro = self._resolver_item_aleatorio(item)

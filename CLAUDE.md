@@ -8669,6 +8669,175 @@ todo el resto.
     práctica — sería la primera confirmación real de que la CADENA
     COMPLETA (bug de reporte + causa real de Python 3.13) queda
     resuelta de punta a punta.
+89. ~~Explorador: reanálisis de biblioteca como PROCESO APARTE (nunca
+    más traba la app) + progreso gráfico en importación masiva +
+    Ventana 1: variedad real de ítems Aleatorio entre bloques (batch
+    de N + garantía dura de no-repetir dentro del mismo bloque)~~ —
+    dos pedidos en el mismo mensaje:
+
+    **a) Explorador: "tengo 9800 elementos... se trabó por obvias
+    razones, necesitamos hacerlo con otro proceso aparte, que me
+    indique el progreso"**: `config/settings.reanalizar_biblioteca()`
+    corría TODO el reanálisis sincrónico en el hilo de la GUI, sin
+    ningún `processEvents()` — con una biblioteca de miles de
+    archivos, podía trabar la app ENTERA varios minutos sin ninguna
+    señal de vida (ni barra, ni "está trabajando", nada). Nuevo
+    `core/reanalizador_batch.py` (sin Qt, deliberadamente): la misma
+    lógica de reanálisis (con el fix de "preservar marcas buenas" de
+    la ronda 87) ahora corre en un **PROCESO PYTHON APARTE** — mismo
+    patrón "nunca threading, siempre QProcess" ya establecido para
+    EasyEffects/git/reinicio de la app. `config/settings.
+    reanalizar_biblioteca()` quedó como un thin delegator a
+    `core.reanalizador_batch.ejecutar_reanalisis()` (misma firma,
+    mismo dict de stats — nada de la API pública cambió). El script
+    corre de DOS formas: (1) como CLI suelto
+    (`venv/bin/python3 -m core.reanalizador_batch`, con flags
+    `--tolerancia-general/--tolerancia-v1/--umbral`) — pensado para el
+    primer pase grande "por fuera" que pidió Santiago, con progreso
+    real impreso en la terminal; (2) lanzado por la propia app
+    (Configuración → "🔄 Reanalizar biblioteca") vía `QProcess`, que
+    imprime líneas `PROGRESO hechos total`/`RESULTADO {json}` a
+    stdout — `gui/ventana_configuracion.py:_leer_progreso_reanalisis()`
+    las parsea en vivo (bufferizando por si `readyReadStandardOutput`
+    entrega los datos partidos a mitad de línea) y actualiza una
+    barra de progreso GRÁFICA real (`DialogoPreloadBiblioteca`,
+    generalizado en la ronda 77 para la migración de duración al
+    arrancar — reusado tal cual, sin duplicar el widget). El botón
+    queda deshabilitado mientras corre; al terminar
+    (`_al_terminar_reanalisis()`) se reactiva, se refresca el árbol
+    del Explorador desde disco, y se muestra el MISMO desglose
+    honesto de siempre (warning si hubo fallos reales, con el conteo
+    de preservados; information si todo salió bien) — **con la app
+    completamente RESPONSIVE durante todo el proceso**, a diferencia
+    de antes. Guardado incremental cada 25 archivos (ya existía desde
+    la ronda 87, se mantiene) — un Ctrl+C o un cierre a mitad de
+    camino del proceso hijo pierde como mucho el último tramo, nunca
+    todo el trabajo ya hecho.
+
+    De paso, la importación MASIVA de archivos nuevos (`_importar_
+    archivos_masivo()`, Ventana 3) — que ya tenía cursor de espera +
+    `processEvents()` periódico desde la ronda 41 — ahora también
+    muestra la MISMA barra de progreso gráfica (`DialogoPreloadBiblioteca`,
+    "X / Y archivos") en vez de solo el cursor, actualizada en cada
+    archivo procesado — pedido explícito de Santiago ("a medida que
+    se incorporen nuevos archivos hacerlo con el programa, pero con
+    un progreso, que me indique si se hacen o no"). Esta parte queda
+    a propósito SINCRÓNICA (no un proceso aparte como el reanálisis
+    completo) — es incremental, casi siempre un lote chico comparado
+    con reanalizar TODA la biblioteca, y ya tenía el mismo tratamiento
+    de "no threading, cursor + processEvents" que el resto de la app;
+    lo que faltaba era el número visible, no la arquitectura.
+
+    Sobre "me sale un ícono ahora en todos los archivos musicales" —
+    investigado y explicado a Santiago: NO es un bug nuevo de esta
+    ronda, es la CONSECUENCIA esperada de haber corrido un reanálisis
+    con el motor roto (antes del fix de `audioop-lts`, ronda 88) sobre
+    archivos que nunca habían pasado por el análisis de esta app
+    (importados por otro medio) — el fix de "preservar marcas buenas"
+    de la ronda 87 evita DESTRUIR marcas que ya eran buenas, pero no
+    puede resucitar marcas que nunca llegaron a calcularse. Con
+    `audioop-lts` instalado y el reanálisis ahora sin trabar la app,
+    correrlo de nuevo debería resolver los íconos de una.
+
+    **b) Ventana 1: "el sistema debe ir variando los ítem aleatorios
+    entre bloques de hora... repite el mismo en el bloque de las 0 y
+    todos los demás"**: se auditó a fondo TODA la cadena de
+    persistencia y resolución de un ítem Aleatorio (`_resolver_item_
+    aleatorio`, `rutas_recientes_en_historial`, `_guardar_estado_
+    ahora`/`_restaurar_desde_disco`, `cargar_bloques`) sin encontrar
+    ningún bug de "aplanado" (los ítems Aleatorio SIEMPRE se guardan
+    y cargan como placeholders de categoría, nunca como un archivo
+    fijo — la hipótesis propia de Santiago, "quedan guardados los item
+    aleatorios para siempre", queda descartada por el código) — el
+    mecanismo de no-repetir vía historial persistente, matemáticamente,
+    ya daba round-robin correcto item a item. Aun así, se implementaron
+    los dos pedidos explícitos, y ADEMÁS se reforzó el no-repetir con
+    una garantía DURA e independiente de cualquier timing:
+    - **Insertar N ítems Aleatorio de una** (pedido a, "2 o 3 o 4 o
+      5"): `DialogoInsertarItemAleatorio` (Programador) ganó un
+      `QSpinBox` "Cantidad de ítems a insertar" (1-20, default 1) —
+      `VentanaProgramador._insertar_item_aleatorio()` inserta esa
+      cantidad de nodos INDEPENDIENTES seguidos, uno después del otro.
+      `DialogoItemMusicalizador` (tipo Aleatorio del Musicalizador
+      Avanzado) ganó el mismo campo "Cantidad a agregar:" (oculto al
+      EDITAR un ítem ya existente, solo tiene sentido al agregar) +
+      `resultado_cantidad()` — `VentanaMusicalizador._añadir_item()`
+      agrega esa cantidad de copias independientes (dicts distintos,
+      nunca la misma referencia repetida). El Musicalizador YA tenía
+      desde la ronda 31 la garantía de no repetir entre ítems
+      Aleatorio de la MISMA pasada de generación (`rutas_a_evitar`) —
+      no hizo falta tocar el motor ahí, solo la UI para no tener que
+      clickear "＋ Añadir" varias veces a mano.
+    - **Garantía DURA de no-repetir DENTRO del mismo bloque** (pedido
+      b + el objetivo explícito: "no puede repetir la misma
+      publicidad 2 veces en el mismo bloque, al menos que haya menos
+      ítem en la categoría que la programada"): `GestorPublicidad`
+      ganó `_rutas_usadas_aleatorio_en_bloque` (set en memoria) +
+      `_bloque_para_no_repetir_aleatorio` (referencia al último
+      bloque rastreado) — `_actualizar_bloque_para_no_repetir_aleatorio()`
+      resetea el set apenas se detecta un bloque DISTINTO (comparado
+      por identidad del `QTreeWidgetItem`, vía `item.parent()`), sin
+      importar si el cruce fue por disparo automático de horario,
+      avance continuo normal, o Play manual — un solo punto cubre los
+      tres casos, mismo espíritu que `_marcar_siguiente_con_refill()`
+      del Musicalizador (ronda 34c). `_resolver_item_aleatorio()`
+      ahora UNE la exclusión de siempre (historial persistente) con
+      este set nuevo antes de elegir — así, aunque por alguna razón el
+      historial no reflejara a tiempo lo recién resuelto (nunca
+      confiar en una sola capa, mismo criterio ya aplicado varias
+      veces en este proyecto para bugs de timing), la garantía de "no
+      repetir dentro del bloque" queda asegurada por un mecanismo
+      propio, no solo por inferencia de timing. Mismo criterio de
+      "nunca dejar hueco" de siempre: si la categoría tiene MENOS
+      archivos que ítems Aleatorio programados en el bloque, al
+      agotarse todos los distintos, `elegir_aleatorio_de_categoria()`
+      ignora la exclusión (ya lo hacía) y recién ahí repite — nunca
+      antes de agotar los demás, exactamente como pidió Santiago.
+
+    Probado con `test_aleatorio_multiple_y_no_repetir_bloque.py`
+    (nuevo, dedicado): el diálogo del Programador expone e inserta la
+    cantidad pedida (5 nodos independientes, todos Aleatorio); el
+    diálogo del Musicalizador expone `resultado_cantidad()` y agrega
+    esa cantidad de copias independientes; un bloque con 4 ítems
+    Aleatorio de una categoría de 4 archivos usa los 4 exactos, CERO
+    repeticiones; un bloque con 5 ítems Aleatorio de una categoría de
+    2 usa los 2 primeros sin repetir y recién el 3ro repite (nunca
+    antes); cruzar a un bloque DISTINTO con la misma categoría de 1
+    solo archivo no queda bloqueado por lo que sonó en el bloque
+    anterior — + `test_reanalisis_async.py` (nuevo, dedicado: standalone
+    CLI produce PROGRESO/RESULTADO parseable, `ejecutar_reanalisis()`
+    preserva marcas buenas ante un fallo simulado, y la GUI real con un
+    `QProcess` REAL corriendo `core/reanalizador_batch.py` de punta a
+    punta — arranca deshabilitado, progresa, termina, refresca el
+    Explorador, muestra el aviso final) + actualización de 2 tests
+    preexistentes que asumían el reanálisis SINCRÓNICO viejo
+    (`test_marcas_in_out.py`, con un archivo GENUINAMENTE roto en vez
+    de mockear `analizar_audio()` en el proceso padre — el hijo no
+    hereda ese monkeypatch; `test_item_aleatorio_v1.py`, `resultado()`
+    del diálogo pasó de 2 a 3 elementos) + suite de regresión completa
+    sin fallos nuevos (mismos 7 fallos preexistentes de siempre:
+    `test_audio_only_y_buffer.py`, `test_confirmaciones.py`,
+    `test_fade_in_declick_v1.py`, `test_log_git.py`,
+    `test_ronda_ajustes_dinesat2.py`, `test_ronda_dinesat3.py`,
+    `test_ventana3.py` — confirmado además que un fallo puntual de
+    `test_volumen_robusto.py` visto en una corrida intermedia era
+    flaky/no reproducible, ya documentado como tal desde la ronda 46,
+    sin relación con este cambio: pasó limpio en 3 corridas aisladas
+    siguientes) + smoke test de arranque limpio. **Sigue sin poder
+    probarse con audio/VLC real ni con la biblioteca real de 9800
+    elementos de Santiago**: falta que confirme (1) que reanalizar la
+    biblioteca completa ya NO traba el programa y la barra de progreso
+    se ve avanzar en vivo, (2) que tras instalar `audioop-lts` y
+    reanalizar de nuevo, los íconos de aviso desaparecen de los
+    archivos musicales que sí tenían audio válido, (3) que insertar
+    varios ítems Aleatorio de una en el Programador/Musicalizador
+    ahorra el trabajo de repetir el botón a mano, y (4) sobre todo,
+    que con su biblioteca y categorías reales, los bloques horarios
+    ahora se sienten realmente variados entre sí y dentro de cada uno
+    — si TODAVÍA nota repetición constante después de esta ronda, el
+    diagnóstico más probable pasaría a ser categorías demasiado chicas
+    (pocos archivos de Publicidad/Separadores por categoría), no un
+    bug de código.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

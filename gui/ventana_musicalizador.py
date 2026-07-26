@@ -293,7 +293,13 @@ class VentanaMusicalizador(QDialog):
             return
         item = dialogo.resultado()
         if item:
-            self._items_en_edicion.append(item)
+            # Pedido explícito: agregar varios ítems Aleatorio de una
+            # (2, 3, 4, 5...) — cada copia es un dict independiente
+            # (misma categoría), la serie los resuelve a archivos
+            # distintos entre sí (rutas_a_evitar, ya existente).
+            cantidad = dialogo.resultado_cantidad()
+            for _ in range(cantidad):
+                self._items_en_edicion.append(dict(item))
             self._refrescar_lista_items()
 
     def _editar_item(self):
