@@ -38,6 +38,14 @@ independiente:
 sudo apt install easyeffects
 ```
 
+Alternativa más liviana a EasyEffects: `extras/procesador_fm_viper4linux/`
+trae un instalador aparte para Viper4Linux (motor + GUI opcional,
+compilado desde fuente vendorizada en este repo). Menos funciones que
+EasyEffects, pero ocupa muchísimo menos — ver ese README para
+comparación de recursos, y para alternativas todavía más completas
+(y pesadas) como JDSP4Linux/JamesDSP. Tampoco tiene ninguna
+integración con esta app.
+
 Esta app sí nivela el volumen de cada tema al importarlo (para que no
 haya diferencia de volumen entre canción y canción), sin depender de
 EasyEffects ni de ningún procesador externo — ver

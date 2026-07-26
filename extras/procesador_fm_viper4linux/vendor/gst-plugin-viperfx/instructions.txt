@@ -1,0 +1,31 @@
+# You will need basic build utilities installed already.
+# You will need cmake installed. 
+# You need libglib2.0-dev (debian) or (glib2) arch to compile this software.  
+mkdir build
+cd build
+cmake ..
+make
+sudo cp libgstviperfx.so /usr/lib/gstreamer-1.0/libgstviperfx.so
+
+
+#Go download the Viper Core. 
+sudo cp libviperfx_x64_linux.so /usr/lib/libviperfx.so
+sudo chmod +x /usr/lib/libviperfx.so
+
+#You should now be able to view the plugin with gst-inspect-1.0 viperfx
+#You should now be able to run some basic processing like:
+#gst-launch-1.0 -v filesrc location=Alesis-Fusion-Viola-C5.wav ! wavparse ! viperfx fx-enable=true out-volume=10 ! pulsesink
+
+#Getting it working with PulseAudio for System-Wide processing.
+
+#Get current sinks
+pacmd list-sinks | grep -e 'name:'
+#or
+pactl list sinks | grep -e 'Name:' -A1
+#Make a dummy sink
+pactl load-module module-null-sink sink_name=viper sink_properties=device.description=Viper4Linux
+#Max the volume on the original output device
+#Change primary output device to the dummy sink.
+#Route the monitor of the dummy into viper then out to the original (hardware) sink.
+gst-launch-1.0 -v pulsesrc device=viper.monitor ! viperfx fx-enable=true out-volume=100 ! pulsesink device=alsa_output.pci-0000_00_1f.3.analog-stereo
+#(the analog-stereo bit was my machine's specifically, you will need the data from the first command, pacmd list-sinks)
