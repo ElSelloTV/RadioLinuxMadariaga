@@ -1,0 +1,32 @@
+<RCC>
+    <qresource prefix="/">
+        <file>icons/menu.svg</file>
+        <file>icons/menu-white.svg</file>
+        <file>icons/queue.svg</file>
+        <file>icons/queue-white.svg</file>
+        <file>icons/settings.svg</file>
+        <file>icons/settings-white.svg</file>
+        <file>icons/viper.png</file>
+        <file>icons/parts/lower.svg</file>
+        <file>icons/parts/upper.svg</file>
+        <file>icons/parts/viper.svg</file>
+        <file>icons/viper-new.svg</file>
+        <file>icons/arrow-down-white.svg</file>
+        <file>icons/arrow-down.svg</file>
+        <file>icons/arrow-left-double-white.svg</file>
+        <file>icons/arrow-left-double.svg</file>
+        <file>icons/arrow-right-double-white.svg</file>
+        <file>icons/arrow-right-double.svg</file>
+        <file>icons/arrow-up-white.svg</file>
+        <file>icons/arrow-up.svg</file>
+        <file>icons/edit-undo-white.svg</file>
+        <file>icons/edit-undo.svg</file>
+        <file>viper.png</file>
+        <file>icons/error.svg</file>
+        <file>translations/lang_de.qm</file>
+        <file>translations/lang_en.qm</file>
+        <file>translations/lang_pt_BR.qm</file>
+        <file>translations/lang_zh_CN.qm</file>
+        <file>translations/lang_zh_HK.qm</file>
+    </qresource>
+</RCC>
