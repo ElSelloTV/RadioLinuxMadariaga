@@ -8458,6 +8458,146 @@ todo el resto.
     grande tarda un tiempo razonable, y (3) si la sugerencia por
     defecto de qué mantener (el más "completo": con ruta+artista+
     tamaño) coincide con su propio criterio la mayoría de las veces.
+87. ~~"Veo que nunca funciona el recorte de silencio" — encontrado el
+    bug de fondo: fallos SILENCIOSOS, nunca reportados~~ — pedido
+    explícito de Santiago con la especificación completa de un
+    sistema de "marcas de entrada y salida de reproducción" (no
+    destructivo, registrado en la base JSON para MÚSICA, revisable
+    desde Configuración, aplicado automáticamente al importar 1 o
+    varios, y SIEMPRE respetado por Ventana 2/Emisión para el inicio y
+    el fundido de salida) — auditando el código ANTES de programar
+    nada nuevo, se confirmó que ESE sistema ya existe en su totalidad
+    desde hace muchas rondas (`punto_inicio_ms`/`punto_fin_ms`/
+    `ganancia_db`, calculados por `core/analizador_audio.py` y
+    aplicados por `MotorAudio.reproducir()`/`_emitir_posicion()`,
+    confirmado correctamente wireado en `core/gestor_emision.py` para
+    Ventana 2) — así que en vez de reimplementar un sistema paralelo
+    con el mismo riesgo de fallar en silencio, se buscó y corrigió la
+    CAUSA REAL de "nunca funciona":
+
+    **Bug real de fondo, el más importante de esta ronda — 2 fallos
+    silenciosos encadenados**:
+    1. `core/analizador_audio.py:analizar_audio()` (el motor que
+       calcula las marcas) SOLO informaba un fallo con un `print()` a
+       consola — invisible en el uso real, ya que la app se lanza
+       desde el ícono de escritorio sin ninguna terminal a la vista.
+       Si pydub o ffmpeg faltan (o cualquier otro error), el archivo
+       se agregaba igual a la biblioteca con marcas "neutras"
+       (`analizado=False`, sin recorte real) SIN QUE NADIE SE
+       ENTERARA nunca.
+    2. **El bug más grave**: `config/settings.py:reanalizar_biblioteca()`
+       (el botón "🔄 Reanalizar biblioteca" de Configuración →
+       Diagnóstico) contaba CUALQUIER intento como "reanalizado",
+       nunca chequeaba si `analizar_audio()` realmente había logrado
+       calcular algo (`analizado=True`) o había caído al fallback
+       neutro — con el motor completamente roto (ej. sin ffmpeg
+       instalado), el botón igual mostraba con total confianza "Listo:
+       850 archivo(s) reanalizados", una mentira que le daba a Santiago
+       la falsa sensación de que el problema ya estaba resuelto,
+       cuando en realidad NINGÚN archivo había quedado con marcas
+       reales. Esto explica con precisión el síntoma reportado: "nunca
+       funciona", sin ningún error visible en ningún lado.
+
+    **Corregido de raíz, en capas** (nunca confiar en una sola señal
+    de que algo funcionó, mismo criterio ya aplicado varias veces en
+    este proyecto para bugs de libVLC):
+    - `analizar_audio()` ahora registra cada fallo en
+      `log_aplicacion.txt` vía `registrar_error()` (import diferido,
+      sin ciclo con `config/settings.py`) — con la ruta del archivo y
+      el detalle exacto del error, diagnosticable desde Configuración
+      → Diagnóstico → Ver log sin tener que reproducir el problema en
+      vivo con Santiago.
+    - `reanalizar_biblioteca()` cambió de devolver un simple conteo a
+      un dict con desglose REAL: `{"total", "analizados", "fallidos",
+      "musica_total", "musica_analizados"}` — el mensaje final en
+      Configuración ahora es honesto: si hay fallos, `QMessageBox.warning`
+      (no `information`) con el desglose completo y una sugerencia
+      concreta; sin fallos, confirma cuántos quedaron con marcas reales
+      de género Música específicamente (lo que le importa a Ventana 2).
+    - **Nuevo botón "🩺 Verificar motor de análisis de audio"**
+      (Configuración → Diagnóstico, siempre habilitado, no depende de
+      tener la biblioteca cargada): `core.analizador_audio.
+      verificar_motor_disponible()` hace una prueba REAL de punta a
+      punta — genera un audio sintético en memoria (300ms de silencio
+      + 1s de tono + 300ms de silencio, con `pydub.generators.Sine`,
+      sin necesitar ningún archivo de la biblioteca), lo exporta a un
+      WAV temporal, y confirma que `analizar_audio()` sobre ESE archivo
+      da `analizado=True` — antes de chequear que `pydub` esté
+      instalado y que el binario `ffmpeg` del sistema exista
+      (`shutil.which`). Si algo falta, el mensaje dice EXACTAMENTE qué
+      instalar (`pip install pydub` / `sudo apt install ffmpeg`), en
+      vez de un fallo genérico.
+    - **Chequeo automático al ABRIR la app** (`MainWindow.
+      _verificar_motor_analisis_al_iniciar()`, diferido 3s, mismo
+      criterio que la búsqueda de actualización — no competir con el
+      arranque de la radio): si el motor está roto, un aviso NO MODAL
+      (`show()`, nunca bloquea nada) avisa apenas se abre el programa
+      — Santiago ya no tiene que pensar en ir a buscar un botón
+      escondido para enterarse de que algo está mal; con el motor
+      funcionando, no aparece nada (no se molesta en cada arranque).
+    - **Ícono ⚠ visible por archivo, en Ventana 3** (pedido implícito
+      de "hacerlo imposible de no notar"): `gui/styles.py:
+      icono_sin_marcas_in_out()` (triángulo ámbar, mismo patrón de
+      `QPainter` cacheado que `icono_reproducido()`/`icono_error()`) —
+      `VentanaExplorador._actualizar_marcas_item()` lo prende sobre
+      la columna Título de cualquier archivo de género Música con
+      `analizado is False`, con un tooltip explicando por qué y a
+      dónde ir a diagnosticarlo. Acotado a Música a propósito (el
+      género que le importa a Ventana 2/Emisión) — Publicidad/
+      Separador ya usan su propio criterio de corte estricto.
+    - **Avisos al importar** (single y masivo): dar de alta UN archivo
+      de Música con `analizado=False` dispara un `QMessageBox.warning`
+      inmediato; importar un LOTE resume cuántos de cuántos fallaron
+      en un solo aviso al final (no uno por archivo) — ambos apuntan
+      al botón de verificación nuevo.
+
+    **Confirmación de que el resto del sistema YA estaba bien
+    implementado, sin necesitar ningún cambio** (auditado línea por
+    línea antes de tocar nada, para no reimplementar algo que ya
+    funcionaba): el registro en la base JSON para MUSICA ya ocurría en
+    los 3 puntos de alta; "Reanalizar biblioteca" en Configuración ya
+    existía (solo el reporte estaba roto); Ventana 2 ya respeta
+    SIEMPRE `punto_inicio_ms` (seek al arrancar,
+    `MotorAudio.reproducir()`) y `punto_fin_ms` (corte + disparo de
+    crossfade, `_emitir_posicion()`/`restante_ms_cambio()`,
+    confirmado wireado en `core/gestor_emision.py:_reproducir_fila()`/
+    `_iniciar_crossfade()`); y el enfoque ya es 100% no destructivo
+    (nunca edita el archivo de audio original, solo guarda marcas como
+    metadata — documentado explícitamente en el propio
+    `core/analizador_audio.py` desde su creación).
+
+    Probado con `test_marcas_in_out.py` (nuevo, dedicado, con pydub Y
+    ffmpeg REALES instalados en este sandbox para esta ronda —
+    confirmando tanto el camino roto como el camino funcionando de
+    punta a punta, no solo mockeado): `verificar_motor_disponible()`
+    en sus 3 casos (sin pydub, con pydub pero sin ffmpeg, todo
+    disponible con una prueba real de análisis); un fallo real de
+    `analizar_audio()` queda en el log de la app; `reanalizar_biblioteca()`
+    con el motor funcionando reporta el desglose correcto (incluido
+    Música), y con el motor ROTO (simulado) confirma el bug ya
+    corregido — CERO analizados de verdad, ya NUNCA se reporta como
+    "reanalizado" un fallo; el ícono ⚠ aparece solo en Música sin
+    marcas (nunca en Publicidad, nunca si sí tiene marcas); avisos
+    correctos al dar de alta un archivo suelto y al importar un lote;
+    el botón nuevo de Configuración siempre habilitado y con el
+    mensaje correcto (éxito/fallo); el chequeo no-modal al arrancar
+    dispara SOLO cuando el motor está roto — + actualización de un
+    test preexistente (`test_ronda_dnd_reanalisis_ee.py`, asumía el
+    tipo de retorno viejo de `reanalizar_biblioteca()` — int en vez de
+    dict, no es una regresión, es el cambio de contrato de esta
+    misma ronda) + suite de regresión completa sin fallos nuevos
+    (mismos 7 fallos preexistentes de siempre: `test_audio_only_y_buffer.py`,
+    `test_confirmaciones.py`, `test_fade_in_declick_v1.py`,
+    `test_log_git.py`, `test_ronda_ajustes_dinesat2.py`,
+    `test_ronda_dinesat3.py`, `test_ventana3.py`) + smoke test de
+    arranque limpio. **Sigue sin poder confirmarse con la instalación
+    real de Santiago** (la hipótesis de fondo — pydub/ffmpeg
+    faltantes o rotos en su PC — no se puede verificar desde acá):
+    falta que corra "🩺 Verificar motor de análisis de audio" (o
+    simplemente reabra la app) y comparta EXACTAMENTE qué mensaje le
+    da — recién con ese dato real se sabe si la causa era esta, y si
+    corregirla (instalar lo que falte) resuelve el recorte de silencio
+    de una vez.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

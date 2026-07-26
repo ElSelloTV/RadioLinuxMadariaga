@@ -148,7 +148,24 @@ def analizar_audio(
         }
 
     except Exception as error:
-        print(f"[analizador_audio] {MENSAJE_PYDUB_NO_DISPONIBLE} — detalle: {error}")
+        mensaje = f"{MENSAJE_PYDUB_NO_DISPONIBLE} — archivo: {ruta} — detalle: {error}"
+        print(f"[analizador_audio] {mensaje}")
+        # Bug real corregido, causa más probable de "el recorte de
+        # silencio nunca funciona": antes esto SOLO se imprimía a una
+        # consola que nadie ve (la app se lanza desde el ícono de
+        # escritorio, sin terminal visible) -- quedaba un fallo
+        # COMPLETAMENTE invisible, indistinguible de "funcionó pero no
+        # había silencio que cortar". Ahora también queda en
+        # log_aplicacion.txt (Configuración -> Diagnóstico -> Ver log),
+        # diagnosticable sin tener que reproducir el problema en vivo.
+        # Import diferido (config/settings.py ya importa
+        # analizador_audio.py de forma diferida en reanalizar_biblioteca
+        # -- evita un ciclo de imports a nivel de módulo).
+        try:
+            from config.settings import registrar_error
+            registrar_error(mensaje)
+        except Exception:
+            pass
         return {
             "punto_inicio_ms": 0,
             "punto_fin_ms": 0,
@@ -167,3 +184,85 @@ def volumen_ajustado_por_ganancia(volumen_base_0_a_100: int, ganancia_db: float)
     factor = 10 ** (ganancia_db / 20.0)
     volumen = int(round(volumen_base_0_a_100 * factor))
     return max(0, min(100, volumen))
+
+
+def verificar_motor_disponible() -> dict:
+    """Diagnóstico manual (pedido explícito: "veo que nunca funciona
+    el recorte de silencio") -- confirma, de punta a punta, si el
+    motor de marcas IN/OUT (recorte de silencio + nivelado) puede
+    correr de verdad en esta instalación, en vez de descubrirlo recién
+    cuando un archivo real falla en silencio. Comprueba, en orden:
+    (1) que `pydub` esté instalado, (2) que el binario `ffmpeg` del
+    sistema exista en el PATH (pydub lo necesita para decodificar
+    cualquier formato que no sea WAV crudo), y (3) una prueba REAL de
+    punta a punta con audio sintético generado en memoria (silencio +
+    tono, sin necesitar ningún archivo de la biblioteca) para confirmar
+    que `analizar_audio()` efectivamente devuelve `analizado=True`.
+    Nunca lanza excepción -- degrada a un mensaje claro de qué falta."""
+    resultado = {"pydub_ok": False, "ffmpeg_ok": False, "prueba_ok": False, "mensaje": ""}
+
+    try:
+        import pydub  # noqa: F401
+        resultado["pydub_ok"] = True
+    except ImportError:
+        resultado["mensaje"] = (
+            "Falta instalar pydub. Con el entorno virtual activado:\n"
+            "pip install pydub"
+        )
+        return resultado
+
+    import shutil
+    ffmpeg_encontrado = shutil.which("ffmpeg")
+    resultado["ffmpeg_ok"] = bool(ffmpeg_encontrado)
+    if not ffmpeg_encontrado:
+        resultado["mensaje"] = (
+            "pydub está instalado, pero no se encontró el binario \"ffmpeg\" "
+            "del sistema (pydub lo necesita para decodificar MP3/M4A/etc.).\n"
+            "Instalalo con: sudo apt install ffmpeg"
+        )
+        return resultado
+
+    try:
+        import tempfile
+        from pydub import AudioSegment
+        from pydub.generators import Sine
+
+        # 300ms de silencio real + 1s de tono a 440Hz + 300ms de
+        # silencio -- un caso mínimo con silencio de sobra en los dos
+        # extremos para el detector, sin depender de ningún archivo
+        # real de la biblioteca (útil incluso en una instalación sin
+        # ningún tema cargado todavía).
+        segmento = (
+            AudioSegment.silent(duration=300)
+            + Sine(440).to_audio_segment(duration=1000).apply_gain(-3)
+            + AudioSegment.silent(duration=300)
+        )
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as archivo_temp:
+            ruta_temp = archivo_temp.name
+        try:
+            segmento.export(ruta_temp, format="wav")
+            analisis = analizar_audio(ruta_temp, tolerancia_silencio_segundos=0.1)
+        finally:
+            import os
+            try:
+                os.unlink(ruta_temp)
+            except OSError:
+                pass
+
+        resultado["prueba_ok"] = bool(analisis.get("analizado"))
+        if resultado["prueba_ok"]:
+            resultado["mensaje"] = (
+                "Todo en orden: pydub y ffmpeg están disponibles, y una prueba "
+                "real de análisis (silencio + tono generados en memoria) "
+                "confirma que el motor calcula marcas IN/OUT correctamente."
+            )
+        else:
+            resultado["mensaje"] = (
+                "pydub y ffmpeg están instalados, pero la prueba real de "
+                "análisis no devolvió un resultado válido -- revisá el log "
+                "de la aplicación para el detalle exacto del error."
+            )
+    except Exception as error:
+        resultado["mensaje"] = f"La prueba real de análisis falló con un error: {error}"
+
+    return resultado

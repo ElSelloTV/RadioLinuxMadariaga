@@ -500,7 +500,7 @@ def guardar_biblioteca(categorias: list):
     _guardar_json_atomico(ARCHIVO_BIBLIOTECA, categorias, compacto=True)
 
 
-def reanalizar_biblioteca(config: dict) -> int:
+def reanalizar_biblioteca(config: dict) -> dict:
     """Pedido explícito ("los temas siguen teniendo silencio al
     final"): cambiar la tolerancia de silencio en Configuración NO es
     retroactivo por sí solo — el recorte se calcula UNA sola vez, al
@@ -508,17 +508,29 @@ def reanalizar_biblioteca(config: dict) -> int:
     gui/ventana_explorador.py). Esta función vuelve a analizar TODOS
     los materiales YA importados con la tolerancia/umbral ACTUALES —
     es la forma de aplicar un valor nuevo a lo que ya estaba cargado,
-    sin tener que reemplazar archivo por archivo a mano. Devuelve la
-    cantidad de archivos reanalizados. Un archivo cuya ruta ya no
-    existe en disco se saltea sin romper el resto (ni el propio
-    recorrido, ni la reanudación de la app)."""
+    sin tener que reemplazar archivo por archivo a mano. Un archivo
+    cuya ruta ya no existe en disco se saltea sin romper el resto (ni
+    el propio recorrido, ni la reanudación de la app).
+
+    Bug real corregido ("nunca funciona el recorte de silencio"): esta
+    función contaba TODO intento como "reanalizado" sin fijarse si
+    `analizar_audio()` realmente pudo calcular algo (`analizado=True`)
+    o cayó al valor neutro de fallback (`analizado=False`, típico si
+    falta pydub/ffmpeg en la instalación) — con el motor roto, el
+    botón de Configuración igual reportaba "N archivos reanalizados",
+    dando una falsa sensación de éxito mientras NINGUNO quedaba con
+    marcas IN/OUT reales. Ahora devuelve un dict con el desglose real
+    (total intentado, cuántos quedaron con marcas de verdad, cuántos
+    fallaron), separando además el género "Musica" — el que más le
+    importa a Ventana 2/Emisión para el inicio y el fundido de
+    salida — para que el llamador pueda mostrar un reporte honesto en
+    vez de un simple conteo."""
     from core.analizador_audio import analizar_audio
 
     categorias = cargar_biblioteca()
-    contador = 0
+    stats = {"total": 0, "analizados": 0, "fallidos": 0, "musica_total": 0, "musica_analizados": 0}
 
     def _procesar_categoria(categoria: dict):
-        nonlocal contador
         for registro in categoria.get("archivos", []):
             ruta = registro.get("ruta")
             if not ruta or not os.path.exists(ruta):
@@ -530,7 +542,17 @@ def reanalizar_biblioteca(config: dict) -> int:
             registro["punto_fin_ms"] = analisis["punto_fin_ms"] or None
             registro["ganancia_db"] = analisis["ganancia_db"]
             registro["analizado"] = analisis["analizado"]
-            contador += 1
+
+            stats["total"] += 1
+            es_musica = registro.get("genero") == "Musica"
+            if es_musica:
+                stats["musica_total"] += 1
+            if analisis["analizado"]:
+                stats["analizados"] += 1
+                if es_musica:
+                    stats["musica_analizados"] += 1
+            else:
+                stats["fallidos"] += 1
         for subcategoria in categoria.get("subcategorias", []):
             _procesar_categoria(subcategoria)
 
@@ -538,7 +560,7 @@ def reanalizar_biblioteca(config: dict) -> int:
         _procesar_categoria(categoria)
 
     guardar_biblioteca(categorias)
-    return contador
+    return stats
 
 
 # ----------------------------------------------------------------------

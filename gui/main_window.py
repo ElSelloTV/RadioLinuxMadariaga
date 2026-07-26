@@ -124,6 +124,19 @@ class MainWindow(QMainWindow):
         # `git fetch` REAL contra el repo en medio de esos tests.
         QTimer.singleShot(2500, self._buscar_actualizacion_automatica)
 
+        # Pedido explícito ("veo que nunca funciona el recorte de
+        # silencio") -- bug real de fondo: un fallo del motor de
+        # marcas IN/OUT (pydub/ffmpeg) se descubría recién cuando
+        # Santiago notaba que un tema sonaba sin recortar, sin ningún
+        # aviso -- el análisis fallido solo imprimía a una consola que
+        # nadie ve al lanzar desde el ícono de escritorio. Esta
+        # verificación corre SOLA al abrir (diferida 3s, mismo defer
+        # largo que la búsqueda de actualización, por el mismo motivo:
+        # varios tests bombean el event loop un par de segundos sin
+        # querer disparar esto) y avisa, NO MODAL, solo si algo falla
+        # -- si todo está en orden, no interrumpe nada.
+        QTimer.singleShot(3000, self._verificar_motor_analisis_al_iniciar)
+
     # ------------------------------------------------------------------
     # Menú superior
     # ------------------------------------------------------------------
@@ -569,6 +582,36 @@ class MainWindow(QMainWindow):
         )
         self._aviso_sin_bloque.setStandardButtons(QMessageBox.StandardButton.Ok)
         self._aviso_sin_bloque.show()
+
+    def _verificar_motor_analisis_al_iniciar(self):
+        """Ver comentario en __init__. Corre la prueba real (audio
+        sintético en memoria, sin tocar la biblioteca) y avisa NO
+        MODAL solo si falla -- con todo en orden no hace nada, no
+        interrumpe el arranque."""
+        from core.analizador_audio import verificar_motor_disponible
+
+        resultado = verificar_motor_disponible()
+        if resultado["prueba_ok"]:
+            return
+
+        registrar_evento(f"Verificación de motor de análisis de audio al iniciar: {resultado['mensaje']}")
+        self.statusBar().showMessage(
+            "El motor de marcas IN/OUT (recorte de silencio) no está funcionando -- ver Configuración → Diagnóstico.",
+            10000,
+        )
+        self._aviso_motor_analisis = QMessageBox(self)
+        self._aviso_motor_analisis.setIcon(QMessageBox.Icon.Warning)
+        self._aviso_motor_analisis.setWindowTitle("Motor de análisis de audio")
+        self._aviso_motor_analisis.setText(
+            "El motor de marcas IN/OUT (recorte de silencio y nivelado) no está "
+            "funcionando en esta instalación:\n\n"
+            f"{resultado['mensaje']}\n\n"
+            "Mientras tanto, la música se reproduce SIN recorte de silencio ni "
+            "nivelado. Podés volver a verificarlo en cualquier momento desde "
+            "Configuración → Diagnóstico → \"Verificar motor de análisis de audio\"."
+        )
+        self._aviso_motor_analisis.setStandardButtons(QMessageBox.StandardButton.Ok)
+        self._aviso_motor_analisis.show()
 
     def _on_archivo_agregado(self, ruta: str):
         self._mostrar_preload("Cargando música...")
