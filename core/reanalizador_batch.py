@@ -36,6 +36,14 @@ puede tardar minutos — guardar cada tanto asegura que interrumpir a
 mitad de camino (Ctrl+C, cerrar la terminal, matar el proceso) pierda
 como mucho el último tramo sin guardar, nunca todo el trabajo ya
 hecho.
+
+Alcance acotado a género "Musica" (pedido explícito: "para futuras
+nuevas instalaciones que se aplica sólo a los que estén catalogados
+como música. Ahorrá tiempo e ítem a analizar"): Publicidad/Separador/
+Pisador/Artística/HTH ya NO pasan por este reanálisis MASIVO —
+tienen su propia vía manual, más lenta pero deliberada, en el menú
+contextual de Ventana 3 ("Aplicar/Revertir análisis de silencio",
+uno o varios a la vez).
 --------------------------------------------------------
 """
 
@@ -58,7 +66,7 @@ def _contar_elegibles(categorias: list) -> int:
         nonlocal contador
         for registro in categoria.get("archivos", []):
             ruta = registro.get("ruta")
-            if ruta and os.path.exists(ruta):
+            if ruta and os.path.exists(ruta) and registro.get("genero") == "Musica":
                 contador += 1
         for subcategoria in categoria.get("subcategorias", []):
             _contar(subcategoria)
@@ -110,6 +118,15 @@ def ejecutar_reanalisis(config: dict, callback_progreso=None) -> dict:
         for registro in categoria.get("archivos", []):
             ruta = registro.get("ruta")
             if not ruta or not os.path.exists(ruta):
+                continue
+            # Pedido explícito ("para futuras nuevas instalaciones que
+            # se aplica sólo a los que estén catalogados como música.
+            # Ahorrá tiempo e ítem a analizar"): el botón GLOBAL de
+            # Configuración ya no toca Publicidad/Separador/Pisador/
+            # Artística/HTH -- para esos géneros, el operador usa el
+            # menú contextual de Ventana 3 ("Aplicar/Revertir análisis
+            # de silencio"), archivo por archivo o en lote.
+            if registro.get("genero") != "Musica":
                 continue
 
             tenia_marcas_buenas = registro.get("analizado") is True
