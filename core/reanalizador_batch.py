@@ -77,8 +77,25 @@ def ejecutar_reanalisis(config: dict, callback_progreso=None) -> dict:
     (total/analizados/fallidos/musica_total/musica_analizados), más
     `preservados` (archivos cuyo análisis falló esta vez pero que ya
     tenían marcas buenas de antes -- NUNCA se destruyen)."""
-    from config.settings import cargar_biblioteca, guardar_biblioteca, tolerancia_silencio_para_genero
+    from config.settings import (
+        cargar_biblioteca, guardar_biblioteca, registrar_error, tolerancia_silencio_para_genero,
+    )
     from core.analizador_audio import analizar_audio
+
+    def _guardar_sin_frenar_el_lote(categorias):
+        # Defensivo (mismo criterio ya establecido en el proyecto:
+        # "nunca confiar en una sola capa de protección"): un guardado
+        # periódico que falla (ej. una carrera puntual con otro
+        # escritor, ya blindada en _guardar_json_atomico, o cualquier
+        # otro problema transitorio de disco) NO debe tirar abajo todo
+        # el reanálisis -- perdería en memoria el trabajo de miles de
+        # archivos ya procesados. Se registra el error y se sigue; el
+        # PRÓXIMO checkpoint (GUARDAR_CADA archivos después, o el
+        # guardado final) vuelve a intentarlo.
+        try:
+            guardar_biblioteca(categorias)
+        except Exception as error:
+            registrar_error(f"reanalizador_batch: guardado periódico falló, se sigue igual: {error}")
 
     categorias = cargar_biblioteca()
     total = _contar_elegibles(categorias)
@@ -127,7 +144,7 @@ def ejecutar_reanalisis(config: dict, callback_progreso=None) -> dict:
 
             contador_sin_guardar += 1
             if contador_sin_guardar >= GUARDAR_CADA:
-                guardar_biblioteca(categorias)
+                _guardar_sin_frenar_el_lote(categorias)
                 contador_sin_guardar = 0
             if callback_progreso is not None:
                 callback_progreso(stats["total"], total)
@@ -137,7 +154,7 @@ def ejecutar_reanalisis(config: dict, callback_progreso=None) -> dict:
     for categoria in categorias:
         _procesar_categoria(categoria)
 
-    guardar_biblioteca(categorias)
+    _guardar_sin_frenar_el_lote(categorias)
     return stats
 
 

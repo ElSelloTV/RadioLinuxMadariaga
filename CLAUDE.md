@@ -8936,6 +8936,67 @@ todo el resto.
     dejar ruido de fondo/hiss sin recortar en vez del problema
     contrario), el próximo ajuste sería subir el umbral más cerca de
     0 en pasos chicos (ej. -45) en vez de volver a -40.
+91. ~~Bug real: reanálisis de biblioteca crasheaba a mitad de camino
+    con `FileNotFoundError` en `biblioteca.json.tmp`~~ — Santiago
+    corrió "🔄 Reanalizar biblioteca" (ronda 89/90) y reportó el
+    traceback real: `os.replace(archivo_temporal, ruta)` fallaba con
+    "No such file or directory: biblioteca.json.tmp -> biblioteca.json"
+    a mitad del recorrido recursivo de categorías — el reanálisis
+    seguía y terminaba igual (probablemente porque volvió a apretar el
+    botón y esa segunda vuelta no pisó la misma ventana de carrera),
+    pero la excepción sin atrapar quedaba visible como un error feo.
+
+    **Causa de fondo — carrera real entre DOS procesos escribiendo el
+    mismo archivo**: `_guardar_json_atomico()` (`config/settings.py`)
+    usaba un nombre de archivo temporal FIJO (`"{ruta}.tmp"`) — hasta
+    la ronda 89, biblioteca.json SIEMPRE lo escribía un único proceso
+    (la app principal), así que ese nombre fijo nunca chocaba con
+    nadie. Desde que el reanálisis corre en un PROCESO APARTE (ronda
+    89, justamente para que "el programa siga respondiendo mientras
+    tanto"), es totalmente esperable que Santiago siga navegando
+    Ventana 3 (o cualquier otra acción que dispare
+    `_guardar_biblioteca_debounced()`) MIENTRAS el proceso de
+    reanálisis también está guardando cada 25 archivos — dos
+    escrituras casi simultáneas al MISMO archivo temporal: si un
+    proceso llega a `os.replace()` justo antes que el otro, el
+    segundo se encuentra con que su propio `.tmp` "ya no está" (el
+    primero se lo llevó al renombrarlo) y explota con
+    `FileNotFoundError` — matando de raíz el reanálisis completo en
+    curso (con `guardar_biblioteca()` llamada sin ningún `try/except`
+    alrededor, la excepción se propagaba hasta `main()` y tiraba abajo
+    todo el proceso, con exit code 1).
+
+    **Corregido en dos capas** (nunca confiar en una sola, mismo
+    criterio de siempre en este proyecto):
+    - `_guardar_json_atomico()`: el archivo temporal ahora tiene un
+      nombre ÚNICO por escritura (`tempfile.mkstemp()`, mismo
+      directorio -> mismo filesystem, `os.replace()` sigue siendo
+      atómico) — dos escrituras concurrentes de CUALQUIER origen ya
+      nunca pueden pisarse el `.tmp` la una a la otra. Reproducido y
+      confirmado con un smoke test real (8 procesos escribiendo el
+      mismo archivo 30 veces cada uno, en simultáneo, con
+      `multiprocessing`): con el código VIEJO, 7 de 8 procesos
+      fallaban con el MISMO `FileNotFoundError`; con el fix, los 8
+      terminan limpio.
+    - `core/reanalizador_batch.py`: los guardados periódicos (cada 25
+      archivos) y el final ahora pasan por
+      `_guardar_sin_frenar_el_lote()` — si el guardado falla por
+      CUALQUIER motivo (una carrera residual, disco lleno, lo que
+      sea), se registra en el log y el reanálisis SIGUE (el próximo
+      checkpoint vuelve a intentar guardar) en vez de perder en
+      memoria el trabajo de miles de archivos ya procesados por un
+      solo guardado fallido.
+
+    Probado con `py_compile` limpio + el smoke test de concurrencia
+    real descripto arriba (confirmado que reproduce el bug EXACTO
+    contra el código viejo vía `git stash`, y que el fix lo elimina
+    del todo) + smoke test de arranque de la app sin traceback. **No
+    se pudo correr la suite de regresión de scripts de rondas
+    anteriores** (ninguno está commiteado al repo, ver ronda 90).
+    Falta que Santiago corra "Reanalizar biblioteca" de nuevo,
+    idealmente mientras sigue usando Ventana 3 en paralelo (el
+    escenario que disparó el bug), y confirme que ya no aparece
+    ningún error a mitad de camino.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
@@ -9050,3 +9111,20 @@ todo el resto.
   `super().startDrag()`) para que Qt no haga esa limpieza automática
   por su cuenta. Ver `ArbolReproductorConDrop.startDrag` en
   `gui/common_widgets.py`.
+- **Escritura atómica con nombre de archivo temporal FIJO = bomba de
+  tiempo en cuanto hay MÁS DE UN PROCESO que puede escribir el mismo
+  archivo** (bug real, ronda 91): `_guardar_json_atomico()` usaba
+  `"{ruta}.tmp"` como nombre de temporal — perfectamente seguro
+  mientras solo la app principal escribiera cada archivo, pero en
+  cuanto el reanálisis de biblioteca pasó a correr como PROCESO
+  APARTE (ronda 89, a propósito para no trabar la GUI), dos escrituras
+  casi simultáneas al mismo `.tmp` fijo hacían que el segundo
+  `os.replace()` fallara con `FileNotFoundError` (el primero ya se
+  había llevado el archivo temporal al renombrarlo) — tirando abajo
+  el proceso entero. **Regla**: cualquier función de guardado atómico
+  que un archivo pueda llegar a compartir entre dos procesos/hilos
+  (ahora o en el futuro) necesita un nombre de temporal ÚNICO por
+  escritura (`tempfile.mkstemp()` en el mismo directorio, nunca
+  concatenar `.tmp` a secas) — el costo es cero y evita esta clase
+  entera de bug de raíz, incluso si hoy parece "imposible" que dos
+  escritores coincidan.
