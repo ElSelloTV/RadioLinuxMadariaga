@@ -61,16 +61,41 @@ CONFIG_POR_DEFECTO = {
         # en config_general.json de instalaciones anteriores y se
         # ignora sin romper nada.
         "tolerancia_silencio_segundos": 2.0,
-        "umbral_silencio_dbfs": -40.0,
+        # Bug real corregido (pedido explícito: "los HTH les recortó
+        # el comienzo, las publicidades no terminan, hay canciones que
+        # finaliza antes"): -40dBFS combinado con CERO margen de
+        # salida en Publicidad/Separador/HTH (ver
+        # tolerancia_silencio_v1_segundos, abajo) hacía que cualquier
+        # parte quieta del contenido REAL (una consonante suave al
+        # empezar a hablar, la cola de reverberación/decay de un
+        # fundido musical) quedara clasificada como "silencio" y se
+        # recortara SIN ningún colchón — el corte caía adentro del
+        # contenido audible, no en el silencio real. Bajado a -50dBFS
+        # (más permisivo: hace falta un silencio más profundo/real
+        # para que el detector lo cuente) — sigue sin tocar NUNCA el
+        # medio del tema (ver detect_leading_silence en
+        # core/analizador_audio.py), solo cambia qué tan "de verdad
+        # silencioso" tiene que ser el extremo para recortarlo.
+        "umbral_silencio_dbfs": -50.0,
         "pisador_bajada_db": -4.0,
         # Pedido explícito ("corte de silencio estricto... que sea
         # bien pegados uno a otro"): Publicidad y Separadores (el
-        # material de Ventana 1) se analizan con esta tolerancia, MÁS
-        # ESTRICTA que la general — 0 por defecto, sin margen extra de
-        # silencio, a diferencia de "tolerancia_silencio_segundos" de
-        # arriba (que sí deja un colchón a propósito para Música). Ver
+        # material de Ventana 1, y HTH) se analizan con esta
+        # tolerancia, MÁS ESTRICTA que la general, a diferencia de
+        # "tolerancia_silencio_segundos" de arriba (que sí deja un
+        # colchón a propósito para Música). Ver
         # config/settings.py:tolerancia_silencio_para_genero().
-        "tolerancia_silencio_v1_segundos": 0.0,
+        # Bug real corregido: 0.0 (CERO margen) combinado con el
+        # umbral de -40dBFS de antes dejaba el corte pegado EXACTO al
+        # punto que el detector marcaba como "fin del silencio" — sin
+        # ningún colchón de seguridad ante una imprecisión del
+        # detector, eso cortaba el comienzo real de los HTH y el final
+        # real de las publicidades. Con el umbral ya corregido a
+        # -50dBFS (arriba) esto ya no debería pasar casi nunca, pero
+        # se deja además un colchón chico (150ms) como segunda capa de
+        # seguridad — sigue sonando "bien pegado", nunca tan flojo
+        # como la tolerancia general de Música (2s).
+        "tolerancia_silencio_v1_segundos": 0.15,
         # Fade OUT automático y corto entre tandas de Ventana 1
         # (pedido explícito, en MILISEGUNDOS — a diferencia de
         # "duracion_fade_segundos" de Fade/Transiciones, que es en

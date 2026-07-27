@@ -52,7 +52,7 @@ MENSAJE_PYDUB_NO_DISPONIBLE = (
 )
 
 DBFS_OBJETIVO = -16.0                        # nivel de referencia al que se nivela todo
-UMBRAL_SILENCIO_DBFS_DEFECTO = -40.0         # por debajo de esto se considera "silencio" (configurable)
+UMBRAL_SILENCIO_DBFS_DEFECTO = -50.0         # por debajo de esto se considera "silencio" (configurable)
 LIMITE_RECORTE_SILENCIO_SEGUNDOS = 20.0      # techo duro: nunca recorta más que esto de cada lado
 
 # Tope del margen de seguridad que se deja SIN recortar en la SALIDA
@@ -70,10 +70,17 @@ LIMITE_RECORTE_SILENCIO_SEGUNDOS = 20.0      # techo duro: nunca recorta más qu
 # configurado (`min(tolerancia_ms, MARGEN_MAXIMO_SALIDA_MS)`): alcanza
 # para no cortar en seco una nota/reverberación recién decayendo, sin
 # arrastrar segundos de aire muerto. Los géneros de corte estricto
-# (Publicidad/Separador/HTH, tolerancia=0) no se ven afectados --
-# min(0, 300) sigue dando 0, mismo comportamiento "sin margen" de
-# siempre.
-MARGEN_MAXIMO_SALIDA_MS = 300
+# (Publicidad/Separador/HTH) usan su propia tolerancia chica
+# (tolerancia_silencio_v1_segundos, 150ms por defecto desde el fix del
+# umbral) -- con un valor tan bajo, este tope casi no entra en juego
+# para ellos, importa de verdad solo para Música.
+#
+# Subido de 300 a 400ms (bug real corregido, pedido explícito: "hay
+# canciones que las finaliza antes") -- junto con el fix del umbral
+# por defecto (-40 -> -50dBFS, más permisivo), da un colchón extra
+# para no cortar la cola de un fundido/decay musical que siga siendo
+# audible un poco más allá de donde el detector marca "silencio".
+MARGEN_MAXIMO_SALIDA_MS = 400
 
 
 def analizar_audio(
