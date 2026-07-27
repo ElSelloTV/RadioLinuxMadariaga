@@ -83,6 +83,62 @@ LIMITE_RECORTE_SILENCIO_SEGUNDOS = 20.0      # techo duro: nunca recorta más qu
 MARGEN_MAXIMO_SALIDA_MS = 400
 
 
+def _cargar_audio(ruta: str):
+    """`AudioSegment.from_file(ruta)` con un fallback real para WAV
+    comprimidos en IMA-ADPCM (bug real encontrado con el log de
+    Santiago -- 61 archivos de su biblioteca, todos ADPCM, fallaban
+    SIEMPRE con "Decoding failed. ffmpeg returned error code: 8" /
+    "Unknown encoder 'pcm_s4le'").
+
+    Causa de fondo (confirmada leyendo el propio `pydub/audio_segment.py`
+    instalado, no adivinada): al convertir un archivo, pydub le pide a
+    `ffprobe` el `bits_per_sample` del stream de audio y arma el
+    encoder de SALIDA como `"pcm_s%dle" % bits_per_sample` -- para
+    IMA-ADPCM, ffprobe reporta 4 bits/muestra (el tamaño de la unidad
+    COMPRIMIDA, no el ancho real del PCM decodificado), así que pydub
+    termina pidiéndole a ffmpeg el encoder `pcm_s4le`, que no existe
+    (ffmpeg no tiene PCM de 4 bits) -- la conversión revienta siempre,
+    para cualquier archivo con este códec, sin importar el contenido.
+
+    El fallback: si la carga directa falla, se decodifica el archivo a
+    PCM de 16 bits con ffmpeg DIRECTO (subprocess propio, sin pasar
+    por el auto-detect roto de pydub) a un WAV temporal, y recién ahí
+    se lo entrega a pydub -- el archivo original nunca se toca (mismo
+    enfoque no destructivo de siempre). Si ffmpeg no está en el PATH,
+    o la conversión manual también falla, se relanza el error
+    ORIGINAL (nunca uno nuevo, más confuso, del segundo intento)."""
+    from pydub import AudioSegment
+    try:
+        return AudioSegment.from_file(ruta)
+    except Exception as error_original:
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise error_original
+
+        descriptor, ruta_temp = tempfile.mkstemp(suffix=".wav")
+        os.close(descriptor)
+        try:
+            resultado = subprocess.run(
+                [ffmpeg, "-y", "-i", ruta, "-acodec", "pcm_s16le", "-f", "wav", ruta_temp],
+                capture_output=True, timeout=120,
+            )
+            if resultado.returncode != 0 or not os.path.exists(ruta_temp) or os.path.getsize(ruta_temp) == 0:
+                raise error_original
+            return AudioSegment.from_file(ruta_temp)
+        except Exception:
+            raise error_original
+        finally:
+            try:
+                os.unlink(ruta_temp)
+            except OSError:
+                pass
+
+
 def analizar_audio(
     ruta: str,
     tolerancia_silencio_segundos: float = 2.0,
@@ -113,7 +169,7 @@ def analizar_audio(
         from pydub import AudioSegment
         from pydub.silence import detect_leading_silence
 
-        audio = AudioSegment.from_file(ruta)
+        audio = _cargar_audio(ruta)
         duracion_total_ms = len(audio)
         tolerancia_ms = int(tolerancia_silencio_segundos * 1000)
         limite_ms = int(LIMITE_RECORTE_SILENCIO_SEGUNDOS * 1000)

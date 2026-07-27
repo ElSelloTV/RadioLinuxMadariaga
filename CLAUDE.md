@@ -9062,6 +9062,67 @@ todo el resto.
     puede aplicar/revertir el análisis a mano sobre HTH/Publicidad/
     Separadores puntuales desde el menú contextual, tanto de a uno
     como en lote.
+93. ~~Bug real de fondo encontrado en el log real que Santiago subió a
+    `main`: 61 archivos de su biblioteca (105 líneas de error, algunos
+    reintentados más de una vez) fallaban SIEMPRE el análisis de
+    silencio con "Decoding failed. ffmpeg returned error code: 8" /
+    "Unknown encoder 'pcm_s4le'"~~ — pedido: "Revisá el log que acabo
+    de subir a Main." Investigado leyendo el propio código instalado
+    de pydub (`pydub/audio_segment.py`), no adivinado: los 61 archivos
+    (todos en `Storage 1/Audio High Resolution/000/`) están
+    codificados en **IMA-ADPCM** (`Stream #0:0: Audio: adpcm_ima_wav`)
+    — un formato WAV comprimido con pérdida, mitad del tamaño de un
+    PCM normal. Al convertir CUALQUIER archivo, pydub le pregunta a
+    `ffprobe` el `bits_per_sample` del stream y arma el encoder de
+    SALIDA como `"pcm_s%dle" % bits_per_sample` — para IMA-ADPCM,
+    ffprobe reporta **4 bits/muestra** (el ancho de la unidad
+    COMPRIMIDA, no el PCM real ya decodificado), así que pydub termina
+    pidiéndole a ffmpeg el encoder `pcm_s4le`, que **no existe** (ffmpeg
+    no tiene PCM de 4 bits) — la conversión revienta SIEMPRE para
+    cualquier archivo con este códec, sin importar el contenido ni el
+    umbral/tolerancia configurados. Reproducido en el sandbox
+    generando un WAV real y recodificándolo a `adpcm_ima_wav` con
+    ffmpeg — mismo error exacto, carácter por carácter, que el log de
+    Santiago.
+
+    **Corregido con un fallback real, no un ajuste de configuración**
+    (`core/analizador_audio.py`, `_cargar_audio()`, nuevo): si
+    `AudioSegment.from_file(ruta)` falla, se decodifica el archivo a
+    PCM de 16 bits con **ffmpeg DIRECTO** (`subprocess` propio, `-acodec
+    pcm_s16le -f wav`, sin pasar por el auto-detect roto de pydub) a un
+    WAV temporal, y recién ahí se lo entrega a pydub — el archivo
+    original en la biblioteca de Santiago NUNCA se toca (mismo enfoque
+    no destructivo de siempre). Si ffmpeg no está en el PATH, o la
+    conversión manual también falla, se relanza el error ORIGINAL (no
+    uno nuevo del segundo intento, más confuso) — así un archivo
+    genuinamente corrupto/inexistente sigue degradando limpio a marcas
+    neutras, exactamente como antes. Esto arregla de raíz CUALQUIER WAV
+    ADPCM que Santiago tenga hoy o agregue en el futuro — no hace
+    falta que él convierta los 61 archivos a mano.
+
+    Sobre "quiero un verdadero aleatorio, sin repeticiones
+    innecesarias": Santiago avisó que sigue probando el ítem Aleatorio
+    (reforzado en la ronda 89 con no-repetir DURO dentro del mismo
+    bloque + inserción de N de una) — sin un reporte concreto todavía,
+    no se tocó nada de ese motor en esta ronda; queda a la espera de
+    que aparezca un caso puntual de repetición para diagnosticar contra
+    datos reales, mismo criterio de siempre en este proyecto (nunca
+    tocar a ciegas un mecanismo que ya se auditó y no mostró bugs).
+
+    Probado reproduciendo el bug EXACTO con un WAV sintético
+    recodificado a IMA-ADPCM (`ffmpeg -acodec adpcm_ima_wav`):
+    confirmado que fallaba idéntico al log real de Santiago antes del
+    fix, y que con el fix aplicado `analizar_audio()` devuelve
+    `analizado=True` con la duración y ganancia correctas — + un WAV
+    PCM normal (camino sin cambios) y una ruta genuinamente inexistente
+    (sigue degradando limpio, sin relanzar una excepción distinta) +
+    `py_compile` de todo el proyecto + smoke test de arranque sin
+    traceback. **No se pudo correr la suite de regresión de scripts de
+    rondas anteriores** (ninguno está commiteado al repo, ver ronda
+    90). Falta que Santiago corra "Reanalizar biblioteca — solo
+    Música" (o "🔈 Aplicar análisis de silencio..." sobre esos 61
+    puntuales si no son de género Música) y confirme que ya no aparece
+    ningún error de "Decoding failed"/"pcm_s4le" para esos archivos.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
