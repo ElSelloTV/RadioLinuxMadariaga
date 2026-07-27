@@ -11,6 +11,7 @@ fade y dispositivos de audio sin depender del motor todavía.
 import copy
 import json
 import os
+import tempfile
 from datetime import date
 
 DIRECTORIO_CONFIG = os.path.join(os.path.dirname(__file__), "data")
@@ -179,17 +180,45 @@ def _guardar_json_atomico(ruta: str, datos, compacto: bool = False):
     `guardar_biblioteca()` es la única que lo usa — nadie edita
     biblioteca.json a mano, a diferencia de config_general.json o
     programacion.json, que se quedan legibles con indent=2 por si
-    Santiago necesita mirarlos/editarlos directo alguna vez."""
+    Santiago necesita mirarlos/editarlos directo alguna vez.
+
+    Bug real corregido (concurrencia entre la app principal y el
+    proceso APARTE de reanálisis de biblioteca, ronda 89 — antes de
+    eso, biblioteca.json siempre lo escribía un único proceso, así
+    que nunca había una carrera real posible): el nombre del archivo
+    temporal era FIJO (`"{ruta}.tmp"`), compartido por CUALQUIER
+    escritor. Si dos procesos guardaban biblioteca.json casi al mismo
+    tiempo (ej. el reanálisis en segundo plano Y el operador editando
+    algo en Ventana 3 mientras tanto — el programa queda
+    deliberadamente responsive durante el reanálisis, así que esto es
+    esperable, no un caso raro), uno de los dos podía renombrar SU
+    `.tmp` justo antes de que el otro llegara a `os.replace()` — el
+    segundo fallaba con `FileNotFoundError` (el archivo ya no estaba,
+    se lo había llevado el primero) y ABORTABA todo el reanálisis en
+    curso. Corregido con un nombre temporal ÚNICO por escritura
+    (`tempfile.mkstemp`, mismo directorio -> mismo filesystem,
+    `os.replace()` sigue siendo atómico) — dos escrituras concurrentes
+    ya nunca pueden pisarse el archivo temporal la una a la otra."""
     _asegurar_directorio()
-    archivo_temporal = f"{ruta}.tmp"
-    with open(archivo_temporal, "w", encoding="utf-8") as f:
-        if compacto:
-            json.dump(datos, f, ensure_ascii=False, separators=(",", ":"))
-        else:
-            json.dump(datos, f, indent=2, ensure_ascii=False)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(archivo_temporal, ruta)
+    directorio = os.path.dirname(ruta) or "."
+    descriptor, archivo_temporal = tempfile.mkstemp(
+        dir=directorio, prefix=f".{os.path.basename(ruta)}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+            if compacto:
+                json.dump(datos, f, ensure_ascii=False, separators=(",", ":"))
+            else:
+                json.dump(datos, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(archivo_temporal, ruta)
+    except Exception:
+        try:
+            os.unlink(archivo_temporal)
+        except OSError:
+            pass
+        raise
 
 
 def _fusionar_con_defecto(config_guardada: dict) -> dict:
