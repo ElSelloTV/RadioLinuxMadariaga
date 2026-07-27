@@ -1524,6 +1524,124 @@ class VentanaExplorador(QWidget):
         self._guardar_biblioteca_debounced()
         QMessageBox.information(self, "Vigencia", f"Vigencia actualizada en {tocados} archivo(s).")
 
+    def _aplicar_analisis_silencio(self, items: list):
+        """Pedido explícito ("agregá en el menú contextual la
+        posibilidad de aplicar el análisis... a un ítem o varios"):
+        recorta silencio + nivela UNO o VARIOS archivos seleccionados
+        con los valores de tolerancia/umbral que están guardados AHORA
+        MISMO en Configuración -- a diferencia del botón global
+        "🔄 Reanalizar biblioteca" (acotado a género Música desde esta
+        misma ronda, para no gastar tiempo de más en una biblioteca
+        grande), esto funciona con CUALQUIER género -- es la vía para
+        corregir a mano Publicidad/Separador/Pisador/Artística/HTH,
+        eligiendo archivo por archivo o en lote.
+
+        Mismo criterio de "nunca destruir una marca buena con un fallo
+        nuevo" que ya usa `core/reanalizador_batch.py`: un archivo que
+        ya tenía marcas reales y esta vuelta falla queda intacto, no
+        se pisa con el fallback neutro."""
+        if not items:
+            return
+        config = cargar_configuracion()
+        umbral = config.get("reproduccion", {}).get("umbral_silencio_dbfs", -40.0)
+
+        analizados = 0
+        preservados = 0
+        fallidos = 0
+        sin_archivo = 0
+        for item in list(items):
+            registro = item.data(0, ROL_REGISTRO)
+            if not registro:
+                continue
+            categoria = item.data(0, ROL_CATEGORIA_ORIGEN)
+            if categoria is None:
+                continue
+            ruta = registro.get("ruta")
+            if not ruta or not os.path.exists(ruta):
+                sin_archivo += 1
+                continue
+
+            registros = categoria.data(0, ROL_ARCHIVOS) or []
+            indice = self._buscar_indice_registro(registros, registro)
+            if indice < 0:
+                continue
+            registro_vivo = registros[indice]
+            tenia_marcas_buenas = registro_vivo.get("analizado") is True
+
+            tolerancia = tolerancia_silencio_para_genero(config, registro_vivo.get("genero"))
+            analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral)
+
+            if analisis["analizado"]:
+                registro_vivo["punto_inicio_ms"] = analisis["punto_inicio_ms"]
+                registro_vivo["punto_fin_ms"] = analisis["punto_fin_ms"] or None
+                registro_vivo["ganancia_db"] = analisis["ganancia_db"]
+                registro_vivo["analizado"] = True
+                analizados += 1
+            elif tenia_marcas_buenas:
+                preservados += 1
+            else:
+                registro_vivo["punto_inicio_ms"] = 0
+                registro_vivo["punto_fin_ms"] = None
+                registro_vivo["ganancia_db"] = 0.0
+                registro_vivo["analizado"] = False
+                fallidos += 1
+
+            categoria.setData(0, ROL_ARCHIVOS, registros)
+            item.setData(0, ROL_REGISTRO, registro_vivo)
+            self._actualizar_marcas_item(item, registro_vivo)
+
+        self._guardar_biblioteca_debounced()
+
+        mensaje = f"Análisis aplicado a {analizados} archivo(s)."
+        if preservados:
+            mensaje += f"\n{preservados} ya tenían marcas buenas y se preservaron (falló esta vuelta)."
+        if fallidos:
+            mensaje += f"\n{fallidos} fallaron de verdad (quedan sin recorte ni nivelado)."
+        if sin_archivo:
+            mensaje += f"\n{sin_archivo} se saltearon (sin archivo vinculado en disco)."
+        QMessageBox.information(self, "Aplicar análisis de silencio", mensaje)
+
+    def _revertir_analisis_silencio(self, items: list):
+        """Contraparte de `_aplicar_analisis_silencio` (pedido
+        explícito: "que pueda aplicarse tanto la acción como
+        reversión"): deja el/los archivo(s) seleccionados en las
+        MISMAS marcas neutras que un archivo recién importado sin
+        analizar todavía -- sin recorte de silencio, sin nivelado
+        (`punto_inicio_ms=0`, `punto_fin_ms=None`, `ganancia_db=0.0`,
+        `analizado=False`). El audio real NUNCA se toca (enfoque no
+        destructivo de siempre) -- esto solo saca la metadata,
+        reversible aplicando el análisis de nuevo cuando se quiera."""
+        if not items:
+            return
+        tocados = 0
+        for item in list(items):
+            registro = item.data(0, ROL_REGISTRO)
+            if not registro:
+                continue
+            categoria = item.data(0, ROL_CATEGORIA_ORIGEN)
+            if categoria is None:
+                continue
+            registros = categoria.data(0, ROL_ARCHIVOS) or []
+            indice = self._buscar_indice_registro(registros, registro)
+            if indice < 0:
+                continue
+            registro_vivo = registros[indice]
+            registro_vivo["punto_inicio_ms"] = 0
+            registro_vivo["punto_fin_ms"] = None
+            registro_vivo["ganancia_db"] = 0.0
+            registro_vivo["analizado"] = False
+            categoria.setData(0, ROL_ARCHIVOS, registros)
+            item.setData(0, ROL_REGISTRO, registro_vivo)
+            self._actualizar_marcas_item(item, registro_vivo)
+            tocados += 1
+
+        self._guardar_biblioteca_debounced()
+        QMessageBox.information(
+            self, "Revertir análisis de silencio",
+            f"Revertido en {tocados} archivo(s) -- vuelven a sonar sin recorte ni nivelado, "
+            "como recién importados.",
+        )
+
     def _editar_informacion_archivo(self, item=None):
         """Pedido explícito: editar título/artista/género/categoría de
         un material YA importado, sin tocar el audio ni re-analizarlo
@@ -1861,6 +1979,17 @@ class VentanaExplorador(QWidget):
         accion_vigencia = menu.addAction(texto_vigencia)
         accion_ubicar = menu.addAction("📍 Ubicar")
         menu.addSeparator()
+        # Pedido explícito ("agregá en el menú contextual la
+        # posibilidad de aplicar el análisis como revertirlo... a un
+        # ítem o varios"): a diferencia del botón global de
+        # Configuración (acotado a Música), esto funciona con
+        # CUALQUIER género -- la vía manual para Publicidad/Separador/
+        # Pisador/Artística/HTH.
+        texto_aplicar_analisis = "🔈 Aplicar análisis de silencio..." if not hay_seleccion_multiple else f"🔈 Aplicar análisis de silencio a {len(seleccionados)}..."
+        accion_aplicar_analisis = menu.addAction(texto_aplicar_analisis)
+        texto_revertir_analisis = "↩ Revertir análisis de silencio..." if not hay_seleccion_multiple else f"↩ Revertir análisis de silencio en {len(seleccionados)}..."
+        accion_revertir_analisis = menu.addAction(texto_revertir_analisis)
+        menu.addSeparator()
         texto_eliminar = "✕ Eliminar" if len(seleccionados) <= 1 else f"✕ Eliminar {len(seleccionados)}"
         accion_eliminar = menu.addAction(texto_eliminar)
 
@@ -1877,6 +2006,8 @@ class VentanaExplorador(QWidget):
         accion_editar.setEnabled(hay_seleccion_unica)
         accion_vigencia.setEnabled(len(seleccionados) > 0)
         accion_ubicar.setEnabled(hay_seleccion_unica)
+        accion_aplicar_analisis.setEnabled(len(seleccionados) > 0)
+        accion_revertir_analisis.setEnabled(len(seleccionados) > 0)
         accion_eliminar.setEnabled(len(seleccionados) > 0)
 
         accion_elegida = menu.exec(self.tree_archivos.viewport().mapToGlobal(posicion))
@@ -1900,6 +2031,10 @@ class VentanaExplorador(QWidget):
                 self._editar_vigencia(seleccionados[0] if seleccionados else None)
         elif accion_elegida == accion_ubicar:
             self._ubicar_archivo(seleccionados[0] if seleccionados else None)
+        elif accion_elegida == accion_aplicar_analisis:
+            self._aplicar_analisis_silencio(seleccionados)
+        elif accion_elegida == accion_revertir_analisis:
+            self._revertir_analisis_silencio(seleccionados)
         elif accion_elegida == accion_eliminar:
             self._eliminar_archivo()
 

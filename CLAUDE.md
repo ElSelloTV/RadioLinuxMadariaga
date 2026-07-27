@@ -8997,6 +8997,71 @@ todo el resto.
     idealmente mientras sigue usando Ventana 3 en paralelo (el
     escenario que disparó el bug), y confirme que ya no aparece
     ningún error a mitad de camino.
+92. ~~Aplicar/Revertir análisis de silencio por ítem o lote (menú
+    contextual) + botón global acotado a Música~~ — Santiago confirmó
+    la dirección propuesta ("Sigamos así") y pidió el mecanismo
+    completo: control manual y granular sobre CUÁLES archivos llevan
+    el recorte de silencio/nivelado y cuáles no, más el ahorro de
+    tiempo de acotar el reanálisis masivo solo a Música.
+
+    - **Menú contextual de Ventana 3, dos acciones nuevas**
+      (`gui/ventana_explorador.py`): "🔈 Aplicar análisis de
+      silencio..." y "↩ Revertir análisis de silencio...", ambas
+      habilitadas con 1 o más ítems seleccionados (mismo criterio que
+      Exportar/Editar información/Vigencia) — el texto muestra la
+      cantidad cuando hay selección múltiple.
+      - **Aplicar** (`_aplicar_analisis_silencio`): corre
+        `analizar_audio()` sobre cada seleccionado con los valores de
+        tolerancia/umbral que están guardados AHORA MISMO en
+        Configuración (`cargar_configuracion()` + `tolerancia_silencio_para_genero()`,
+        exactamente igual que el motor masivo) — funciona con
+        CUALQUIER género, a diferencia del botón global. Mismo
+        criterio "nunca destruir una marca buena con un fallo nuevo"
+        de `core/reanalizador_batch.py` (ronda 87): un archivo que ya
+        tenía marcas reales y esta vuelta falla queda intacto. Un
+        archivo sin ruta válida en disco se saltea y se cuenta aparte
+        en el resumen final.
+      - **Revertir** (`_revertir_analisis_silencio`): deja el/los
+        ítems en las mismas marcas NEUTRAS de un archivo recién
+        importado sin analizar (`punto_inicio_ms=0`, `punto_fin_ms=None`,
+        `ganancia_db=0.0`, `analizado=False`) — el audio real nunca se
+        toca (enfoque no destructivo de siempre), es 100% reversible
+        aplicando el análisis de nuevo cuando se quiera.
+      - Las dos refrescan `_actualizar_marcas_item()` en cada ítem
+        tocado (el ícono ⚠ de "sin marcas", acotado a Música desde la
+        ronda 87, aparece/desaparece al instante) y persisten con
+        `_guardar_biblioteca_debounced()`.
+    - **Botón global de Configuración acotado a Música** (pedido
+      explícito: "que se aplica sólo a los que estén catalogados como
+      música. Ahorrá tiempo e ítem a analizar"): `core/reanalizador_batch.py`
+      (`_contar_elegibles()` y `_procesar_categoria()`) ahora
+      SALTEAN cualquier registro cuyo `genero != "Musica"` — Publicidad/
+      Separador/Pisador/Artística/HTH ya NUNCA pasan por el reanálisis
+      MASIVO, tienen su propia vía manual (el menú contextual de
+      arriba). Botón renombrado a "🔄 Reanalizar biblioteca — solo
+      Música (recorte de silencio)", con el texto de confirmación y el
+      diálogo de progreso actualizados para que quede explícito el
+      alcance nuevo — evita que Santiago (o cualquiera) asuma que ese
+      botón sigue tocando publicidades/HTH como antes.
+
+    Probado con un smoke test dedicado (biblioteca aislada en un
+    directorio temporal, 1 tema de Música + 2 publicidades con audio
+    sintético real vía pydub): Aplicar en selección múltiple sobre
+    las 2 publicidades deja las dos con marcas reales; el reanálisis
+    GLOBAL sobre la misma biblioteca (con las 3 vueltas a marcas
+    neutras a propósito) procesa exactamente 1 archivo (la Música) y
+    NUNCA toca las publicidades; Revertir sobre la Música ya analizada
+    la vuelve a marcas neutras; el menú contextual expone las 2
+    acciones nuevas; los cambios quedan persistidos de verdad en
+    `biblioteca.json` (releído de disco después de `flush_biblioteca_pendiente()`)
+    — + `py_compile` limpio + smoke test de arranque de la app sin
+    traceback. **No se pudo correr la suite de regresión de scripts de
+    rondas anteriores** (ninguno está commiteado al repo, ver ronda
+    90). Falta que Santiago confirme en su instalación real que el
+    botón global ahora es más rápido (solo recorre Música), y que
+    puede aplicar/revertir el análisis a mano sobre HTH/Publicidad/
+    Separadores puntuales desde el menú contextual, tanto de a uno
+    como en lote.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

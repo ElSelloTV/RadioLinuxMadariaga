@@ -527,7 +527,7 @@ class VentanaConfiguracion(QDialog):
         nota_reanalizar.setObjectName("lblTituloBloqueActivo")
         nota_reanalizar.setWordWrap(True)
         layout.addWidget(nota_reanalizar)
-        self.btn_reanalizar_biblioteca = QPushButton("🔄 Reanalizar biblioteca (recorte de silencio)")
+        self.btn_reanalizar_biblioteca = QPushButton("🔄 Reanalizar biblioteca — solo Música (recorte de silencio)")
         self.btn_reanalizar_biblioteca.clicked.connect(self._reanalizar_biblioteca)
         layout.addWidget(self.btn_reanalizar_biblioteca)
         if self._ventana_explorador is None:
@@ -684,11 +684,14 @@ class VentanaConfiguracion(QDialog):
         respuesta = QMessageBox.question(
             self, "Reanalizar biblioteca",
             "Esto vuelve a calcular el recorte de silencio y el nivelado de\n"
-            "TODOS los archivos ya importados, con los valores de tolerancia/\n"
-            "umbral que están puestos AHORA MISMO en la pestaña Reproducción\n"
-            "y Automatización (aunque todavía no hayas apretado Guardar).\n"
-            "Corre en SEGUNDO PLANO (proceso aparte, con barra de progreso) —\n"
-            "el programa sigue respondiendo mientras tanto.\n\n"
+            "TODOS los archivos de género MÚSICA ya importados (Publicidad/\n"
+            "Separador/Pisador/Artística/HTH quedan afuera -- para esos usá\n"
+            "\"Aplicar/Revertir análisis de silencio\" en el menú contextual\n"
+            "de Ventana 3, archivo por archivo o en lote), con los valores de\n"
+            "tolerancia/umbral que están puestos AHORA MISMO en la pestaña\n"
+            "Reproducción y Automatización (aunque todavía no hayas apretado\n"
+            "Guardar). Corre en SEGUNDO PLANO (proceso aparte, con barra de\n"
+            "progreso) — el programa sigue respondiendo mientras tanto.\n\n"
             "¿Confirmás que querés continuar?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -709,7 +712,7 @@ class VentanaConfiguracion(QDialog):
 
         self._dialogo_reanalisis = DialogoPreloadBiblioteca(
             1, parent=self, titulo="Reanalizando biblioteca",
-            texto="Reanalizando biblioteca (recorte de silencio / nivelado)...",
+            texto="Reanalizando biblioteca -- solo Música (recorte de silencio / nivelado)...",
             nota="Corre en un proceso aparte -- el programa sigue respondiendo mientras tanto.",
         )
         self._dialogo_reanalisis.show()
