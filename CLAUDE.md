@@ -8838,6 +8838,104 @@ todo el resto.
     diagnóstico más probable pasaría a ser categorías demasiado chicas
     (pocos archivos de Publicidad/Separadores por categoría), no un
     bug de código.
+90. ~~El recorte de silencio cortaba contenido REAL — umbral demasiado
+    estricto + cero margen en Ventana 1~~ — Santiago probó la ronda
+    del reanálisis async y reportó daño real: "los HTH de hora les
+    recortó el comienzo, las publicidades no terminan, el fade de
+    configuraciones para esta ventana no funciona, lo desactivé y sin
+    embargo tampoco deja terminar los ítem... incluso hay canciones
+    que las finaliza antes". Diagnóstico leyendo su configuración real
+    (`config_general.json`): `umbral_silencio_dbfs: -40.0` +
+    `tolerancia_silencio_v1_segundos: 0.0` (sin ningún margen de
+    seguridad para Publicidad/Separador/HTH, "corte estricto" pedido
+    en una ronda muy anterior).
+
+    **Causa de fondo**: -40dBFS es un umbral bastante estricto — una
+    consonante suave al empezar a hablar, una respiración, o la cola
+    de reverberación/decay de un fundido musical pueden estar por
+    debajo de -40dBFS y aun así ser parte real y audible del
+    contenido. `detect_leading_silence` (que NUNCA mira el medio del
+    tema, solo escanea desde cada extremo hacia adentro) clasificaba
+    esas partes quietas como "silencio" y las recortaba — y con CERO
+    margen de seguridad en Ventana 1 (`tolerancia_silencio_v1_segundos
+    = 0.0`), el corte quedaba pegado EXACTO al punto que el detector
+    marcaba, sin ningún colchón ante esa imprecisión: el corte caía
+    ADENTRO del contenido audible real, no en el silencio de verdad.
+    Esto explica los tres síntomas de una: el comienzo real de un HTH
+    ("es la hora...") quedaba mordido, la cola real de una publicidad
+    quedaba cortada antes de terminar de decir la última palabra, y
+    (con la tolerancia general de Música de 2s en la entrada pero el
+    tope duro `MARGEN_MAXIMO_SALIDA_MS` de solo 300ms en la salida,
+    ver ronda 75) una cola de fundido musical más lenta que ese margen
+    quedaba parcialmente cortada.
+
+    **Sobre "desactivé el fade y tampoco deja terminar los ítems" —
+    aclarado, no era un bug del fade**: `duracion_fade_out_v1_ms`
+    (Configuración → Fade/Transiciones → Ventana 1) solo controla la
+    RAMPA de volumen aplicada HASTA `punto_fin_ms` — nunca decide
+    DÓNDE cae ese punto de corte. Con el punto de corte ya mordiendo
+    contenido real (el bug de arriba), apagar el fade no cambia nada:
+    el audio ya viene truncado ANTES de que cualquier fade tenga
+    oportunidad de sonar. El fade era inocente, la causa real era el
+    umbral+tolerancia del análisis.
+
+    **Corregido, en `config/settings.py` (`CONFIG_POR_DEFECTO`) y
+    `core/analizador_audio.py`**:
+    - `umbral_silencio_dbfs`: `-40.0` → `-50.0` (más permisivo — hace
+      falta un silencio más profundo/real para que el detector lo
+      cuente; sigue sin tocar NUNCA el medio del tema, ver el propio
+      docstring del módulo).
+    - `tolerancia_silencio_v1_segundos`: `0.0` → `0.15` (150ms de
+      colchón de seguridad para Publicidad/Separador/HTH — sigue
+      sonando "bien pegado", muy por debajo de los 2s de Música, pero
+      ya no queda pegado EXACTO al límite del detector sin ningún
+      margen).
+    - `MARGEN_MAXIMO_SALIDA_MS` (constante, no configurable desde la
+      UI): `300` → `400` — colchón extra en la salida de Música, para
+      no cortar una cola de fundido/decay que siga siendo audible un
+      poco más allá de donde el detector marca "silencio".
+    - `UMBRAL_SILENCIO_DBFS_DEFECTO` (fallback interno de
+      `analizar_audio()` si se lo llama sin pasar el umbral): mismo
+      cambio, `-40.0` → `-50.0`, por consistencia.
+
+    **Importante — esto NO es retroactivo para su instalación real**:
+    estos son los defaults de FÁBRICA (`CONFIG_POR_DEFECTO`), usados
+    solo en una instalación NUEVA o si una clave falta del JSON — la
+    `config_general.json` de Santiago YA tiene valores EXPLÍCITOS
+    guardados (`-40.0`/`0.0`), que sobreviven sin tocarse a pesar de
+    este cambio de código. Se le indicó en el chat, con los nombres
+    EXACTOS de los campos, que tiene que ir a **Configuración →
+    Reproducción y Automatización** y cambiar a mano: "Umbral de
+    silencio (dBFS)" de -40 a -50, y "Tolerancia de silencio Ventana 1
+    (segundos)" de 0.0 a 0.15 — y recién DESPUÉS de guardar, correr
+    **Configuración → Diagnóstico → "🔄 Reanalizar biblioteca"** (ya
+    async desde la ronda anterior, con barra de progreso — no traba
+    la app) para que los ~9800 archivos ya importados se recalculen
+    con los valores corregidos. Un archivo importado DE ACÁ EN MÁS
+    (tras guardar la config nueva) ya usa los valores corregidos de
+    forma automática, sin acción manual.
+
+    Probado con un smoke test dedicado (audio sintético con pydub
+    real — un HTH con un "attack" suave a -35dBFS antes del cuerpo, y
+    una publicidad con una "cola" suave a -35dBFS antes del silencio
+    real): confirmado que con la config VIEJA (-40/0.0) el corte queda
+    pegado exacto al límite sin margen, y con la config NUEVA
+    (-50/0.15) el attack y la cola quedan conservados con margen de
+    sobra — + `py_compile` limpio + smoke test de arranque sin
+    traceback. **No se pudo correr la suite de regresión de scripts
+    de rondas anteriores** — ninguno de esos `test_*.py` está commiteado
+    al repo (viven como scripts sueltos de sesiones de chat anteriores,
+    nunca agregados a git); no hay ningún archivo `test_*.py` rastreado
+    en este repositorio. **Sigue sin poder confirmarse con su
+    biblioteca/hardware real**: falta que Santiago cambie los dos
+    valores en Configuración, reanalice la biblioteca completa, y
+    confirme que los HTH ya no pierden el comienzo, que las
+    publicidades terminan de decir la última palabra, y que las
+    canciones ya no cortan antes de su final real. Si con -50dBFS
+    algo TODAVÍA se corta de más (umbral demasiado permisivo puede
+    dejar ruido de fondo/hiss sin recortar en vez del problema
+    contrario), el próximo ajuste sería subir el umbral más cerca de
+    0 en pasos chicos (ej. -45) en vez de volver a -40.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
