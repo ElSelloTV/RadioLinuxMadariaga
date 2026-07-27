@@ -87,8 +87,11 @@ def ejecutar_reanalisis(config: dict, callback_progreso=None) -> dict:
     tenían marcas buenas de antes -- NUNCA se destruyen)."""
     from config.settings import (
         cargar_biblioteca, guardar_biblioteca, registrar_error, tolerancia_silencio_para_genero,
+        parametros_nivelado,
     )
     from core.analizador_audio import analizar_audio
+
+    objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
 
     def _guardar_sin_frenar_el_lote(categorias):
         # Defensivo (mismo criterio ya establecido en el proyecto:
@@ -132,7 +135,10 @@ def ejecutar_reanalisis(config: dict, callback_progreso=None) -> dict:
             tenia_marcas_buenas = registro.get("analizado") is True
             tolerancia = tolerancia_silencio_para_genero(config, registro.get("genero"))
             umbral = config.get("reproduccion", {}).get("umbral_silencio_dbfs", -40.0)
-            analisis = analizar_audio(ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral)
+            analisis = analizar_audio(
+                ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral,
+                objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs,
+            )
 
             stats["total"] += 1
             es_musica = registro.get("genero") == "Musica"

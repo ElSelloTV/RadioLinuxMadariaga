@@ -122,6 +122,24 @@ CONFIG_POR_DEFECTO = {
         # ver MotorAudio.reproducir()/_tras_arranque. Mismo valor ya
         # probado internamente sin problemas.
         "retardo_arranque_ms": 150,
+        # Nivelado de volumen por LOUDNESS real (pedido explícito:
+        # "en mhWaveEdit normalizo audio a mano, ¿se puede automático
+        # al importar/analizar?" -- confirmado ir con la opción no
+        # destructiva). Reemplaza el nivelado viejo (promedio simple
+        # de dBFS) por sonoridad PERCIBIDA (LUFS, EBU R128, vía
+        # pyloudnorm) cuando está disponible -- mucho más parecido a
+        # lo que hace una normalización profesional que un promedio
+        # de amplitud sin más. Ver core/analizador_audio.py:
+        # _calcular_ganancia_db(). El AUDIO NUNCA se toca -- sigue
+        # siendo solo un ajuste de volumen calculado, aplicado al
+        # reproducir (mismo enfoque no destructivo de siempre).
+        "nivelado_loudness_lufs_objetivo": -16.0,
+        # Techo de seguridad de PICO (dBFS): si la ganancia calculada
+        # empujaría el pico del audio por encima de este valor, se
+        # recorta la ganancia (nunca se sube) para que el pico quede
+        # justo en el techo -- evita que un nivelado agresivo sature
+        # al reproducir un tema con picos altos y promedio bajo.
+        "nivelado_techo_pico_dbfs": -1.0,
     },
     "general": {
         "confirmar_antes_de_eliminar": True,
@@ -284,6 +302,19 @@ def tolerancia_silencio_para_genero(config: dict, genero: str) -> float:
     if genero in GENEROS_CORTE_ESTRICTO:
         return reproduccion.get("tolerancia_silencio_v1_segundos", 0.0)
     return reproduccion.get("tolerancia_silencio_segundos", 2.0)
+
+
+def parametros_nivelado(config: dict) -> tuple:
+    """Helper compartido (mismo espíritu que `tolerancia_silencio_para_genero`,
+    reusado en cada punto que llama `analizar_audio()`): lee el
+    objetivo de loudness (LUFS) y el techo de seguridad de pico
+    (dBFS) configurados en Configuración → Reproducción y
+    Automatización. Devuelve `(objetivo_lufs, techo_pico_dbfs)`."""
+    reproduccion = config.get("reproduccion", {})
+    return (
+        reproduccion.get("nivelado_loudness_lufs_objetivo", -16.0),
+        reproduccion.get("nivelado_techo_pico_dbfs", -1.0),
+    )
 
 
 def _rotar_archivo_si_corresponde(ruta: str):
