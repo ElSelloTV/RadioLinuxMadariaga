@@ -7,3 +7,10 @@ pydub>=0.25.1
 # lo repone. El marcador de versión hace que pip lo salte solo en
 # Python < 3.13, donde el módulo de la librería estándar ya alcanza.
 audioop-lts>=0.2.1; python_version >= "3.13"
+# Nivelado de volumen por loudness real (LUFS, EBU R128) al importar/
+# analizar -- pedido explícito ("¿se puede automatizar lo que hago a
+# mano en mhWaveEdit al normalizar?"). Opcional en los hechos: si
+# falta, core/analizador_audio.py degrada solo al cálculo anterior
+# (promedio dBFS) para ese archivo puntual, nunca rompe el alta.
+pyloudnorm>=0.2.0
+numpy>=1.24.0

@@ -11,6 +11,25 @@ Motor de agregado de tema musical:
 3) Calcula cuánta ganancia (dB) hay que sumar o restar para que el
    tema quede nivelado a un volumen de referencia común.
 
+Nivelado por LOUDNESS real (pedido explícito: "en mhWaveEdit
+normalizo audio a mano uno por uno, ¿se puede automático al
+importar/analizar?"): si `pyloudnorm` está instalado, el nivelado
+usa sonoridad PERCIBIDA (LUFS, EBU R128 — el estándar de
+radiodifusión profesional) en vez de un simple promedio de amplitud
+(dBFS) — bastante más parecido a lo que hace una normalización real.
+Si `pyloudnorm` no está disponible, o el clip es demasiado corto
+para medir loudness de verdad (EBU R128 necesita ~400ms mínimo, un
+caso típico son los clips de voz del Comando HTH), cae solo para ESE
+archivo al cálculo viejo de promedio dBFS — nunca deja un archivo
+sin ganancia calculada por esto. Además aplica un TECHO DE SEGURIDAD
+DE PICO configurable: si la ganancia calculada empujaría el pico del
+audio por encima del techo, se recorta la ganancia (nunca se sube)
+para que el pico resultante quede justo en el techo — protege contra
+saturación en un tema con promedio bajo pero picos altos, algo que
+un simple promedio dBFS no contempla. Ver `_calcular_ganancia_db()`.
+Ambos valores (objetivo LUFS y techo de pico) son configurables desde
+Configuración → Reproducción y Automatización.
+
 IMPORTANTE — enfoque NO DESTRUCTIVO: en vez de recodificar el
 archivo original, esto sólo calcula "marcas" (milisegundos de
 inicio/fin y una ganancia en dB) que se guardan como metadata del
@@ -51,7 +70,9 @@ MENSAJE_PYDUB_NO_DISPONIBLE = (
     "pydub + ffmpeg. Instalá con: pip install pydub && sudo apt install ffmpeg"
 )
 
-DBFS_OBJETIVO = -16.0                        # nivel de referencia al que se nivela todo
+DBFS_OBJETIVO = -16.0                        # nivel de referencia (fallback dBFS, ver LOUDNESS_LUFS_OBJETIVO_DEFECTO)
+LOUDNESS_LUFS_OBJETIVO_DEFECTO = -16.0       # objetivo de sonoridad (LUFS, configurable)
+TECHO_PICO_DBFS_DEFECTO = -1.0               # nunca deja que un pico quede por encima de esto (configurable)
 UMBRAL_SILENCIO_DBFS_DEFECTO = -50.0         # por debajo de esto se considera "silencio" (configurable)
 LIMITE_RECORTE_SILENCIO_SEGUNDOS = 20.0      # techo duro: nunca recorta más que esto de cada lado
 
@@ -139,10 +160,69 @@ def _cargar_audio(ruta: str):
                 pass
 
 
+def _calcular_ganancia_db(audio, objetivo_lufs: float, techo_pico_dbfs: float) -> float:
+    """Ajuste de ganancia (dB) para nivelar `audio` -- pedido
+    explícito de Santiago ("en mhWaveEdit normalizo audio a mano, uno
+    por uno, ¿se puede automático?"). Dos capas:
+
+    1) Sonoridad PERCIBIDA (LUFS, EBU R128) vía `pyloudnorm` cuando
+       está disponible -- mide loudness "gateado" (ignora tramos
+       silenciosos/irrelevantes, pondera por percepción humana), no
+       un promedio crudo de amplitud. Si pyloudnorm/numpy no están
+       instalados, o el clip es demasiado corto para una medición
+       EBU R128 confiable (<~400ms -- típico en los clips de voz del
+       Comando HTH), cae al cálculo VIEJO de promedio dBFS para ESE
+       archivo puntual -- nunca deja un archivo sin ganancia
+       calculada por esto.
+    2) Techo de seguridad de PICO: si la ganancia (de cualquiera de
+       los dos métodos) empujaría el pico del audio por encima de
+       `techo_pico_dbfs`, se RECORTA la ganancia (nunca se sube) para
+       que el pico resultante quede justo en el techo -- un tema con
+       promedio bajo pero algún pico alto no termina saturando al
+       aplicarle un boost fuerte.
+
+    Conversión de samples a float [-1, 1] -- mismo patrón ya
+    documentado como estándar en la propia comunidad de pyloudnorm:
+    asume PCM entero con signo (siempre el caso en esta app, ver
+    `_cargar_audio()` -- MP3/ADPCM/etc. siempre terminan decodificados
+    a pcm_s16le antes de llegar acá)."""
+    ganancia_db = 0.0
+    try:
+        import numpy as np
+        import pyloudnorm as pyln
+
+        muestras = np.array(audio.get_array_of_samples()).astype(np.float64)
+        if audio.channels > 1:
+            muestras = muestras.reshape((-1, audio.channels))
+        muestras /= float(1 << (8 * audio.sample_width - 1))
+
+        medidor = pyln.Meter(audio.frame_rate)
+        loudness_lufs = medidor.integrated_loudness(muestras)
+        if loudness_lufs == float("-inf") or loudness_lufs != loudness_lufs:  # -inf o NaN
+            raise ValueError("loudness no medible (clip en silencio o demasiado corto)")
+        ganancia_db = round(objetivo_lufs - loudness_lufs, 2)
+    except Exception:
+        if audio.dBFS != float("-inf"):
+            ganancia_db = round(objetivo_lufs - audio.dBFS, 2)
+
+    if audio.max_dBFS != float("-inf"):
+        pico_resultante_dbfs = audio.max_dBFS + ganancia_db
+        if pico_resultante_dbfs > techo_pico_dbfs:
+            ganancia_db = round(techo_pico_dbfs - audio.max_dBFS, 2)
+
+    # pyloudnorm devuelve numpy.float64 (subclase de float -- no rompe
+    # el guardado JSON, pero conviene normalizar a un float nativo de
+    # Python para que quede consistente con el resto de la app, sin
+    # sorpresas al loguear/comparar).
+    return float(ganancia_db)
+
+
 def analizar_audio(
     ruta: str,
     tolerancia_silencio_segundos: float = 2.0,
     umbral_silencio_dbfs: float = UMBRAL_SILENCIO_DBFS_DEFECTO,
+    objetivo_lufs: float = LOUDNESS_LUFS_OBJETIVO_DEFECTO,
+    techo_pico_dbfs: float = TECHO_PICO_DBFS_DEFECTO,
 ) -> dict:
     """Analiza `ruta` y devuelve:
         {
@@ -164,6 +244,10 @@ def analizar_audio(
     negativo = más permisivo (solo corta silencio casi total). Ver
     nota al inicio del archivo sobre por qué esto es seguro incluso
     con un umbral agresivo — solo mira los extremos, nunca el medio.
+
+    `objetivo_lufs`/`techo_pico_dbfs` (configurables desde
+    Configuración → Reproducción y Automatización): ver
+    `_calcular_ganancia_db()`.
     """
     try:
         from pydub import AudioSegment
@@ -195,10 +279,9 @@ def analizar_audio(
         punto_inicio_ms = min(silencio_inicio_ms, max(0, duracion_total_ms - 1))
         punto_fin_ms = max(punto_inicio_ms + 1, duracion_total_ms - silencio_fin_ms)
 
-        # Nivelado: diferencia entre el volumen actual (dBFS) y el objetivo
-        ganancia_db = 0.0
-        if audio.dBFS != float("-inf"):
-            ganancia_db = round(DBFS_OBJETIVO - audio.dBFS, 2)
+        # Nivelado: sonoridad percibida (LUFS) con fallback a promedio
+        # dBFS + techo de seguridad de pico — ver _calcular_ganancia_db().
+        ganancia_db = _calcular_ganancia_db(audio, objetivo_lufs, techo_pico_dbfs)
 
         return {
             "punto_inicio_ms": punto_inicio_ms,
@@ -262,7 +345,19 @@ def verificar_motor_disponible() -> dict:
     tono, sin necesitar ningún archivo de la biblioteca) para confirmar
     que `analizar_audio()` efectivamente devuelve `analizado=True`.
     Nunca lanza excepción -- degrada a un mensaje claro de qué falta."""
-    resultado = {"pydub_ok": False, "ffmpeg_ok": False, "prueba_ok": False, "mensaje": ""}
+    resultado = {"pydub_ok": False, "ffmpeg_ok": False, "prueba_ok": False, "loudnorm_ok": False, "mensaje": ""}
+
+    # Diagnóstico informativo, no bloqueante (pedido explícito: "que
+    # se pueda establecer manualmente en Configuración" el nivelado
+    # por loudness -- si pyloudnorm falta, el nivelado sigue andando
+    # con el fallback de promedio dBFS, nunca rompe el alta de un
+    # archivo, pero conviene que quede a la vista para no preguntarse
+    # por qué el nivelado "parece" el de siempre).
+    import importlib.util
+    resultado["loudnorm_ok"] = (
+        importlib.util.find_spec("pyloudnorm") is not None
+        and importlib.util.find_spec("numpy") is not None
+    )
 
     # Bug real corregido, encontrado con el log real de Santiago: acá
     # SOLO se atrapaba `ImportError` y se asumía "pydub no está
@@ -340,10 +435,22 @@ def verificar_motor_disponible() -> dict:
 
         resultado["prueba_ok"] = bool(analisis.get("analizado"))
         if resultado["prueba_ok"]:
+            if resultado["loudnorm_ok"]:
+                nota_nivelado = (
+                    "El nivelado de volumen usa loudness real (LUFS, pyloudnorm) "
+                    "en los archivos donde se puede medir."
+                )
+            else:
+                nota_nivelado = (
+                    "pyloudnorm no está instalado -- el nivelado de volumen usa el "
+                    "cálculo anterior (promedio dBFS), sigue funcionando pero es "
+                    "menos preciso que el loudness real. Para el nivelado nuevo: "
+                    "pip install pyloudnorm numpy"
+                )
             resultado["mensaje"] = (
                 "Todo en orden: pydub y ffmpeg están disponibles, y una prueba "
                 "real de análisis (silencio + tono generados en memoria) "
-                "confirma que el motor calcula marcas IN/OUT correctamente."
+                f"confirma que el motor calcula marcas IN/OUT correctamente. {nota_nivelado}"
             )
         else:
             resultado["mensaje"] = (

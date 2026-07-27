@@ -294,6 +294,35 @@ class VentanaConfiguracion(QDialog):
         self.spin_bajada_pisador.setSingleStep(0.5)
         self.spin_bajada_pisador.setSuffix(" dB")
 
+        # Nivelado de volumen por loudness (pedido explícito: "en
+        # mhWaveEdit normalizo audio a mano, ¿se puede automático al
+        # importar/analizar?" -- ver core/analizador_audio.py:
+        # _calcular_ganancia_db()). NO destructivo: solo cambia el
+        # ajuste de volumen calculado, nunca el archivo.
+        self.spin_objetivo_lufs = QDoubleSpinBox()
+        self.spin_objetivo_lufs.setRange(-30.0, -6.0)
+        self.spin_objetivo_lufs.setSingleStep(0.5)
+        self.spin_objetivo_lufs.setSuffix(" LUFS")
+        self.spin_objetivo_lufs.setToolTip(
+            "Sonoridad objetivo a la que se nivela cada archivo al importar/\n"
+            "reanalizar (loudness real, EBU R128, no un simple promedio de\n"
+            "amplitud). Más cerca de 0 = más fuerte; más negativo = más flojo.\n"
+            "-16 LUFS es un punto de partida típico para radio/streaming.\n"
+            "OJO: no es retroactivo — usá \"Reanalizar biblioteca\" o \"Aplicar\n"
+            "análisis de silencio\" (Ventana 3) para aplicarlo a lo ya cargado."
+        )
+
+        self.spin_techo_pico = QDoubleSpinBox()
+        self.spin_techo_pico.setRange(-6.0, 0.0)
+        self.spin_techo_pico.setSingleStep(0.5)
+        self.spin_techo_pico.setSuffix(" dBFS")
+        self.spin_techo_pico.setToolTip(
+            "Techo de seguridad: el nivelado NUNCA empuja el pico de un\n"
+            "archivo por encima de este valor, aunque eso signifique aplicar\n"
+            "menos ganancia de la calculada — protege contra saturación en\n"
+            "temas con promedio bajo pero algún pico alto."
+        )
+
         # Pedido explícito ("configuración por ventana separada"): los
         # fade IN/OUT de Ventana 1 (spin_fade_in_declick_v1/
         # spin_fade_out_v1) se movieron a la pestaña "Fade /
@@ -328,6 +357,8 @@ class VentanaConfiguracion(QDialog):
         form.addRow("Tolerancia de silencio estricta (Publicidad/Separadores/HTH):", self.spin_tolerancia_silencio_v1)
         form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
         form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
+        form.addRow("Nivelado de volumen — objetivo de sonoridad:", self.spin_objetivo_lufs)
+        form.addRow("Nivelado de volumen — techo de seguridad de pico:", self.spin_techo_pico)
         form.addRow("Buffer de audio (anti-tartamudeo):", self.spin_buffer_caching)
         form.addRow("Retardo de arranque interno:", self.spin_retardo_arranque)
 
@@ -348,6 +379,17 @@ class VentanaConfiguracion(QDialog):
         )
         nota_pisador.setObjectName("lblTituloBloqueActivo")
         form.addRow(nota_pisador)
+
+        nota_nivelado = QLabel(
+            "El nivelado de volumen NUNCA reescribe el archivo original —\n"
+            "solo calcula un ajuste de volumen que se aplica al reproducir.\n"
+            "Usa sonoridad real (LUFS) si pyloudnorm está instalado (ver\n"
+            "Diagnóstico → \"Verificar motor de análisis de audio\"); si no,\n"
+            "cae a un promedio de amplitud más simple, sin romper nada."
+        )
+        nota_nivelado.setObjectName("lblTituloBloqueActivo")
+        nota_nivelado.setWordWrap(True)
+        form.addRow(nota_nivelado)
 
         return widget
 
@@ -994,6 +1036,8 @@ class VentanaConfiguracion(QDialog):
         self.spin_tolerancia_silencio_v1.setValue(reproduccion["tolerancia_silencio_v1_segundos"])
         self.spin_umbral_silencio.setValue(reproduccion["umbral_silencio_dbfs"])
         self.spin_bajada_pisador.setValue(reproduccion["pisador_bajada_db"])
+        self.spin_objetivo_lufs.setValue(reproduccion["nivelado_loudness_lufs_objetivo"])
+        self.spin_techo_pico.setValue(reproduccion["nivelado_techo_pico_dbfs"])
         self.spin_fade_out_v1.setValue(reproduccion["duracion_fade_out_v1_ms"])
         self.spin_fade_in_declick_v1.setValue(reproduccion["duracion_fade_in_declick_v1_ms"])
         self.spin_buffer_caching.setValue(reproduccion["duracion_buffer_caching_ms"])
@@ -1051,6 +1095,8 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["tolerancia_silencio_v1_segundos"] = self.spin_tolerancia_silencio_v1.value()
         self._config["reproduccion"]["umbral_silencio_dbfs"] = self.spin_umbral_silencio.value()
         self._config["reproduccion"]["pisador_bajada_db"] = self.spin_bajada_pisador.value()
+        self._config["reproduccion"]["nivelado_loudness_lufs_objetivo"] = self.spin_objetivo_lufs.value()
+        self._config["reproduccion"]["nivelado_techo_pico_dbfs"] = self.spin_techo_pico.value()
         self._config["reproduccion"]["duracion_fade_out_v1_ms"] = self.spin_fade_out_v1.value()
         self._config["reproduccion"]["duracion_fade_in_declick_v1_ms"] = self.spin_fade_in_declick_v1.value()
         self._config["reproduccion"]["duracion_buffer_caching_ms"] = self.spin_buffer_caching.value()

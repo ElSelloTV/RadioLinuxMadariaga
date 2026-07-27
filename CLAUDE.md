@@ -9123,6 +9123,106 @@ todo el resto.
     Música" (o "🔈 Aplicar análisis de silencio..." sobre esos 61
     puntuales si no son de género Música) y confirme que ya no aparece
     ningún error de "Decoding failed"/"pcm_s4le" para esos archivos.
+94. ~~Nivelado de volumen automático por LOUDNESS real (LUFS/EBU R128),
+    reemplaza el promedio dBFS simple, con techo de seguridad de pico
+    y configuración manual~~ — pedido explícito: "en mhWaveEdit
+    normalizo audio a mano, uno por uno, ¿se puede automático al
+    importar/analizar? Dame opciones efectivas." Se propusieron 3
+    opciones (mejorar el cálculo ya existente sin tocar archivos,
+    sumar solo detección de pico, o reescribir el archivo físico como
+    hace mhWaveEdit) — Santiago eligió la primera ("vamos con lo que
+    proponés como opción 1... o dejame la configuración para
+    establecerlo yo manualmente").
+
+    **Motor** (`core/analizador_audio.py`, `_calcular_ganancia_db()`,
+    nuevo): el nivelado que YA existía desde el principio del proyecto
+    (`ganancia_db`, aplicado como ajuste de volumen al reproducir,
+    nunca toca el archivo) usaba un simple promedio de amplitud
+    (dBFS) — bueno para no tener un tema mucho más fuerte que otro en
+    promedio, pero sin relación real con la sonoridad PERCIBIDA (un
+    tema comprimido y uno con mucho rango dinámico pueden compartir
+    el mismo dBFS promedio y sonar muy distinto), y sin ninguna
+    protección contra saturación si el nivelado empuja fuerte un tema
+    con picos altos. Reemplazado por:
+    1. **Loudness real (LUFS, EBU R128)** vía `pyloudnorm` — mide
+       sonoridad "gateada" (ignora tramos silenciosos/irrelevantes,
+       pondera por percepción humana), el mismo estándar que usa la
+       radiodifusión profesional. Conversión de samples de pydub a
+       float `[-1, 1]` con el patrón estándar de la comunidad
+       (`get_array_of_samples()` / `2**(8*sample_width-1)` — asume PCM
+       entero con signo, siempre el caso acá ya que MP3/ADPCM/etc.
+       siempre terminan decodificados a `pcm_s16le` antes de llegar,
+       ver `_cargar_audio()`).
+    2. **Fallback automático al cálculo VIEJO** (promedio dBFS) si
+       `pyloudnorm`/`numpy` no están instalados, O si el clip es
+       demasiado corto para una medición EBU R128 confiable (~400ms
+       mínimo — caso típico: los clips de voz del Comando HTH) — nunca
+       deja un archivo sin ganancia calculada por esto, degradación
+       silenciosa y prolija, mismo criterio de siempre en este
+       proyecto ante dependencias faltantes.
+    3. **Techo de seguridad de PICO** (nuevo, cierra un hueco real que
+       ni mhWaveEdit ni el cálculo viejo evitaban del todo): si la
+       ganancia calculada (por cualquiera de los dos métodos)
+       empujaría el pico del audio por encima de un techo configurado,
+       se RECORTA la ganancia (nunca se sube) para que el pico
+       resultante quede justo en el techo — un tema con promedio bajo
+       pero algún pico alto no termina saturando al aplicarle un
+       boost fuerte.
+    Probado con audio sintético real (no simulado): tono flojo pide
+    boost sin disparar el techo, tono ya fuerte pide atenuación (sin
+    riesgo de saturar), clip <400ms cae al fallback dBFS con log claro
+    del motivo, silencio total no rompe nada (ganancia 0), y un caso
+    de boost fuerte sobre un clip con pico alto confirma que el techo
+    SÍ recorta la ganancia para no saturar. **Bug real encontrado y
+    corregido en el camino**: `pyloudnorm` devuelve `numpy.float64`
+    (subclase de `float`, no rompe el guardado JSON pero mostraba feo
+    en el log/UI) — normalizado a `float` nativo de Python antes de
+    devolver.
+
+    **Configuración manual** (pedido explícito, segunda mitad del
+    pedido): dos campos nuevos en Configuración → Reproducción y
+    Automatización — "Nivelado de volumen — objetivo de sonoridad" (en
+    LUFS, default -16.0, mismo valor que ya usaba el cálculo viejo en
+    dBFS, para no dar un salto de volumen brusco en una instalación
+    existente) y "Nivelado de volumen — techo de seguridad de pico"
+    (en dBFS, default -1.0). Nuevo helper compartido
+    `config/settings.py:parametros_nivelado(config)` (mismo espíritu
+    que `tolerancia_silencio_para_genero()`, ya existente) reusado en
+    los **5 puntos** que llaman `analizar_audio()` — alta individual,
+    importación masiva, reemplazar/vincular archivo (`_aplicar_nuevo_archivo`,
+    compartido por los dos), "Aplicar análisis de silencio" (menú
+    contextual, ronda 92) y el reanálisis global en proceso aparte
+    (`core/reanalizador_batch.py`) — así el valor configurado se
+    respeta en TODOS los caminos de análisis, no solo uno. Mismo
+    aviso de siempre en el tooltip: cambiar el valor **no es
+    retroactivo**, hay que reanalizar/aplicar de nuevo para que
+    alcance a lo ya importado.
+
+    **Diagnóstico** (`verificar_motor_disponible()`, Configuración →
+    Diagnóstico → "🩺 Verificar motor de análisis de audio"): ahora
+    informa también si `pyloudnorm` está disponible (`loudnorm_ok`) —
+    si falta, el mensaje aclara que el nivelado sigue funcionando con
+    el cálculo anterior (dBFS) pero es menos preciso, con la
+    instrucción exacta para sumarlo (`pip install pyloudnorm numpy`).
+
+    `requirements.txt` ganó `pyloudnorm>=0.2.0` + `numpy>=1.24.0`
+    (scipy llega transitivo, como dependencia de pyloudnorm para los
+    filtros de ponderación K-weighting de EBU R128) — instalado y
+    confirmado en el venv de este entorno para poder probar con audio
+    real. Probado con `py_compile` de todo el proyecto + smoke test de
+    arranque sin traceback + round-trip completo de la UI de
+    Configuración (cargar/editar/guardar los 2 campos nuevos, incluida
+    una config VIEJA sin esas claves que se autocompleta sola vía
+    `_fusionar_con_defecto`) + `analizar_audio()` de punta a punta
+    usando el valor recién guardado en Configuración. **No se pudo
+    correr la suite de regresión de scripts de rondas anteriores**
+    (ninguno está commiteado al repo, ver ronda 90). Falta que Santiago
+    (1) instale `pyloudnorm`/`numpy` en su venv real
+    (`pip install -r requirements.txt`) y confirme con "Verificar motor
+    de análisis de audio" que queda activo, y (2) reanalice/aplique de
+    nuevo el análisis sobre algunos temas y confirme si el nivelado se
+    siente más parejo entre temas que antes — sin tener que repetir a
+    mano lo que hacía en mhWaveEdit.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
