@@ -548,9 +548,12 @@ class MainWindow(QMainWindow):
         self.ventana_emision.solicitud_agregar_pisador.connect(
             lambda fila: self._abrir_dialogo_pisador(self.ventana_emision, fila)
         )
+        self.ventana_emision.solicitud_agregar_ciclo_fmt.connect(self._agregar_ciclo_fmt_emision)
 
         self.ventana_explorador.archivo_agregado.connect(self._on_archivo_agregado)
         self.ventana_explorador.archivo_movido.connect(self._on_archivo_movido)
+        self.ventana_explorador.archivo_copiado.connect(self._on_archivo_copiado)
+        self.ventana_explorador.categoria_renombrada.connect(self._on_categoria_renombrada)
 
     def _on_automatico_cambiado(self, activo: bool):
         self.lbl_status_modo.setText("Automático Activo" if activo else "Modo Manual")
@@ -619,6 +622,23 @@ class MainWindow(QMainWindow):
 
     def _on_archivo_movido(self, titulo: str, categoria_destino: str):
         self.statusBar().showMessage(f"'{titulo}' movido a: {categoria_destino}", 4000)
+
+    def _on_archivo_copiado(self, titulo: str, categoria_destino: str):
+        self.statusBar().showMessage(f"'{titulo}' copiado a: {categoria_destino}", 4000)
+
+    def _on_categoria_renombrada(self, ruta_vieja: list, ruta_nueva: list):
+        # config.settings.corregir_referencias_categoria_renombrada()
+        # ya corrigió lo persistido en disco (playlist_publicidad.json/
+        # programacion.json/musicalizador.json, ver
+        # VentanaExplorador._renombrar_categoria) -- esto corrige
+        # además el árbol de bloques que Ventana 1 tiene YA CARGADO en
+        # memoria, el que de verdad conduce la emisión en este
+        # instante, sin esperar a un reinicio.
+        tocados = self.ventana_publicidad.corregir_categoria_aleatorio_en_vivo(ruta_vieja, ruta_nueva)
+        if tocados:
+            self.statusBar().showMessage(
+                f"Categoría renombrada: {tocados} ítem(s) Aleatorio de Ventana 1 actualizados en vivo.", 5000,
+            )
 
     # ------------------------------------------------------------------
     # Drag & Drop entrante: agrega el archivo soltado a la lista correspondiente
@@ -737,6 +757,36 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(f"Agregado al azar: {registro.get('titulo', '')}", 3000)
 
+    def _agregar_ciclo_fmt_emision(self):
+        """Pedido explícito ("agregá un menú contextual en Emisión...
+        me pregunta el FMT que deseo y la cantidad de tiempo... el
+        sistema calculará esa cantidad de tiempo e insertará ese ciclo
+        sin eliminar lo que ya esté cargado"): abre
+        DialogoCicloFMTPorTiempo (formato + minutos) y delega la
+        generación real en GestorPlaylist.insertar_ciclo_fmt_por_tiempo()
+        -- mismo motor que ya usa el Comando FMT real, pero SIN limpiar
+        lo ya cargado."""
+        from gui.dialogo_ciclo_fmt_por_tiempo import DialogoCicloFMTPorTiempo
+        dialogo = DialogoCicloFMTPorTiempo(parent=self)
+        if dialogo.exec() != DialogoCicloFMTPorTiempo.DialogCode.Accepted:
+            return
+        resultado = dialogo.resultado()
+        if resultado is None:
+            return
+        nombre_formato, minutos = resultado
+        self._mostrar_preload(f"Generando ciclo de '{nombre_formato}'...")
+        cantidad = self.gestor_emision.insertar_ciclo_fmt_por_tiempo(nombre_formato, minutos)
+        if cantidad:
+            self.statusBar().showMessage(
+                f"Agregados {cantidad} ítem(s) de '{nombre_formato}' (~{minutos} min) a Emisión.", 5000,
+            )
+        else:
+            QMessageBox.warning(
+                self, "Agregar ciclo FMT",
+                f"El formato '{nombre_formato}' no generó ningún ítem -- revisá sus "
+                "categorías/archivos en el Musicalizador Avanzado.",
+            )
+
     def _on_archivo_soltado_publicidad(self, ruta: str, item_destino):
         registro = self.ventana_explorador.buscar_registro_por_ruta(ruta)
         titulo = (registro or {}).get("titulo") or os.path.splitext(os.path.basename(ruta))[0]
@@ -842,6 +892,15 @@ class MainWindow(QMainWindow):
             persistir=True,
             ventana_explorador=self.ventana_explorador,
         )
+        # Pedido explícito ("estaría muy bueno que en EMISIÓN me
+        # muestre el FMT en uso... EMISIÓN - LATINO, no hace falta que
+        # salga FMT escrito"): sincroniza el título YA (por si la
+        # sesión anterior restauró un FMT activo desde disco, ver
+        # _restaurar_desde_disco -- corre ANTES de que este callback
+        # exista) y lo mantiene actualizado de ahí en más.
+        self.gestor_emision.al_cambiar_formato_activo = self.ventana_emision.establecer_sufijo_titulo
+        self.ventana_emision.establecer_sufijo_titulo(self.gestor_emision.formato_musicalizador_activo())
+
         self.gestor_publicidad = GestorPublicidad(
             self.ventana_publicidad,
             id_dispositivo=id_dispositivo_master,

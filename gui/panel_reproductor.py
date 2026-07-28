@@ -73,10 +73,11 @@ class PanelReproductor(QWidget):
     solicitud_agregar_pisador = Signal(int)       # fila del tema música
     solicitud_agregar_item_especifico = Signal()  # pedido explícito: menú contextual del Auxiliar
     solicitud_agregar_item_aleatorio = Signal()   # ídem, elegir un ítem al azar de una categoría
+    solicitud_agregar_ciclo_fmt = Signal()        # pedido explícito: menú contextual, solo Ventana 2 (Emisión)
 
     def __init__(self, titulo_panel: str,
                  mostrar_barra_progreso: bool = False, acepta_desde_publicidad: bool = False,
-                 permitir_agregar_item: bool = False, parent=None):
+                 permitir_agregar_item: bool = False, permitir_ciclo_fmt: bool = False, parent=None):
         super().__init__(parent)
         self._item_reproduciendo = None
         self._item_siguiente = None
@@ -90,6 +91,12 @@ class PanelReproductor(QWidget):
         # llena sola vía Musicalizador/arrastre, así que este menú
         # queda OFF por defecto y se prende explícito acá.
         self._permitir_agregar_item = permitir_agregar_item
+        # Pedido explícito ("agregá un menú contextual en Emisión para
+        # poder agregar X cantidad de tiempo de programación aleatoria
+        # FMT"): al revés que el de arriba -- solo Ventana 2 lo prende
+        # (el FMT/Musicalizador es un concepto exclusivo de Emisión,
+        # nunca del Auxiliar).
+        self._permitir_ciclo_fmt = permitir_ciclo_fmt
         self._construir_ui(titulo_panel, mostrar_barra_progreso, acepta_desde_publicidad)
 
     # ------------------------------------------------------------------
@@ -99,6 +106,7 @@ class PanelReproductor(QWidget):
         layout_principal.setSpacing(6)
 
         grupo = QGroupBox(titulo_panel)
+        self._grupo = grupo
         layout_grupo = QVBoxLayout(grupo)
 
         # 1) Fila combinada relojes + Ahora/Luego (pedido explícito,
@@ -324,6 +332,16 @@ class PanelReproductor(QWidget):
         self.marcar_reproduciendo(-1)
         self.marcar_siguiente(-1)
         self.tree.clear()
+
+    def establecer_sufijo_titulo(self, texto: str | None):
+        """Pedido explícito ("estaría muy bueno que en EMISIÓN me
+        muestre el FMT en uso... EMISIÓN - LATINO"): agrega (o saca,
+        con `texto=None`) un sufijo al título del panel (el propio
+        `QGroupBox`) -- pensado para el nombre del formato del
+        Musicalizador activo en Ventana 2, sin mencionar la palabra
+        "FMT" (pedido explícito: "no hace falta que salga FMT
+        escrito")."""
+        self._grupo.setTitle(f"{self._titulo_panel} - {texto}" if texto else self._titulo_panel)
 
     def marcar_reproduciendo(self, fila: int):
         self._pintar_item(self._item_reproduciendo, ESTADO_NORMAL)
@@ -631,7 +649,7 @@ class PanelReproductor(QWidget):
         if item_bajo_cursor is not None and item_bajo_cursor not in seleccionados:
             self.tree.setCurrentItem(item_bajo_cursor)
             seleccionados = [item_bajo_cursor]
-        if not seleccionados and not self._permitir_agregar_item:
+        if not seleccionados and not self._permitir_agregar_item and not self._permitir_ciclo_fmt:
             return
 
         item_unico = seleccionados[0] if len(seleccionados) == 1 else None
@@ -643,6 +661,12 @@ class PanelReproductor(QWidget):
         if self._permitir_agregar_item:
             accion_agregar_especifico = menu.addAction("➕ Agregar ítem específico...")
             accion_agregar_aleatorio = menu.addAction("🎲 Agregar ítem aleatorio...")
+            if seleccionados:
+                menu.addSeparator()
+
+        accion_ciclo_fmt = None
+        if self._permitir_ciclo_fmt:
+            accion_ciclo_fmt = menu.addAction("🎵 Agregar ciclo FMT por tiempo...")
             if seleccionados:
                 menu.addSeparator()
 
@@ -674,6 +698,8 @@ class PanelReproductor(QWidget):
             self.solicitud_agregar_item_especifico.emit()
         elif accion_agregar_aleatorio is not None and elegida == accion_agregar_aleatorio:
             self.solicitud_agregar_item_aleatorio.emit()
+        elif accion_ciclo_fmt is not None and elegida == accion_ciclo_fmt:
+            self.solicitud_agregar_ciclo_fmt.emit()
         elif accion_borrar is not None and elegida == accion_borrar:
             bloqueados = [item.text(0) for item in seleccionados if not self.quitar_item(item)]
             if bloqueados:

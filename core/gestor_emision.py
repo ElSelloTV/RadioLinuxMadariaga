@@ -108,10 +108,18 @@ from PySide6.QtCore import Qt, QTimer
 from core.audio_engine import MotorAudio
 from core.analizador_audio import volumen_ajustado_por_ganancia
 from core.musicalizador import generar_serie
+from core.buscador_duplicados import duracion_a_segundos
 from config.settings import (
     cargar_playlist_emision, guardar_playlist_emision, registrar_error, registrar_evento,
     guardar_ultimo_fmt, obtener_ultimo_fmt,
 )
+
+# Techo duro de ítems en un ciclo insertado por tiempo (pedido
+# explícito: "agregar X cantidad de tiempo de programación aleatoria
+# FMT") -- nunca se cuelga generando de más aunque el formato tenga
+# ítems con duración desconocida (0s), que nunca harían avanzar el
+# acumulado hacia el objetivo.
+LIMITE_ITEMS_CICLO_POR_TIEMPO = 500
 
 DURACION_FADE_PISADOR_SEGUNDOS = 0.8
 # Pisador en el Outro (pedido explícito, paridad con Dinesat): cuánto
@@ -198,6 +206,14 @@ class GestorPlaylist:
         # con un fundido corto. Ninguna lógica de "cuál corta a cuál"
         # vive acá — GestorPlaylist no conoce a sus pares, solo avisa.
         self.al_arrancar_reproduccion = None
+
+        # Pedido explícito ("estaría muy bueno que en EMISIÓN me
+        # muestre el FMT en uso"): callback opcional, avisado con el
+        # nombre del formato activo (o None si se desactivó) cada vez
+        # que cambia -- MainWindow lo conecta a
+        # VentanaEmision.establecer_sufijo_titulo(). GestorPlaylist no
+        # conoce nada de Qt/GUI, solo avisa.
+        self.al_cambiar_formato_activo = None
 
         self._conectar_motor(self.motor)
 
@@ -945,6 +961,9 @@ class GestorPlaylist:
     # core/playlist_manager.py:_ejecutar_comando y
     # gui/main_window.py, donde se conecta el callback).
     # ------------------------------------------------------------------
+    def formato_musicalizador_activo(self) -> str | None:
+        return self._formato_musicalizador_activo
+
     def iniciar_musicalizador(self, nombre_formato: str):
         """Activa la generación continua de música según
         `nombre_formato` (pedido explícito, puntos 6/7/8: "la música
@@ -958,6 +977,8 @@ class GestorPlaylist:
         self._formato_musicalizador_activo = nombre_formato
         guardar_ultimo_fmt(nombre_formato)
         registrar_evento(f"Musicalizador: activado formato '{nombre_formato}' (persistir={self.persistir})")
+        if self.al_cambiar_formato_activo is not None:
+            self.al_cambiar_formato_activo(nombre_formato)
         # Pedido explícito (punto c): un Comando FMT REEMPLAZA el
         # contenido de Emisión, nunca lo acumula arriba de lo que
         # hubiera antes (ítems sueltos del operador, o el lote de un
@@ -974,6 +995,8 @@ class GestorPlaylist:
                 f"persistir={self.persistir})"
             )
         self._formato_musicalizador_activo = None
+        if self.al_cambiar_formato_activo is not None:
+            self.al_cambiar_formato_activo(None)
 
     def _limpiar_playlist_para_musicalizador(self):
         if self.motor.esta_reproduciendo():
@@ -1034,6 +1057,93 @@ class GestorPlaylist:
         # resto de la app, nunca arranca a sonar solo salvo que ya
         # hubiera algo en curso (ver GestorPlaylist con persistir=True).
         self._asegurar_rojo_y_verde()
+
+    def insertar_ciclo_fmt_por_tiempo(self, nombre_formato: str, minutos: float) -> int:
+        """Pedido explícito ("agregá un menú contextual en Emisión...
+        me pregunta el FMT que deseo y la cantidad de tiempo... el
+        sistema calculará esa cantidad de tiempo e insertará ese
+        ciclo... como si hubiera pasado por el comando FMT de la
+        ventana 1, sin eliminar lo que ya esté cargado"): a diferencia
+        de `iniciar_musicalizador()` (que SIEMPRE limpia Emisión antes
+        de generar), esto AGREGA al final de lo que ya hay cargado —
+        llama a `generar_serie()` en un bucle (misma lógica de
+        "repetir el esquema" que ya usa el refill continuo) hasta
+        juntar al menos `minutos` de contenido estimado (sumando la
+        duración real de cada ítem generado), con un techo duro de
+        `LIMITE_ITEMS_CICLO_POR_TIEMPO` para nunca colgarse aunque el
+        formato tenga ítems sin duración conocida. "Como si hubiera
+        pasado por el Comando FMT" (pedido explícito): deja este
+        formato como el ACTIVO para el refill continuo de ahí en más,
+        y lo graba como "último FMT" -- la única diferencia real con
+        el Comando FMT real es que este NO limpia lo ya cargado.
+        Devuelve la cantidad de ítems insertados (0 si el formato no
+        generó nada)."""
+        if self._ventana_explorador is None:
+            registrar_error("Musicalizador: no hay acceso al Explorador, no se puede generar música.")
+            return 0
+
+        segundos_objetivo = max(0.0, minutos) * 60
+        segundos_acumulados = 0.0
+        rutas_en_cola = set(
+            ruta for i in range(self.panel.cantidad_items())
+            if (ruta := self.panel.ruta_en_fila(i))
+        )
+        items_generados = []
+        intentos_sin_avance = 0
+        while (
+            segundos_acumulados < segundos_objetivo
+            and intentos_sin_avance < 5
+            and len(items_generados) < LIMITE_ITEMS_CICLO_POR_TIEMPO
+        ):
+            concretos = generar_serie(self._ventana_explorador, nombre_formato, frozenset(rutas_en_cola))
+            if not concretos:
+                intentos_sin_avance += 1
+                continue
+            intentos_sin_avance = 0
+            for concreto in concretos:
+                items_generados.append(concreto)
+                ruta = concreto["registro"].get("ruta")
+                if ruta:
+                    rutas_en_cola.add(ruta)
+                segundos_acumulados += duracion_a_segundos(concreto["registro"].get("duracion")) or 0
+                if (
+                    segundos_acumulados >= segundos_objetivo
+                    or len(items_generados) >= LIMITE_ITEMS_CICLO_POR_TIEMPO
+                ):
+                    break
+
+        if not items_generados:
+            registrar_error(
+                f"Musicalizador: '{nombre_formato}' no generó ningún ítem para el ciclo por tiempo."
+            )
+            return 0
+
+        for concreto in items_generados:
+            registro = concreto["registro"]
+            fila_item = self.panel.agregar_item(
+                registro.get("titulo", ""), registro.get("duracion", ""), registro.get("codigo", "—"),
+                registro.get("ruta", ""), registro.get("punto_inicio_ms") or 0,
+                registro.get("punto_fin_ms"), registro.get("ganancia_db") or 0.0,
+            )
+            if concreto.get("pisador") and hasattr(self.panel, "agregar_pisador"):
+                fila_idx = self.panel.tree.indexOfTopLevelItem(fila_item)
+                pisador_reg = concreto["pisador"]
+                self.panel.agregar_pisador(
+                    fila_idx, pisador_reg.get("titulo", ""), pisador_reg.get("duracion", ""),
+                    pisador_reg.get("codigo", "—"), pisador_reg.get("ruta", ""),
+                    concreto.get("pisador_posicion") or "inicio",
+                )
+
+        self._formato_musicalizador_activo = nombre_formato
+        guardar_ultimo_fmt(nombre_formato)
+        if self.al_cambiar_formato_activo is not None:
+            self.al_cambiar_formato_activo(nombre_formato)
+        registrar_evento(
+            f"Musicalizador: insertado ciclo por tiempo de '{nombre_formato}' -- "
+            f"{len(items_generados)} ítem(s), ~{segundos_acumulados / 60:.1f} min, sin borrar lo ya cargado."
+        )
+        self._asegurar_rojo_y_verde()
+        return len(items_generados)
 
     # ------------------------------------------------------------------
     # Persistencia (solo si persistir=True — Ventana 2, no Auxiliar).

@@ -9223,6 +9223,198 @@ todo el resto.
     nuevo el análisis sobre algunos temas y confirme si el nivelado se
     siente más parejo entre temas que antes — sin tener que repetir a
     mano lo que hacía en mhWaveEdit.
+95. ~~Ronda grande: Copiar entre categorías, Renombrar categoría con
+    corrección de referencias, bug de colores al reiniciar, duplicados
+    acotado a categoría, rediseño del Aleatorio de Ventana 1 (rotación
+    persistida por categoría), FMT visible en Emisión, ciclo FMT por
+    tiempo~~ — siete pedidos en un solo mensaje, con el motor de
+    Aleatorio de Ventana 1 como el más grande y explicado con un
+    diseño propio punto por punto.
+
+    **a) Copiar entre categorías al arrastrar** (pedido explícito:
+    "preguntar si deseo arrastrar o crear una copia... el archivo
+    original permanece en su lugar, solo crea una idéntica entrada de
+    JSON en la categoría de destino"): `_on_archivos_soltados_en_categoria`
+    ahora SIEMPRE pregunta Mover/Copiar/Cancelar (`gui/ventana_explorador.py:
+    _preguntar_mover_o_copiar()`, ya no gateado por
+    `confirmar_antes_de_eliminar` — es una decisión real, no una
+    confirmación). Nueva `_copiar_archivos_a_categoria()`: el registro
+    ORIGINAL nunca se toca, se crea una entrada nueva e independiente
+    en destino con los MISMOS metadatos pero un CÓDIGO propio
+    correlativo (mismo criterio que cualquier alta nueva) — el mismo
+    archivo físico queda reproducible desde las dos categorías. Señal
+    nueva `archivo_copiado` (mismo patrón que `archivo_movido`).
+
+    **b) Renombrar categoría, con corrección de referencias** (pedido
+    explícito: "el sistema debe corregir todas las integraciones de
+    rutas... para que no se rompa la lectura del programador,
+    aleatorio, musicalizador"): botón "✏ Renombrar" nuevo junto a
+    "✕ Eliminar". Las categorías se referencian por FUERA de la
+    biblioteca en 3 archivos (`playlist_publicidad.json`,
+    `programacion.json`, `musicalizador.json`) guardando el CAMINO DE
+    NOMBRES desde la raíz, nunca una referencia viva — renombrar un
+    tramo de ese camino sin más dejaba esas referencias apuntando a
+    algo que ya no existe (`buscar_categoria_por_ruta()` devuelve
+    `None`, el ítem se saltea en silencio para siempre). Nueva
+    `config/settings.py:corregir_referencias_categoria_renombrada()`
+    (+ `ruta_con_prefijo_reemplazado()`, helper compartido): migra los
+    3 archivos reemplazando el PREFIJO viejo por el nuevo,
+    preservando cualquier subcategoría más profunda
+    ("Publicidad > Vieja > Sub" → "Publicidad > Nueva > Sub"). Además,
+    nueva `VentanaPublicidad.corregir_categoria_aleatorio_en_vivo()`
+    corrige el árbol de bloques que Ventana 1 tiene YA CARGADO EN
+    MEMORIA (el que de verdad conduce la emisión en ese instante),
+    conectada vía la señal nueva `categoria_renombrada` →
+    `MainWindow._on_categoria_renombrada()` — sin esperar a un
+    reinicio. Alcance deliberado: no se intenta parchear en caliente
+    un Programador/Musicalizador que estuviera abierto en ese momento
+    (ambos releen de disco al reabrirse, ya corregido).
+
+    **c) Bug real corregido — los colores de género no se aplicaban al
+    reiniciar** ("vengo cambiando el color de Música y al reiniciar
+    vuelve el verde"): `VentanaExplorador.__init__` arrancaba siempre
+    con la paleta de FÁBRICA (`dict(GENERO_COLORES)`) — la paleta
+    guardada en Configuración recién se leía cuando se llamaba
+    `repintar_colores_genero()`, y eso SOLO pasaba si el operador
+    abría y guardaba Configuración en esa misma sesión. Corregido
+    leyendo la config guardada ya en la construcción.
+
+    **d) "Buscar duplicados" (Ventana 3) acotado SIEMPRE a una
+    categoría** (pedido explícito, consecuencia directa de (a): "como
+    ahora generamos ítems de JSON duplicados [con Copiar], la opción
+    de buscar duplicados se debe aplicar por categoría específica y
+    no por toda la base"): sacada la opción "Toda la base de datos" —
+    `_buscar_duplicados_avanzado()` va DIRECTO a elegir una categoría
+    (`_preguntar_alcance_duplicados()` eliminado). El buscador SIMPLE
+    de Configuración → Diagnóstico (criterios exactos, ronda 83) no se
+    tocó — el pedido fue puntual sobre "el botón de la ventana 3".
+
+    **e) Rediseño del Aleatorio de Ventana 1 — el más grande**
+    (pedido explícito, con diagnóstico propio de Santiago: "estoy
+    escuchando las mismas 2 publicidades en todos los bloques...
+    ¿será porque armé el bloque de las 00 horas y copié y pegué?" +
+    una especificación propia punto por punto de cómo debería
+    funcionar "si no está aplicada"): el no-repetir de antes
+    (`rutas_recientes_en_historial`, una ventana de RECENCIA derivada
+    del log de reproducción) funciona bien para Ventana 2 (~9000
+    archivos de música — **a propósito, NO SE TOCÓ**, pedido explícito
+    "esa ventana la dejaría como está") pero con categorías chicas de
+    Publicidad/Separadores/Artísticas usadas en TODOS los bloques
+    horarios del día no garantizaba variedad real entre un bloque y el
+    siguiente. Nuevo motor puro `core/rotacion_categoria.py` (mismo
+    espíritu que `core/musicalizador.py`, explorador duck-typed) con
+    una ROTACIÓN SECUENCIAL persistida por categoría —
+    `config/data/rotacion_categorias.json` — implementando los 4
+    puntos que pidió Santiago:
+    - (a) los candidatos se re-evalúan siempre EN VIVO (más estricto
+      todavía que "cada hora": nunca una foto vieja).
+    - (b) una posición separada POR CATEGORÍA — nunca mezclada entre
+      categorías distintas ni con Música.
+    - (c) recorre los archivos de la categoría hasta agotarlos, recién
+      ahí vuelve a empezar. Decisión propia no preguntada
+      explícitamente (documentada en el docstring del módulo): el
+      ORDEN de cada vuelta se baraja una vez al empezarla (no un orden
+      fijo alfabético repetido idéntico para siempre) — concilia la
+      letra del pedido ("del ítem 1 al final, vuelve a empezar al
+      agotarlos" — sí hay un orden fijo que se recorre completo antes
+      de repetir) con que la función siga sintiéndose "aleatoria"
+      (nombre de la función en toda la app).
+    - (d) la posición avanza SOLO cuando el archivo elegido arranca a
+      sonar DE VERDAD (nunca al quedar solo armado/en cola) — y
+      sobrevive reinicios de la app y cambios de día calendario (nunca
+      se resetea sola, solo al agotar la vuelta completa).
+    `core/playlist_manager.py:_resolver_item_aleatorio()` reemplaza el
+    llamado a `elegir_aleatorio_de_categoria()`/`rutas_recientes_en_historial`
+    por `elegir_por_rotacion()` (peek puro, sin escribir a disco); el
+    avance real (`marcar_reproducido_por_rotacion()`, sí persiste) se
+    llama desde `_reproducir_item_aleatorio()` en el ÚNICO punto donde
+    el ítem Aleatorio arranca a sonar de verdad (mismo lugar donde ya
+    se llamaba `registrar_reproduccion()`). El guard de "no repetir
+    DENTRO del mismo bloque" de la ronda 89
+    (`_rutas_usadas_aleatorio_en_bloque`) se CONSERVÓ como segunda capa
+    de seguridad sobre la misma rotación (mismo criterio de siempre:
+    "nunca confiar en una sola capa de protección"), pasado ahora como
+    `excluir_rutas` a `elegir_por_rotacion()`. El ítem Aleatorio del
+    Auxiliar (menú contextual "🎲 Agregar ítem aleatorio...", ronda 42)
+    es una función DISTINTA y no se tocó — sigue usando
+    `elegir_aleatorio_de_categoria()`/historial, a propósito (es una
+    inserción manual puntual del operador, no el ciclo automático de
+    bloques horarios que motivó este rediseño).
+
+    **f) FMT visible en el título de Emisión** (pedido explícito:
+    "EMISIÓN - LATINO, no hace falta que salga FMT escrito"): nuevo
+    `PanelReproductor.establecer_sufijo_titulo()` (agrega/saca un
+    sufijo al `QGroupBox`, guardado como `self._grupo` — antes era una
+    variable local, no sobrevivía a `_construir_ui()`). Nuevo callback
+    `GestorPlaylist.al_cambiar_formato_activo` (avisado desde
+    `iniciar_musicalizador()`/`detener_musicalizador()`), conectado en
+    `MainWindow._inicializar_motores_audio()` a
+    `VentanaEmision.establecer_sufijo_titulo()` — con una sincronización
+    inicial explícita justo después de conectar (cubre el caso de una
+    sesión restaurada con un FMT ya activo desde `_restaurar_desde_disco()`,
+    que corre ANTES de que el callback exista).
+
+    **g) Menú contextual en Emisión — agregar X minutos de un FMT sin
+    borrar lo cargado** (pedido explícito: "como si hubiera pasado por
+    el comando FMT de la ventana 1... sin eliminar lo que ya esté
+    cargado"): nuevo ítem "🎵 Agregar ciclo FMT por tiempo..." en el
+    menú contextual de Emisión (`PanelReproductor` ganó
+    `permitir_ciclo_fmt: bool`, exclusivo de Ventana 2 — al revés del
+    flag ya existente `permitir_agregar_item`, exclusivo del
+    Auxiliar), abre `gui/dialogo_ciclo_fmt_por_tiempo.py` (formato +
+    minutos, mismo patrón de "elegir de una lista ya creada" que
+    `dialogo_insertar_comando_fmt.py`). Nuevo
+    `GestorPlaylist.insertar_ciclo_fmt_por_tiempo(nombre_formato,
+    minutos)`: a diferencia de `iniciar_musicalizador()` (que SIEMPRE
+    limpia antes de generar), este AGREGA al final — llama a
+    `generar_serie()` en bucle (sumando la duración real de cada ítem,
+    parseada con `core.buscador_duplicados.duracion_a_segundos()`)
+    hasta cubrir los minutos pedidos, con un techo duro
+    (`LIMITE_ITEMS_CICLO_POR_TIEMPO = 500`) para nunca colgarse aunque
+    el formato tenga ítems sin duración conocida. "Como si hubiera
+    pasado por el Comando FMT" (pedido explícito): deja el formato
+    como ACTIVO para el refill continuo de ahí en más, y lo graba como
+    "último FMT" — la única diferencia real con el Comando FMT
+    verdadero es que este no limpia lo ya cargado.
+
+    Probado de punta a punta con dos scripts dedicados: **motor puro**
+    de rotación (primera vuelta pasa por todos sin repetir, la 4ta
+    elección de una categoría de 3 arranca vuelta nueva sin quedarse
+    sin candidatos, la posición sobrevive una relectura de disco
+    simulando un reinicio, categoría de 2 alterna sin repetir,
+    categoría inexistente/sin explorador degrada a `None`, un archivo
+    agregado después se suma solo a la rotación sin esperar vuelta
+    nueva) + **integración real** con `GestorPublicidad`/`VentanaPublicidad`
+    (un bloque de 4 ítems Aleatorio sobre una categoría de 4 usa los 4
+    sin repetir dentro de sí mismo; con una categoría de 8 y 2 ítems
+    por bloque, dos bloques horarios consecutivos —simulando el "copié
+    y pegué" real de Santiago— **NUNCA se pisan entre sí**, el caso
+    exacto que reportó) + colores de género aplicados desde la
+    construcción sin sesión previa + copiar entre categorías (original
+    intacto, copia con código propio, mismo archivo físico) +
+    `_buscar_duplicados_avanzado` sin la opción de "toda la base" +
+    renombrar categoría corrigiendo los 3 archivos persistidos
+    (incluida una subcategoría más profunda) Y el árbol de Ventana 1
+    ya cargado en memoria + título de Emisión alternando
+    "EMISIÓN"/"EMISIÓN - Latino" al activar/desactivar un FMT real +
+    ciclo FMT por tiempo insertado sin borrar un ítem ya cargado a
+    mano, con el formato quedando activo/"último FMT" — + `py_compile`
+    de todo el proyecto + smoke test de arranque limpio sin traceback.
+    **No se pudo correr la suite de regresión de scripts de rondas
+    anteriores** (ninguno está commiteado al repo, ver ronda 90).
+    **Sigue sin poder probarse con audio/VLC real ni con la biblioteca
+    real de Santiago**: falta que confirme (1) que Copiar entre
+    categorías funciona como espera al arrastrar, (2) que Renombrar
+    categoría no rompe un bloque/formato ya armado, (3) que los
+    colores elegidos en Apariencia ahora sobreviven un reinicio real,
+    (4) que Buscar duplicados pidiendo siempre una categoría no
+    resulta incómodo, (5) — el más importante — que con SU biblioteca
+    real, dos bloques horarios consecutivos (sobre todo los que armó
+    copiando y pegando) ya no repiten las mismas publicidades/
+    separadores, y que la variedad se sienta real a lo largo de todo
+    un día, (6) que el título de Emisión muestre el FMT correcto en
+    uso, y (7) que insertar un ciclo FMT por tiempo desde Emisión
+    calcule una cantidad razonable de ítems para el tiempo pedido.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
