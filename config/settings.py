@@ -24,6 +24,7 @@ ARCHIVO_MUSICALIZADOR = os.path.join(DIRECTORIO_CONFIG, "musicalizador.json")
 ARCHIVO_ULTIMO_FMT = os.path.join(DIRECTORIO_CONFIG, "ultimo_fmt.json")
 ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
 ARCHIVO_HISTORIAL_REPRODUCCION = os.path.join(DIRECTORIO_CONFIG, "historial_reproduccion.txt")
+ARCHIVO_ROTACION_CATEGORIAS = os.path.join(DIRECTORIO_CONFIG, "rotacion_categorias.json")
 TAMAÑO_MAXIMO_LOG_BYTES = 2 * 1024 * 1024  # 2 MB — más allá de esto, rota a .anterior.txt
 
 CONFIG_POR_DEFECTO = {
@@ -815,6 +816,110 @@ def renombrar_formato(nombre_viejo: str, nombre_nuevo: str) -> bool:
     return True
 
 
+def ruta_con_prefijo_reemplazado(ruta, ruta_vieja: list, ruta_nueva: list):
+    """Si `ruta` (list[str], un camino de categoría guardado) empieza
+    EXACTAMENTE con `ruta_vieja`, devuelve `ruta` con ese prefijo
+    reemplazado por `ruta_nueva` -- conserva cualquier subcategoría más
+    profunda intacta (renombrar "Publicidad" también corrige
+    referencias a "Publicidad > Bebidas"). Si no matchea, o `ruta` está
+    vacía/ausente, la devuelve sin tocar."""
+    if not ruta or not ruta_vieja:
+        return ruta
+    n = len(ruta_vieja)
+    if list(ruta[:n]) == list(ruta_vieja):
+        return list(ruta_nueva) + list(ruta[n:])
+    return ruta
+
+
+def corregir_referencias_categoria_renombrada(ruta_vieja: list, ruta_nueva: list) -> int:
+    """Pedido explícito ("renombrar la categoría... el sistema debe
+    corregir todas las integraciones de rutas efectuadas para que no
+    se 'rompa' la lectura del programador, aleatorio, musicalizador"):
+    migra los 3 archivos que guardan un CAMINO DE CATEGORÍA por fuera
+    de la biblioteca (biblioteca.json en sí no necesita nada -- ahí la
+    categoría vive como el propio QTreeWidgetItem, ya renombrado):
+
+    - `playlist_publicidad.json`: ítems Aleatorio de Ventana 1
+      (`es_aleatorio` + `categoria_aleatorio`).
+    - `programacion.json`: mismos ítems Aleatorio, pero dentro de
+      programaciones guardadas (día de semana o fecha específica).
+    - `musicalizador.json`: ítems tipo "aleatorio" (`categoria`) y el
+      Pisador de cualquier ítem (`pisador_categoria`).
+
+    Devuelve la cantidad total de referencias corregidas (para el
+    mensaje de confirmación al operador). No lanza excepción -- un
+    archivo ausente/corrupto se saltea sin frenar la migración de los
+    demás (mismo criterio de siempre en este proyecto)."""
+    if not ruta_vieja or ruta_vieja == ruta_nueva:
+        return 0
+    tocados = 0
+
+    def _corregir_item(item: dict) -> bool:
+        nonlocal tocados
+        cambiado = False
+        if item.get("categoria_aleatorio"):
+            nueva = ruta_con_prefijo_reemplazado(item["categoria_aleatorio"], ruta_vieja, ruta_nueva)
+            if nueva != item["categoria_aleatorio"]:
+                item["categoria_aleatorio"] = nueva
+                cambiado = True
+        if item.get("categoria"):
+            nueva = ruta_con_prefijo_reemplazado(item["categoria"], ruta_vieja, ruta_nueva)
+            if nueva != item["categoria"]:
+                item["categoria"] = nueva
+                cambiado = True
+        if item.get("pisador_categoria"):
+            nueva = ruta_con_prefijo_reemplazado(item["pisador_categoria"], ruta_vieja, ruta_nueva)
+            if nueva != item["pisador_categoria"]:
+                item["pisador_categoria"] = nueva
+                cambiado = True
+        if cambiado:
+            tocados += 1
+        return cambiado
+
+    # playlist_publicidad.json
+    try:
+        datos_v1 = cargar_playlist_publicidad()
+        hubo_cambio = False
+        for bloque in datos_v1.get("bloques", []):
+            for item in bloque.get("items", []):
+                if _corregir_item(item):
+                    hubo_cambio = True
+        if hubo_cambio:
+            guardar_playlist_publicidad(datos_v1)
+    except Exception as error:
+        registrar_error(f"corregir_referencias_categoria_renombrada: playlist_publicidad.json: {error}")
+
+    # programacion.json (dias_semana + fechas_especificas)
+    try:
+        datos_prog = cargar_programaciones()
+        hubo_cambio = False
+        for grupo in ("dias_semana", "fechas_especificas"):
+            for entrada in datos_prog.get(grupo, {}).values():
+                for bloque in entrada.get("bloques", []):
+                    for item in bloque.get("items", []):
+                        if _corregir_item(item):
+                            hubo_cambio = True
+        if hubo_cambio:
+            guardar_programaciones(datos_prog)
+    except Exception as error:
+        registrar_error(f"corregir_referencias_categoria_renombrada: programacion.json: {error}")
+
+    # musicalizador.json
+    try:
+        datos_musi = cargar_musicalizador()
+        hubo_cambio = False
+        for formato in datos_musi.get("formatos", {}).values():
+            for item in formato.get("items", []):
+                if _corregir_item(item):
+                    hubo_cambio = True
+        if hubo_cambio:
+            guardar_musicalizador(datos_musi)
+    except Exception as error:
+        registrar_error(f"corregir_referencias_categoria_renombrada: musicalizador.json: {error}")
+
+    return tocados
+
+
 # ----------------------------------------------------------------------
 # "Último FMT cargado" (pedido explícito: "lo guardarás en memoria
 # temporal, sobrevive al día no a la sesión") — a diferencia de
@@ -878,3 +983,43 @@ def rutas_recientes_en_historial(rutas_candidatas: set, cantidad_a_excluir: int)
         if ruta in rutas_candidatas:
             excluidas.add(ruta)
     return excluidas
+
+
+# ----------------------------------------------------------------------
+# Rotación SECUENCIAL por categoría (pedido explícito de Santiago, ver
+# core/rotacion_categoria.py para el motor completo): "las mismas 2
+# publicidades en todos los bloques... no debe suceder". A diferencia
+# del no-repetir de arriba (`rutas_recientes_en_historial`, una
+# VENTANA de recencia derivada del LOG de reproducción -- lo que ya
+# usa bien el Musicalizador de Ventana 2 con ~9000 archivos de
+# música), esto es un mecanismo PROPIO con posición persistida por
+# categoría, exclusivo del ítem Aleatorio de Ventana 1/Programador —
+# nunca vuelve sola al principio (ni al cambiar de día, ni al
+# reiniciar la app), solo cuando ya se agotaron todos los archivos de
+# esa categoría.
+# ----------------------------------------------------------------------
+# Estructura de config/data/rotacion_categorias.json:
+#   {"categorias": {
+#       "Publicidad > Bebidas": {
+#           "ruta": ["Publicidad", "Bebidas"],
+#           "orden_ronda_actual": ["/ruta1.mp3", "/ruta2.mp3", ...],
+#           "reproducidos_esta_ronda": ["/ruta2.mp3"]
+#       }, ...
+#   }}
+
+def cargar_rotacion_categorias() -> dict:
+    _asegurar_directorio()
+    if not os.path.exists(ARCHIVO_ROTACION_CATEGORIAS):
+        return {"categorias": {}}
+    try:
+        with open(ARCHIVO_ROTACION_CATEGORIAS, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+        datos.setdefault("categorias", {})
+        return datos
+    except (json.JSONDecodeError, OSError) as error:
+        registrar_error(f"Error leyendo rotación de categorías: {error}")
+        return {"categorias": {}}
+
+
+def guardar_rotacion_categorias(datos: dict):
+    _guardar_json_atomico(ARCHIVO_ROTACION_CATEGORIAS, datos)

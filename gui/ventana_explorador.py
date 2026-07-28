@@ -80,7 +80,7 @@ from core.audio_engine import obtener_duracion_formateada
 from core.buscador_duplicados import buscar_grupos_duplicados
 from config.settings import (
     cargar_configuracion, cargar_biblioteca, guardar_biblioteca, tolerancia_silencio_para_genero,
-    parametros_nivelado,
+    parametros_nivelado, corregir_referencias_categoria_renombrada,
 )
 
 EXTENSIONES_SOPORTADAS = (".mp3", ".wav", ".mp4", ".m4a")
@@ -112,6 +112,8 @@ class VentanaExplorador(QWidget):
     archivo_agregado = Signal(str)
     archivo_eliminado = Signal(str)
     archivo_movido = Signal(str, str)   # (titulo, nombre_categoria_destino)
+    archivo_copiado = Signal(str, str)  # (titulo, nombre_categoria_destino) -- ver _copiar_archivos_a_categoria
+    categoria_renombrada = Signal(list, list)   # (ruta_vieja, ruta_nueva) -- ver _renombrar_categoria
     solicitud_play_preview = Signal()
     solicitud_stop_preview = Signal()
     solicitud_buscar_posicion_preview = Signal(int)   # 0-1000 (por mil)
@@ -142,7 +144,18 @@ class VentanaExplorador(QWidget):
         super().__init__(parent)
         self._en_busqueda = False
         self._arrastrando_slider_preview = False
-        self._colores_genero = dict(GENERO_COLORES)
+        # Bug real corregido ("vengo cambiando el color de Música y al
+        # reiniciar vuelve el verde"): acá se arrancaba SIEMPRE con la
+        # paleta de fábrica (`GENERO_COLORES`, hardcodeada) -- la
+        # paleta guardada en Configuración recién se leía cuando
+        # `repintar_colores_genero()` se llamaba desde
+        # `MainWindow._aplicar_configuracion_en_vivo()`, es decir,
+        # SOLO si el operador abría y guardaba Configuración en ESA
+        # misma sesión. En cada reinicio, antes de eso, quedaba
+        # pintado con los colores de fábrica. Corregido leyendo la
+        # config guardada ya en la construcción, igual que hace
+        # `repintar_colores_genero()`.
+        self._colores_genero = cargar_configuracion()["apariencia"]["colores_genero"]
         # Ordenar por columna (pedido explícito): click en el
         # encabezado ordena A-Z, un segundo click en la MISMA columna
         # invierte a Z-A.
@@ -235,14 +248,24 @@ class VentanaExplorador(QWidget):
         self.btn_nueva_subcategoria.setToolTip("Nueva subcategoría dentro de la seleccionada")
         self.btn_eliminar_categoria = QPushButton("✕ Eliminar")
         self.btn_eliminar_categoria.setToolTip("Eliminar categoría")
+        # Pedido explícito ("agregar un botón a la par de Eliminar, que
+        # permita renombrar la categoría"): a diferencia de Eliminar,
+        # renombrar corrige de paso las referencias por CAMINO DE
+        # NOMBRES guardadas fuera de la biblioteca (ítems Aleatorio de
+        # Ventana 1/Programador, categorías del Musicalizador) -- ver
+        # _renombrar_categoria().
+        self.btn_renombrar_categoria = QPushButton("✏ Renombrar")
+        self.btn_renombrar_categoria.setToolTip("Renombrar categoría (corrige las referencias guardadas)")
         self.btn_nueva_categoria.clicked.connect(self._nueva_categoria)
         self.btn_nueva_subcategoria.clicked.connect(self._nueva_subcategoria)
         self.btn_eliminar_categoria.clicked.connect(self._eliminar_categoria)
-        for btn in (self.btn_nueva_categoria, self.btn_nueva_subcategoria, self.btn_eliminar_categoria):
+        self.btn_renombrar_categoria.clicked.connect(self._renombrar_categoria)
+        for btn in (self.btn_nueva_categoria, self.btn_nueva_subcategoria, self.btn_eliminar_categoria, self.btn_renombrar_categoria):
             btn.setProperty("class", "btnCompacto")
         fila_categorias_1.addWidget(self.btn_nueva_categoria)
         fila_categorias_1.addWidget(self.btn_nueva_subcategoria)
         fila_categorias_2.addWidget(self.btn_eliminar_categoria)
+        fila_categorias_2.addWidget(self.btn_renombrar_categoria)
         layout_categorias.addLayout(fila_categorias_1)
         layout_categorias.addLayout(fila_categorias_2)
 
@@ -988,6 +1011,56 @@ class VentanaExplorador(QWidget):
             self.tree_categorias.takeTopLevelItem(indice)
         self._guardar_biblioteca_debounced()
 
+    def _renombrar_categoria(self):
+        """Pedido explícito ("agregar un botón a la par de Eliminar,
+        que permita renombrar la categoría... el sistema debe corregir
+        todas las integraciones de rutas efectuadas para que no se
+        'rompa' la lectura del programador, aleatorio, musicalizador,
+        etc"): las categorías se referencian en 3 archivos por FUERA
+        de la biblioteca (`playlist_publicidad.json`, `programacion.json`,
+        `musicalizador.json`) guardando el CAMINO DE NOMBRES desde la
+        raíz (`ruta_de_categoria()`), nunca una referencia viva al
+        `QTreeWidgetItem` -- renombrar un nodo de ese camino, sin más,
+        deja esas referencias apuntando a un camino que ya no existe
+        (`buscar_categoria_por_ruta()` devuelve `None`, el ítem se
+        saltea en silencio para siempre). Corregido migrando esos 3
+        archivos con `config.settings.corregir_referencias_categoria_renombrada()`
+        (reemplaza el PREFIJO viejo por el nuevo, conservando cualquier
+        subcategoría más profunda) apenas se confirma el renombre."""
+        self._salir_de_busqueda_si_corresponde()
+        item = self._categoria_actual()
+        if item is None:
+            QMessageBox.information(self, "Renombrar categoría", "Seleccioná una categoría.")
+            return
+
+        nombre_actual = item.text(0)
+        nombre_nuevo, ok = QInputDialog.getText(
+            self, "Renombrar categoría", "Nuevo nombre:", text=nombre_actual,
+        )
+        if not ok:
+            return
+        nombre_nuevo = nombre_nuevo.strip()
+        if not nombre_nuevo or nombre_nuevo == nombre_actual:
+            return
+
+        ruta_vieja = self.ruta_de_categoria(item)
+        item.setText(0, nombre_nuevo)
+        ruta_nueva = self.ruta_de_categoria(item)
+        self._guardar_biblioteca_debounced()
+
+        tocados = corregir_referencias_categoria_renombrada(ruta_vieja, ruta_nueva)
+        # Avisa a MainWindow para que refresque en el momento las
+        # referencias que Ventana 1 tiene YA CARGADAS en memoria (el
+        # árbol en vivo que conduce la emisión al aire, no solo lo
+        # persistido en disco) -- ver MainWindow._on_categoria_renombrada.
+        self.categoria_renombrada.emit(ruta_vieja, ruta_nueva)
+
+        mensaje = f"Categoría renombrada a '{nombre_nuevo}'."
+        if tocados:
+            plural = "s" if tocados != 1 else ""
+            mensaje += f"\nSe corrigieron {tocados} referencia{plural} guardada{plural} (ítems Aleatorio / Musicalizador)."
+        QMessageBox.information(self, "Renombrar categoría", mensaje)
+
     # ------------------------------------------------------------------
     # Alta de archivos: UNO -> diálogo completo (título/artista/género
     # editables); VARIOS (selección múltiple o arrastre masivo) ->
@@ -1198,32 +1271,32 @@ class VentanaExplorador(QWidget):
     # Buscador de duplicados AVANZADO (pedido explícito: coincidencia
     # aproximada en 3 niveles de prioridad -- ver
     # core/buscador_duplicados.py y gui/dialogo_buscar_duplicados_avanzado.py).
-    # Primero pregunta el ALCANCE (toda la biblioteca, o una categoría
-    # puntual); si es una categoría, ofrece además el "modo automático
-    # en masa" como bonus (pedido explícito: solo ahí, no para toda la
-    # biblioteca de una).
+    #
+    # Acotado SIEMPRE a una categoría específica (pedido explícito,
+    # ronda posterior: "como ahora generamos ítems de JSON duplicados
+    # [con Copiar entre categorías], la opción de 'buscar duplicados'
+    # se debe aplicar por categoría específica y no por toda la
+    # base") -- antes ofrecía elegir entre "toda la base" o una
+    # categoría puntual; con "Copiar" (ver `_copiar_archivos_a_categoria`)
+    # generando duplicados INTENCIONALES entre categorías distintas a
+    # propósito, una búsqueda de "toda la base" los marcaría siempre
+    # como falsos positivos. Ofrece además el "modo automático en
+    # masa" como bonus, igual que antes.
     # ------------------------------------------------------------------
     def _buscar_duplicados_avanzado(self):
-        alcance = self._preguntar_alcance_duplicados()
-        if alcance == "cancelar":
+        from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
+        dialogo_cat = DialogoSeleccionarCategoria(
+            self.tree_categorias, titulo="Elegir categoría para buscar duplicados", parent=self,
+        )
+        if dialogo_cat.exec() != QDialog.DialogCode.Accepted:
             return
-
-        item_categoria = None
-        modo_masa = False
-        if alcance == "categoria":
-            from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
-            dialogo_cat = DialogoSeleccionarCategoria(
-                self.tree_categorias, titulo="Elegir categoría para buscar duplicados", parent=self,
-            )
-            if dialogo_cat.exec() != QDialog.DialogCode.Accepted:
-                return
-            ruta_elegida = dialogo_cat.ruta_elegida()
-            if not ruta_elegida:
-                return
-            item_categoria = self.buscar_categoria_por_ruta(ruta_elegida)
-            if item_categoria is None:
-                return
-            modo_masa = self._preguntar_modo_masa()
+        ruta_elegida = dialogo_cat.ruta_elegida()
+        if not ruta_elegida:
+            return
+        item_categoria = self.buscar_categoria_por_ruta(ruta_elegida)
+        if item_categoria is None:
+            return
+        modo_masa = self._preguntar_modo_masa()
 
         self.solicitud_preload.emit("Buscando duplicados...")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1249,26 +1322,6 @@ class VentanaExplorador(QWidget):
             self._ejecutar_modo_masa_duplicados(grupos, id_dispositivo_preescucha)
         else:
             self._revisar_grupos_duplicados_uno_por_uno(grupos, id_dispositivo_preescucha)
-
-    def _preguntar_alcance_duplicados(self) -> str:
-        """Extraído en su propio método (mismo criterio que
-        _preguntar_que_hacer_con_archivo_perdido) para poder testear
-        la decisión sin simular un click real. Devuelve "toda" /
-        "categoria" / "cancelar"."""
-        caja = QMessageBox(self)
-        caja.setWindowTitle("Buscar duplicados")
-        caja.setText("¿Sobre qué querés buscar duplicados?")
-        boton_toda = caja.addButton("Toda la base de datos", QMessageBox.ButtonRole.AcceptRole)
-        boton_categoria = caja.addButton("Una categoría específica...", QMessageBox.ButtonRole.ActionRole)
-        caja.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
-        caja.setDefaultButton(boton_toda)
-        caja.exec()
-        elegido = caja.clickedButton()
-        if elegido is boton_toda:
-            return "toda"
-        if elegido is boton_categoria:
-            return "categoria"
-        return "cancelar"
 
     def _preguntar_modo_masa(self) -> bool:
         """Bonus, pedido explícito: SOLO se ofrece tras elegir una
@@ -1922,23 +1975,89 @@ class VentanaExplorador(QWidget):
                 rutas_externas.append(ruta)
 
         if rutas_conocidas:
-            config = cargar_configuracion()
-            if config["general"]["confirmar_antes_de_eliminar"]:
-                descripcion = "1 archivo" if len(rutas_conocidas) == 1 else f"{len(rutas_conocidas)} archivos"
-                respuesta = QMessageBox.question(
-                    self, "Cambiar de categoría",
-                    f"¿Mover {descripcion} a la categoría '{item_categoria_destino.text(0)}'?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if respuesta == QMessageBox.StandardButton.Yes:
-                    self._mover_archivos_a_categoria(rutas_conocidas, item_categoria_destino)
-            else:
+            # Pedido explícito ("cuando arrastro y cambio de categoría,
+            # preguntar si deseo arrastrar o crear una copia... el
+            # archivo original permanece en su lugar, solo crea una
+            # idéntica entrada de JSON en la categoría de destino"):
+            # SIEMPRE se pregunta Mover/Copiar (no gateado por
+            # "confirmar_antes_de_eliminar" -- no es una confirmación
+            # de una acción riesgosa, es una decisión real de qué
+            # hacer, así que sigue preguntándose aunque ese flag esté
+            # apagado).
+            accion = self._preguntar_mover_o_copiar(len(rutas_conocidas), item_categoria_destino.text(0))
+            if accion == "mover":
                 self._mover_archivos_a_categoria(rutas_conocidas, item_categoria_destino)
+            elif accion == "copiar":
+                self._copiar_archivos_a_categoria(rutas_conocidas, item_categoria_destino)
 
         if len(rutas_externas) == 1:
             self._dar_de_alta_archivo(rutas_externas[0], item_categoria_destino)
         elif len(rutas_externas) > 1:
             self._importar_archivos_masivo(rutas_externas, item_categoria_destino)
+
+    def _preguntar_mover_o_copiar(self, cantidad: int, nombre_destino: str) -> str:
+        """Extraído en su propio método (mismo criterio que el resto de
+        las decisiones de esta app, ej. `_preguntar_que_hacer_con_archivo_perdido`)
+        para poder testear la decisión sin simular un click real.
+        Devuelve "mover" / "copiar" / "cancelar"."""
+        descripcion = "1 archivo" if cantidad == 1 else f"{cantidad} archivos"
+        caja = QMessageBox(self)
+        caja.setWindowTitle("Cambiar de categoría")
+        caja.setText(
+            f"¿Qué querés hacer con {descripcion} en la categoría '{nombre_destino}'?\n\n"
+            "Mover: el archivo deja de estar en su categoría de origen.\n\n"
+            "Copiar: el original queda donde está tal cual, y se crea una "
+            "entrada nueva (con su propio código, también reproducible) en "
+            "esta categoría -- el mismo audio queda disponible desde las dos."
+        )
+        boton_mover = caja.addButton("Mover", QMessageBox.ButtonRole.AcceptRole)
+        boton_copiar = caja.addButton("Copiar", QMessageBox.ButtonRole.ActionRole)
+        caja.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
+        caja.setDefaultButton(boton_mover)
+        caja.exec()
+        elegido = caja.clickedButton()
+        if elegido is boton_mover:
+            return "mover"
+        if elegido is boton_copiar:
+            return "copiar"
+        return "cancelar"
+
+    def _copiar_archivos_a_categoria(self, rutas: list, categoria_destino):
+        """Contraparte de `_mover_archivos_a_categoria`: el registro
+        ORIGINAL nunca se toca (sigue en su categoría de origen, sigue
+        reproducible ahí) -- se crea una entrada NUEVA e independiente
+        en la categoría destino, con los mismos metadatos (título/
+        artista/género/ruta/análisis de silencio/vigencia), pero con
+        un CÓDIGO propio correlativo DENTRO de la categoría destino
+        (mismo criterio que cualquier alta nueva -- reusar el código
+        de origen no tendría sentido en otra categoría y podría
+        colisionar con lo que ya haya ahí). El archivo de audio en
+        disco es UNO SOLO -- ahora queda disponible/reproducible desde
+        las dos categorías."""
+        copiados = []
+        registros_destino = categoria_destino.data(0, ROL_ARCHIVOS) or []
+        for ruta in rutas:
+            registro_original = self.buscar_registro_por_ruta(ruta)
+            if registro_original is None:
+                continue
+            genero = registro_original.get("genero", "")
+            prefijo = GENERO_PREFIJOS_CODIGO.get(genero, "GEN")
+            siguiente_numero = len(registros_destino) + 1
+            copia = dict(registro_original)
+            copia["codigo"] = f"{prefijo}{siguiente_numero:05d}"
+            registros_destino.append(copia)
+            copiados.append(copia.get("titulo", ruta))
+
+        if not copiados:
+            return
+
+        categoria_destino.setData(0, ROL_ARCHIVOS, registros_destino)
+        if not self._en_busqueda:
+            self._on_categoria_seleccionada(self._categoria_actual(), None)
+
+        self._guardar_biblioteca_debounced()
+        nombres = copiados[0] if len(copiados) == 1 else f"{len(copiados)} archivos"
+        self.archivo_copiado.emit(nombres, categoria_destino.text(0))
 
     def _mover_archivos_a_categoria(self, rutas: list, categoria_destino):
         movidos = []

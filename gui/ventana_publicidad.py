@@ -46,7 +46,10 @@ from gui.styles import (
     ROL_ES_ALEATORIO, ROL_CATEGORIA_ALEATORIO, ROL_RECURSIVO_ALEATORIO, COLOR_ALEATORIO,
     ROL_ITEM_CON_ERROR, icono_error,
 )
-from config.settings import cargar_configuracion, titulo_bloque_sin_prefijo_hora, registrar_reproduccion
+from config.settings import (
+    cargar_configuracion, titulo_bloque_sin_prefijo_hora, registrar_reproduccion,
+    ruta_con_prefijo_reemplazado,
+)
 
 # Rol de dato propio: hora "HH:mm:ss" guardada en el nodo de bloque
 # (por encima de Qt.UserRole), separado del texto visible del título
@@ -405,6 +408,29 @@ class VentanaPublicidad(QWidget):
     def recursivo_aleatorio_de_item(self, item) -> bool:
         valor = item.data(0, ROL_RECURSIVO_ALEATORIO)
         return True if valor is None else bool(valor)
+
+    def corregir_categoria_aleatorio_en_vivo(self, ruta_vieja: list, ruta_nueva: list) -> int:
+        """Contraparte EN MEMORIA de `config.settings.
+        corregir_referencias_categoria_renombrada()` (que ya corrige lo
+        persistido en disco) -- sin esto, el árbol de bloques que
+        Ventana 1 tiene YA CARGADO (el que de verdad conduce la
+        emisión en este instante) seguiría con la referencia rota
+        hasta el próximo reinicio de la app. Recorre todos los bloques/
+        ítems del árbol en vivo y actualiza `ROL_CATEGORIA_ALEATORIO`
+        donde corresponda. Devuelve cuántos ítems se corrigieron."""
+        tocados = 0
+        for i in range(self.tree.topLevelItemCount()):
+            bloque = self.tree.topLevelItem(i)
+            for j in range(bloque.childCount()):
+                hijo = bloque.child(j)
+                if not self.es_aleatorio(hijo):
+                    continue
+                ruta_actual = self.categoria_aleatorio_de_item(hijo)
+                ruta_corregida = ruta_con_prefijo_reemplazado(ruta_actual, ruta_vieja, ruta_nueva)
+                if ruta_corregida != ruta_actual:
+                    hijo.setData(0, ROL_CATEGORIA_ALEATORIO, ruta_corregida)
+                    tocados += 1
+        return tocados
 
     def analisis_de_item(self, item) -> dict:
         if item is None:

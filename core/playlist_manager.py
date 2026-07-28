@@ -43,9 +43,10 @@ from PySide6.QtCore import Qt, QTimer, QTime, QDate
 
 from core.audio_engine import MotorAudio
 from core.hth import resolver_comando_hth, TIPO_COMANDO_HTH
+from core.rotacion_categoria import elegir_por_rotacion, marcar_reproducido_por_rotacion
 from config.settings import (
     cargar_playlist_publicidad, guardar_playlist_publicidad, registrar_error, registrar_evento,
-    titulo_bloque_sin_prefijo_hora, vigencia_activa, rutas_recientes_en_historial, registrar_reproduccion,
+    titulo_bloque_sin_prefijo_hora, vigencia_activa, registrar_reproduccion,
 )
 
 DEBOUNCE_GUARDADO_PUBLICIDAD_MS = 500
@@ -442,11 +443,28 @@ class GestorPublicidad:
     # Ítem ALEATORIO (pedido explícito, Programador: "para darle
     # dinamismo, por ejemplo en separadores... que sea buen aleatorio y
     # variado"): a diferencia de una tanda normal, no tiene una ruta
-    # fija — resuelve un archivo al azar de la categoría guardada CADA
-    # VEZ que le toca sonar, con el mismo no-repetir vía historial
-    # persistente que ya usa el Musicalizador Avanzado
-    # (rutas_recientes_en_historial), así nunca repite un archivo hasta
-    # agotar los demás de esa categoría.
+    # fija — resuelve un archivo de la categoría guardada CADA VEZ que
+    # le toca sonar.
+    #
+    # Bug real corregido (pedido explícito: "estoy escuchando las
+    # mismas 2 publicidades en TODOS los bloques... ¿será porque copié
+    # y pegué el bloque de las 00 horas?"): el no-repetir vía historial
+    # (rutas_recientes_en_historial, una ventana de RECENCIA) andaba
+    # bien para Ventana 2 (~9000 archivos de música, sin tocar), pero
+    # con categorías chicas de Publicidad/Separadores usadas en TODOS
+    # los bloques del día no garantizaba variedad real entre un bloque
+    # y el siguiente. Reemplazado por `core/rotacion_categoria.py`: una
+    # rotación SECUENCIAL con posición persistida POR CATEGORÍA (nunca
+    # vuelve sola al principio, ni al cambiar de día ni al reiniciar la
+    # app, solo al agotar TODOS los archivos de esa categoría) — ver el
+    # docstring de ese módulo para el diseño completo, pedido punto por
+    # punto por Santiago.
+    #
+    # `_rutas_usadas_aleatorio_en_bloque` se mantiene como una segunda
+    # capa de seguridad (mismo criterio de siempre en este proyecto:
+    # "nunca confiar en una sola capa de protección") sobre la MISMA
+    # rotación persistida — objetivo explícito: "no puede repetir la
+    # misma publicidad 2 veces en el mismo bloque".
     # ------------------------------------------------------------------
     def _actualizar_bloque_para_no_repetir_aleatorio(self, item):
         """Resetea el set de "ya usados en este bloque" al cruzar a un
@@ -464,30 +482,11 @@ class GestorPublicidad:
         if self._ventana_explorador is None:
             return None
         ruta_categoria = self.ventana.categoria_aleatorio_de_item(item) or []
-        categoria = self._ventana_explorador.buscar_categoria_por_ruta(ruta_categoria)
-        if categoria is None:
-            return None
         recursivo = self.ventana.recursivo_aleatorio_de_item(item)
-        candidatos = self._ventana_explorador.listar_registros_de_categoria(categoria, recursivo)
-        if not candidatos:
-            return None
-        rutas_candidatas = {r.get("ruta") for r in candidatos if r.get("ruta")}
         self._actualizar_bloque_para_no_repetir_aleatorio(item)
-        evitar = rutas_recientes_en_historial(rutas_candidatas, max(0, len(rutas_candidatas) - 1))
-        # OBJETIVO explícito de Santiago: "que un bloque horario sea lo
-        # más diferente posible al anterior, no puede repetir la misma
-        # publicidad 2 veces en el mismo bloque" -- se une la exclusión
-        # de siempre (historial persistente) con la garantía nueva
-        # (rutas ya usadas en ESTE bloque, esta pasada). Mismo criterio
-        # de "nunca dejar hueco" de toda la app: si excluir todo vaciara
-        # los candidatos (menos ítems en la categoría que los
-        # programados en el bloque), elegir_aleatorio_de_categoria
-        # ignora la exclusión antes que dejar silencio -- ahí SÍ toca
-        # repetir, a propósito ("solo se admite repetición si ya se
-        # completó la reproducción de todos los demás").
-        evitar_total = evitar | (self._rutas_usadas_aleatorio_en_bloque & rutas_candidatas)
-        registro = self._ventana_explorador.elegir_aleatorio_de_categoria(
-            categoria, recursivo, excluir_rutas=evitar_total,
+        registro = elegir_por_rotacion(
+            self._ventana_explorador, ruta_categoria, recursivo,
+            excluir_rutas=self._rutas_usadas_aleatorio_en_bloque,
         )
         if registro and registro.get("ruta"):
             self._rutas_usadas_aleatorio_en_bloque.add(registro["ruta"])
@@ -529,11 +528,20 @@ class GestorPublicidad:
         # de verdad.
         self.ventana.marcar_icono_reproducido_item(item)
         # El historial se registra con el archivo REAL resuelto (no el
-        # ítem placeholder, que nunca tiene ruta propia) — es lo que
-        # permite que el no-repetir funcione entre una reproducción y
-        # la siguiente.
+        # ítem placeholder, que nunca tiene ruta propia).
         registrar_reproduccion(
             "Publicidad", registro.get("titulo", ""), registro.get("codigo", ""), registro.get("ruta", ""),
+        )
+        # Avanza la rotación de la categoría DE VERDAD -- pedido
+        # explícito, punto (d): "la acción debe tomarlo luego de ser
+        # reproducido", nunca al quedar solo armado/en cola. Este es el
+        # único punto donde un ítem Aleatorio arranca a sonar de
+        # verdad (ver core/rotacion_categoria.py).
+        marcar_reproducido_por_rotacion(
+            self._ventana_explorador,
+            self.ventana.categoria_aleatorio_de_item(item) or [],
+            registro.get("ruta", ""),
+            self.ventana.recursivo_aleatorio_de_item(item),
         )
         registrar_evento(f"Publicidad: ítem aleatorio '{item.text(0)}' -> '{registro.get('titulo', '')}'")
 

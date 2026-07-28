@@ -28,14 +28,19 @@ class VentanaEmision(QWidget):
     item_doble_click = Signal(int)
     solicitud_agregar_pisador = Signal(int)
     solicitud_buscar_posicion = Signal(int)
+    solicitud_agregar_ciclo_fmt = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        # Pedido explícito ("menú contextual en Emisión para agregar X
+        # cantidad de tiempo de programación aleatoria FMT"): exclusivo
+        # de Ventana 2 -- permitir_ciclo_fmt=True (la Auxiliar nunca lo
+        # recibe, mismo criterio que FMT/Musicalizador en general).
         self.panel = PanelReproductor(
-            "EMISIÓN", mostrar_barra_progreso=True
+            "EMISIÓN", mostrar_barra_progreso=True, permitir_ciclo_fmt=True,
         )
         layout.addWidget(self.panel)
 
@@ -50,10 +55,14 @@ class VentanaEmision(QWidget):
         self.panel.item_doble_click.connect(self.item_doble_click.emit)
         self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
         self.panel.solicitud_buscar_posicion.connect(self.solicitud_buscar_posicion.emit)
+        self.panel.solicitud_agregar_ciclo_fmt.connect(self.solicitud_agregar_ciclo_fmt.emit)
 
     # ------------------------------------------------------------------
     # Delegación: API pública usada por core/playlist_manager.py
     # ------------------------------------------------------------------
+    def establecer_sufijo_titulo(self, texto):
+        self.panel.establecer_sufijo_titulo(texto)
+
     def marcar_reproduciendo(self, fila):
         self.panel.marcar_reproduciendo(fila)
 
