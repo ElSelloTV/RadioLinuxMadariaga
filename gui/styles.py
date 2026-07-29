@@ -4,19 +4,30 @@ gui/styles.py
 Hoja de estilos QSS centralizada para toda la aplicación.
 Mantener el estilo aislado aquí permite cambiar el theme
 completo sin tocar ni una línea de lógica ni de layout.
+
+Dos temas disponibles (Configuración → General → "Tema visual"):
+"oscuro" (default, sin cambios respecto de siempre) y "claro" (pedido
+explícito, "diseñá el tema Claro... exactamente igual [a Dinesat],
+sobre todo los colores" — screenshot real de Hardata Dinesat 9 pasado
+por Santiago: paneles caqui/tan cálidos, título de cada ventana en
+verde oscuro, contadores en un display marrón oscuro con texto crema).
+
+Los colores de ESTADO/SEMÁNTICOS (rojo=reproduciendo, verde=siguiente,
+celeste=selección, naranja=armado, etc.) son IGUALES en los dos temas
+a propósito — son significado, no superficie (mismo criterio ya
+establecido: "los colores que yo elijo... es solo para
+identificarlos", y el propio Dinesat real usa el mismo rojo/verde en
+su tema claro y en el oscuro). Solo cambian los colores de SUPERFICIE
+(fondo/panel/header/borde/texto), agrupados en PALETA_OSCURA/
+PALETA_CLARA y aplicados vía _generar_qss(paleta).
 --------------------------------------------------------
 """
 
-# Paleta base (referencia interna, no se usa directamente en QSS
-# pero sirve para mantener consistencia si se generan widgets
-# custom por código, ej. QPainter).
-COLOR_FONDO_PRINCIPAL = "#2b2b2b"
-COLOR_FONDO_PANEL = "#3a3a3a"
-COLOR_FONDO_HEADER = "#1f1f1f"
-COLOR_BORDE = "#555555"
-COLOR_TEXTO = "#e0e0e0"
-COLOR_TEXTO_SECUNDARIO = "#9a9a9a"
-
+# Colores de ESTADO/SEMÁNTICOS — iguales en cualquier tema, ver nota
+# arriba. Referenciados directo por nombre en _generar_qss() (no van
+# en las paletas de superficie) y por el resto de gui/*.py (import
+# directo, ej. common_widgets.py/panel_reproductor.py para pintar
+# filas rojo/verde).
 COLOR_REPRODUCIENDO = "#c0392b"   # Rojo: evento en emisión
 COLOR_SIGUIENTE = "#27ae60"       # Verde: próximo evento
 COLOR_AUTOMATICO_ON = "#e74c3c"
@@ -24,23 +35,84 @@ COLOR_AUTOMATICO_OFF = "#555555"
 COLOR_SELECCION = "#5dade2"       # Celeste: cursor de selección (Dinesat), nunca reemplaza rojo/verde
 COLOR_ARMADO = "#e67e22"          # Naranja: acción diferida armada (Stop diferido)
 
-QSS_APLICACION = f"""
+# Paleta de SUPERFICIE del tema OSCURO (default, sin cambios respecto
+# de siempre — mismos valores que antes vivían como constantes
+# sueltas COLOR_FONDO_PRINCIPAL/COLOR_FONDO_PANEL/etc.).
+PALETA_OSCURA = {
+    "fondo_principal": "#2b2b2b",
+    "fondo_panel": "#3a3a3a",
+    "fondo_header": "#1f1f1f",
+    "borde": "#555555",
+    "texto": "#e0e0e0",
+    "texto_secundario": "#9a9a9a",
+    "tree_fondo": "#262626",
+    "tree_alterno": "#2d2d2d",
+    "tree_seleccion": "#45688e",
+    "menubar_hover": "#444444",
+    "menu_item_hover": "#505050",
+    "toolbar_boton": "#333333",
+    "toolbar_boton_hover": "#444444",
+    "toolbar_boton_pressed": "#222222",
+    "boton_fondo": "#3d3d3d",
+    "boton_hover": "#4a4a4a",
+    "boton_pressed": "#2a2a2a",
+    "contador_fondo": "#101010",
+    "contador_texto": "#f5f5f5",
+    "scrollbar_handle": "#5a5a5a",
+}
+
+# Paleta de SUPERFICIE del tema CLARO — pedido explícito, imitando la
+# imagen real de Hardata Dinesat 9 que pasó Santiago: fondo general
+# caqui/tan cálido, título de cada panel en verde oscuro (como la
+# barra de título de cada ventana de Dinesat), contadores en un
+# display marrón oscuro con texto crema (como el reloj "00:00:00" de
+# la captura), listas en tono crema/tan más claro que el fondo.
+PALETA_CLARA = {
+    "fondo_principal": "#c7bb98",
+    "fondo_panel": "#d6cba8",
+    "fondo_header": "#2e4a2e",
+    "borde": "#9c8d64",
+    "texto": "#241c10",
+    "texto_secundario": "#5c4e30",
+    "tree_fondo": "#efe6c9",
+    "tree_alterno": "#e2d5ac",
+    "tree_seleccion": "#4a7ab5",
+    "menubar_hover": "#b8a97a",
+    "menu_item_hover": "#c3b78e",
+    "toolbar_boton": "#ddd3b0",
+    "toolbar_boton_hover": "#e9e0c1",
+    "toolbar_boton_pressed": "#c3b78e",
+    "boton_fondo": "#d6cba8",
+    "boton_hover": "#e3d9b5",
+    "boton_pressed": "#b7aa79",
+    "contador_fondo": "#3c2a25",
+    "contador_texto": "#f2e6c9",
+    "scrollbar_handle": "#a8985f",
+}
+
+
+def _generar_qss(p: dict) -> str:
+    """Arma el QSS completo de la app a partir de una paleta de
+    superficie (`PALETA_OSCURA`/`PALETA_CLARA`) — mismos selectores
+    para los dos temas, solo cambian los colores; así un tema nuevo
+    nunca puede "olvidarse" de un selector que el otro sí tiene."""
+    return f"""
 QMainWindow {{
-    background-color: {COLOR_FONDO_PRINCIPAL};
+    background-color: {p['fondo_principal']};
 }}
 
 QWidget {{
-    background-color: {COLOR_FONDO_PRINCIPAL};
-    color: {COLOR_TEXTO};
+    background-color: {p['fondo_principal']};
+    color: {p['texto']};
     font-family: "DejaVu Sans", "Noto Sans", sans-serif;
     font-size: 10pt;
 }}
 
 /* ---------- Menú superior ---------- */
 QMenuBar {{
-    background-color: {COLOR_FONDO_HEADER};
-    color: {COLOR_TEXTO};
-    border-bottom: 1px solid {COLOR_BORDE};
+    background-color: {p['fondo_header']};
+    color: {p['texto']};
+    border-bottom: 1px solid {p['borde']};
     padding: 2px;
 }}
 QMenuBar::item {{
@@ -48,41 +120,41 @@ QMenuBar::item {{
     padding: 4px 10px;
 }}
 QMenuBar::item:selected {{
-    background-color: #444444;
+    background-color: {p['menubar_hover']};
     border-radius: 3px;
 }}
 QMenu {{
-    background-color: {COLOR_FONDO_PANEL};
-    border: 1px solid {COLOR_BORDE};
+    background-color: {p['fondo_panel']};
+    border: 1px solid {p['borde']};
 }}
 QMenu::item:selected {{
-    background-color: #505050;
+    background-color: {p['menu_item_hover']};
 }}
 
 /* ---------- Toolbar superior ---------- */
 QToolBar {{
-    background-color: {COLOR_FONDO_HEADER};
-    border-bottom: 1px solid {COLOR_BORDE};
+    background-color: {p['fondo_header']};
+    border-bottom: 1px solid {p['borde']};
     spacing: 4px;
     padding: 3px;
 }}
 QToolButton {{
-    background-color: #333333;
-    border: 1px solid {COLOR_BORDE};
+    background-color: {p['toolbar_boton']};
+    border: 1px solid {p['borde']};
     border-radius: 4px;
     padding: 4px;
 }}
 QToolButton:hover {{
-    background-color: #444444;
+    background-color: {p['toolbar_boton_hover']};
 }}
 QToolButton:pressed {{
-    background-color: #222222;
+    background-color: {p['toolbar_boton_pressed']};
 }}
 
 /* ---------- Paneles / GroupBox de cada ventana ---------- */
 QGroupBox {{
-    background-color: {COLOR_FONDO_PANEL};
-    border: 1px solid {COLOR_BORDE};
+    background-color: {p['fondo_panel']};
+    border: 1px solid {p['borde']};
     border-radius: 4px;
     margin-top: 16px;
     font-weight: bold;
@@ -92,10 +164,10 @@ QGroupBox::title {{
     subcontrol-position: top left;
     left: 8px;
     padding: 1px 5px;
-    background-color: {COLOR_FONDO_HEADER};
-    border: 1px solid {COLOR_BORDE};
+    background-color: {p['fondo_header']};
+    border: 1px solid {p['borde']};
     border-radius: 3px;
-    color: {COLOR_TEXTO};
+    color: white;
     font-size: 11pt;
 }}
 
@@ -116,23 +188,23 @@ QToolBar#toolbarPrincipal QToolButton {{
 
 /* ---------- TreeView / TreeWidget (Publicidad y Explorador) ---------- */
 QTreeWidget {{
-    background-color: #262626;
-    alternate-background-color: #2d2d2d;
-    border: 1px solid {COLOR_BORDE};
+    background-color: {p['tree_fondo']};
+    alternate-background-color: {p['tree_alterno']};
+    border: 1px solid {p['borde']};
     show-decoration-selected: 1;
 }}
 QTreeWidget::item {{
     padding: 3px;
 }}
 QTreeWidget::item:selected {{
-    background-color: #45688e;
+    background-color: {p['tree_seleccion']};
     color: white;
 }}
 QHeaderView::section {{
-    background-color: {COLOR_FONDO_HEADER};
-    color: {COLOR_TEXTO};
+    background-color: {p['fondo_header']};
+    color: white;
     padding: 2px;
-    border: 1px solid {COLOR_BORDE};
+    border: 1px solid {p['borde']};
 }}
 
 /* ---------- Ventana 3 (Explorador): tipografía más chica en los
@@ -195,26 +267,33 @@ QTreeWidget#tree_reproductor::item:selected, QTreeWidget#tree_publicidad::item:s
 
 /* ---------- Botones de transporte ---------- */
 QPushButton {{
-    background-color: #3d3d3d;
-    border: 1px solid {COLOR_BORDE};
+    background-color: {p['boton_fondo']};
+    border: 1px solid {p['borde']};
     border-radius: 4px;
     padding: 6px 10px;
 }}
 QPushButton:hover {{
-    background-color: #4a4a4a;
+    background-color: {p['boton_hover']};
 }}
 QPushButton:pressed {{
-    background-color: #2a2a2a;
+    background-color: {p['boton_pressed']};
 }}
 
+/* Botones con relleno de "identidad" saturado (Play/Stop/Fade-Stop/
+   Cut/Play principal, más abajo) llevan `color: white` EXPLÍCITO —
+   sin esto heredarían el `color` genérico de QWidget (que en el tema
+   claro es un marrón oscuro, ilegible sobre estos rellenos también
+   oscuros/saturados). */
 QPushButton#btnPlay {{
     background-color: #1e8449;
+    color: white;
     font-weight: bold;
 }}
 QPushButton#btnPlay:hover {{ background-color: #229954; }}
 
 QPushButton#btnStop {{
     background-color: #922b21;
+    color: white;
     font-weight: bold;
 }}
 QPushButton#btnStop:hover {{ background-color: #c0392b; }}
@@ -249,6 +328,7 @@ QPushButton[class="btnCompacto"] {{
 QPushButton#btnPlayPrincipal {{
     background-color: #1e8449;
     border: 2px solid #2ecc71;
+    color: white;
     font-weight: bold;
     font-size: 9pt;
 }}
@@ -259,6 +339,7 @@ QPushButton#btnPlayPrincipal:pressed {{ background-color: #145a32; }}
    seco) para no confundirlos de un vistazo. */
 QPushButton#btnFadeStop {{
     background-color: #6c3483;
+    color: white;
     font-weight: bold;
 }}
 QPushButton#btnFadeStop:hover {{ background-color: #8e44ad; }}
@@ -266,6 +347,7 @@ QPushButton#btnFadeStop:hover {{ background-color: #8e44ad; }}
 /* Cut (antes "Siguiente"): corte seco e inmediato al ítem en cola. */
 QPushButton#btnCut {{
     background-color: #34495e;
+    color: white;
     font-weight: bold;
 }}
 QPushButton#btnCut:hover {{ background-color: #46617a; }}
@@ -281,11 +363,14 @@ QPushButton#btnStopDiferido[armado="true"] {{
     color: white;
 }}
 QPushButton#btnStopDiferido[armado="false"] {{
-    background-color: #3d3d3d;
+    background-color: {p['boton_fondo']};
 }}
 
 /* Nombre de la estación (pedido explícito, imitando el nameplate de
-   Dinesat) — puramente decorativo, texto fijo. */
+   Dinesat) — puramente decorativo, texto fijo. Se apoya sobre
+   fondo_header (siempre oscuro en los dos temas, ver paletas de
+   arriba), así el mismo naranja se lee bien en cualquiera de los
+   dos. */
 QLabel#lblNombreEstacion {{
     color: #e67e22;
     font-weight: bold;
@@ -315,11 +400,12 @@ QPushButton#btnAutomatico[activo="false"] {{
    IZQUIERDA (uno arriba, otro abajo) en vez de ir lado a lado —
    bajado a 11pt + ancho máximo fijo para que la columna quede
    angosta de verdad y sobre espacio para "Ahora"/"Luego" a la
-   derecha en la misma fila. */
+   derecha en la misma fila. En el tema claro, este display imita el
+   reloj marrón oscuro con texto crema del "00:00:00" de Dinesat. */
 QLabel#lblTiempoTranscurrido, QLabel#lblTiempoRestante {{
-    background-color: #101010;
-    color: #f5f5f5;
-    border: 1px solid {COLOR_BORDE};
+    background-color: {p['contador_fondo']};
+    color: {p['contador_texto']};
+    border: 1px solid {p['borde']};
     border-radius: 4px;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 9pt;
@@ -327,7 +413,7 @@ QLabel#lblTiempoTranscurrido, QLabel#lblTiempoRestante {{
     padding: 0px 3px;
 }}
 QLabel#lblTituloBloqueActivo {{
-    color: {COLOR_TEXTO_SECUNDARIO};
+    color: {p['texto_secundario']};
     font-style: italic;
 }}
 /* Leyenda junto al botón AUTOMÁTICO (Ventana 1) — responde SOLO al
@@ -338,12 +424,12 @@ QLabel#lblEstadoAutomatico[activo="true"] {{
     font-weight: bold;
 }}
 QLabel#lblEstadoAutomatico[activo="false"] {{
-    color: {COLOR_TEXTO_SECUNDARIO};
+    color: {p['texto_secundario']};
 }}
 /* "Ahora:"/"Luego:" junto al título en Ventana 1/2/Auxiliar — pedido
    explícito, más robusto que depender solo del color de fila. */
 QLabel#lblEtiquetaAhoraLuego {{
-    color: {COLOR_TEXTO_SECUNDARIO};
+    color: {p['texto_secundario']};
     font-size: 7pt;
     font-weight: bold;
 }}
@@ -365,24 +451,24 @@ QFrame#frameLuego {{
 
 /* ---------- Barra de estado ---------- */
 QStatusBar {{
-    background-color: {COLOR_FONDO_HEADER};
-    border-top: 1px solid {COLOR_BORDE};
-    color: {COLOR_TEXTO_SECUNDARIO};
+    background-color: {p['fondo_header']};
+    border-top: 1px solid {p['borde']};
+    color: white;
 }}
 
 /* ---------- Splitter entre las 3 ventanas ---------- */
 QSplitter::handle {{
-    background-color: {COLOR_BORDE};
+    background-color: {p['borde']};
     width: 3px;
 }}
 
 /* ---------- ScrollBars discretas ---------- */
 QScrollBar:vertical {{
-    background: {COLOR_FONDO_PANEL};
+    background: {p['fondo_panel']};
     width: 12px;
 }}
 QScrollBar::handle:vertical {{
-    background: #5a5a5a;
+    background: {p['scrollbar_handle']};
     border-radius: 4px;
     min-height: 20px;
 }}
@@ -390,6 +476,24 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
 }}
 """
+
+
+# Los dos temas generados de una sola vez a partir de la misma
+# plantilla — ver _generar_qss(). QSS_APLICACION es el default de
+# siempre (tema oscuro), usado por cualquier código que todavía lo
+# importe directo (compatibilidad); qss_para_tema() es el punto de
+# entrada nuevo, usado por main.py y por
+# MainWindow._aplicar_configuracion_en_vivo() para poder cambiar de
+# tema sin reiniciar la app.
+QSS_APLICACION = _generar_qss(PALETA_OSCURA)
+QSS_APLICACION_CLARO = _generar_qss(PALETA_CLARA)
+
+
+def qss_para_tema(tema: str) -> str:
+    """`tema` es el valor guardado en config_general.json →
+    general.tema ("oscuro"/"claro") — cualquier valor desconocido o
+    ausente cae al oscuro, nunca a una pantalla sin estilo."""
+    return QSS_APLICACION_CLARO if tema == "claro" else QSS_APLICACION
 
 # Nombres de "roles" usados en TreeWidget para pintar filas mediante
 # datos de usuario en lugar de índices mágicos. Evita errores al

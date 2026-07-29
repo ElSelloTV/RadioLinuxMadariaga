@@ -23,7 +23,7 @@ from PySide6.QtCore import Qt, QTimer
 
 from gui.main_window import MainWindow
 from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
-from gui.styles import QSS_APLICACION
+from gui.styles import qss_para_tema
 from config.settings import cargar_configuracion, registrar_error, registrar_evento
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
@@ -51,7 +51,18 @@ def main():
     app.setApplicationDisplayName("Auto-Radio Tuyú")
     if os.path.exists(RUTA_ICONO):
         app.setWindowIcon(QIcon(RUTA_ICONO))
-    app.setStyleSheet(QSS_APLICACION)
+
+    # Tema visual (Configuración → General, pedido explícito "Diseñá
+    # el tema Claro") — se resuelve ACÁ, antes de armar cualquier
+    # ventana, para que arranque directo con el tema correcto (no un
+    # parpadeo oscuro->claro). Si config_general.json todavía no
+    # existe o está corrupto, cargar_configuracion() ya degrada a los
+    # valores de fábrica (tema "oscuro") sin romper el arranque.
+    try:
+        tema_configurado = cargar_configuracion()["general"]["tema"]
+    except Exception:
+        tema_configurado = "oscuro"
+    app.setStyleSheet(qss_para_tema(tema_configurado))
 
     # Preload de arranque (pedido explícito): una pantalla breve con
     # el ícono mientras se arma la ventana principal (carga de

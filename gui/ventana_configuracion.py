@@ -22,10 +22,10 @@ import os
 import sys
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget, QWidget,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QTabWidget, QWidget,
     QComboBox, QSlider, QCheckBox, QDoubleSpinBox, QSpinBox, QLineEdit,
     QPushButton, QLabel, QDialogButtonBox, QFileDialog, QApplication,
-    QMessageBox, QColorDialog, QGroupBox
+    QMessageBox, QColorDialog, QGroupBox, QScrollArea
 )
 from PySide6.QtCore import Qt, QUrl, QProcess
 from PySide6.QtGui import QColor, QDesktopServices
@@ -415,7 +415,7 @@ class VentanaConfiguracion(QDialog):
 
         self.combo_tema = QComboBox()
         self.combo_tema.addItem("Oscuro", "oscuro")
-        self.combo_tema.addItem("Claro (próximamente)", "claro")
+        self.combo_tema.addItem("Claro (estilo Dinesat)", "claro")
 
         form.addRow(self.chk_confirmar_eliminar)
         form.addRow(self.chk_mostrar_segundos)
@@ -496,61 +496,89 @@ class VentanaConfiguracion(QDialog):
     # a mano para poder depurar).
     # ------------------------------------------------------------------
     def _crear_tab_diagnostico(self) -> QWidget:
+        """Pedido explícito ("organizá mejor la pestaña Diagnóstico...
+        los botones muchas veces quedan largos y se tapan las
+        letras... que entre todo fácil"): esta pestaña había ido
+        creciendo, ronda tras ronda, hasta acumular 8 botones y 8
+        explicaciones en párrafo completo, todo apilado en una sola
+        columna angosta — cada texto largo (algunos con emoji, que en
+        Linux puede estimar mal su propio ancho) competía por el mismo
+        espacio reducido. Reorganizado en 3 grupos temáticos (Log de
+        la app / Historial y análisis de audio / Mantenimiento de
+        biblioteca) con botones más CORTOS en grilla de 2 columnas —
+        la explicación larga de cada uno pasó a vivir en su `toolTip()`
+        (aparece al pasar el mouse) en vez de un párrafo siempre
+        visible, y todo el contenido quedó envuelto en un
+        `QScrollArea` (mismo patrón ya usado en otras pestañas de este
+        diálogo) para que, aunque en el futuro se sume otro botón más,
+        nunca vuelva a apretarse el layout — scrollea en vez de
+        romperse."""
+        contenedor_scroll = QScrollArea()
+        contenedor_scroll.setWidgetResizable(True)
+        contenedor_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        nota = QLabel(
-            "El programa registra en este archivo todo tipo de error y de\n"
-            "funcionamiento (play/pausa/stop, errores de reproducción, etc.)\n"
-            "para poder depurar problemas después de que ocurran, incluso\n"
-            "sin acceso directo a esta PC."
-        )
-        nota.setObjectName("lblTituloBloqueActivo")
-        nota.setWordWrap(True)
-        layout.addWidget(nota)
+        # ---------- Grupo 1: Log de la aplicación ----------
+        grupo_log = QGroupBox("📋 Log de la aplicación")
+        layout_log = QVBoxLayout(grupo_log)
 
         self.lbl_ruta_log = QLabel(f"Archivo: {ARCHIVO_LOG}")
         self.lbl_ruta_log.setWordWrap(True)
-        layout.addWidget(self.lbl_ruta_log)
+        self.lbl_ruta_log.setToolTip(
+            "El programa registra acá todo tipo de error y de funcionamiento\n"
+            "(play/pausa/stop, errores de reproducción, etc.) para poder\n"
+            "depurar problemas después de que ocurran, incluso sin acceso\n"
+            "directo a esta PC."
+        )
+        layout_log.addWidget(self.lbl_ruta_log)
 
         self.lbl_tamaño_log = QLabel()
-        layout.addWidget(self.lbl_tamaño_log)
+        layout_log.addWidget(self.lbl_tamaño_log)
         self._actualizar_info_log()
 
         barra_botones = QHBoxLayout()
         btn_ver_log = QPushButton("📄 Ver log")
         btn_ver_log.clicked.connect(self._ver_log)
-        self.btn_subir_log = QPushButton("⬆ Subir log a GitHub")
+        self.btn_subir_log = QPushButton("⬆ Subir a GitHub")
+        self.btn_subir_log.setToolTip(
+            "Hace un commit + push MANUAL de este archivo a la rama actual\n"
+            "del repositorio — NO se sube solo en cada cierre. Usalo cuando\n"
+            "quieras que se pueda revisar un problema que reportaste."
+        )
         self.btn_subir_log.clicked.connect(self._subir_log)
         barra_botones.addWidget(btn_ver_log)
         barra_botones.addWidget(self.btn_subir_log)
-        layout.addLayout(barra_botones)
+        layout_log.addLayout(barra_botones)
 
-        nota_historial = QLabel(
+        self.lbl_estado_log = QLabel("")
+        self.lbl_estado_log.setWordWrap(True)
+        layout_log.addWidget(self.lbl_estado_log)
+
+        layout.addWidget(grupo_log)
+
+        # ---------- Grupo 2: Historial y análisis de audio ----------
+        grupo_audio = QGroupBox("🎧 Historial y análisis de audio")
+        grid_audio = QGridLayout(grupo_audio)
+
+        btn_ver_historial = QPushButton("📊 Ver historial")
+        btn_ver_historial.setToolTip(
             "Historial de reproducción: registro persistente (sobrevive un\n"
             "reinicio) de qué sonó, cuándo y en qué ventana — a diferencia\n"
             "del ícono de \"ya reproducido\", que solo dura la sesión actual."
         )
-        nota_historial.setObjectName("lblTituloBloqueActivo")
-        nota_historial.setWordWrap(True)
-        layout.addWidget(nota_historial)
-        btn_ver_historial = QPushButton("📊 Ver historial de reproducción")
         btn_ver_historial.clicked.connect(self._ver_historial_reproduccion)
-        layout.addWidget(btn_ver_historial)
+        grid_audio.addWidget(btn_ver_historial, 0, 0)
 
-        self.lbl_estado_log = QLabel("")
-        self.lbl_estado_log.setWordWrap(True)
-        layout.addWidget(self.lbl_estado_log)
-
-        nota_subida = QLabel(
-            "\"Subir log a GitHub\" hace un commit + push manual de este\n"
-            "archivo a la rama actual del repositorio — NO se sube solo en\n"
-            "cada cierre. Usalo cuando quieras que se pueda revisar un\n"
-            "problema que reportaste."
+        self.btn_verificar_motor_audio = QPushButton("🩺 Verificar motor de audio")
+        self.btn_verificar_motor_audio.setToolTip(
+            "Confirma si pydub + ffmpeg están disponibles (necesarios para\n"
+            "calcular las marcas IN/OUT de silencio y el nivelado) con una\n"
+            "prueba real, sin tocar ningún archivo de la biblioteca."
         )
-        nota_subida.setObjectName("lblTituloBloqueActivo")
-        nota_subida.setWordWrap(True)
-        layout.addWidget(nota_subida)
+        self.btn_verificar_motor_audio.clicked.connect(self._verificar_motor_audio)
+        grid_audio.addWidget(self.btn_verificar_motor_audio, 0, 1)
 
         # Pedido explícito ("los temas siguen teniendo silencio al
         # final"): el recorte de silencio se calcula UNA vez al
@@ -558,112 +586,75 @@ class VentanaConfiguracion(QDialog):
         # esta misma pestaña de Configuración NO afecta solo con
         # guardar a lo que ya estaba cargado. Este botón fuerza un
         # reanálisis de TODA la biblioteca con los valores actuales.
-        nota_reanalizar = QLabel(
-            "Reanalizar biblioteca: vuelve a calcular el recorte de\n"
-            "silencio y el nivelado de TODO lo ya importado, con la\n"
-            "tolerancia/umbral actuales de esta pestaña — necesario porque\n"
-            "cambiar esos valores no es retroactivo por sí solo. Puede\n"
-            "tardar según el tamaño de la biblioteca; el programa queda sin\n"
-            "responder mientras tanto."
+        self.btn_reanalizar_biblioteca = QPushButton("🔄 Reanalizar biblioteca (Música)")
+        self.btn_reanalizar_biblioteca.setToolTip(
+            "Vuelve a calcular el recorte de silencio y el nivelado de TODO\n"
+            "lo ya importado (solo género Música), con la tolerancia/umbral\n"
+            "actuales de la pestaña Reproducción — necesario porque cambiar\n"
+            "esos valores no es retroactivo por sí solo. Corre en un proceso\n"
+            "aparte, con barra de progreso, sin trabar el programa."
         )
-        nota_reanalizar.setObjectName("lblTituloBloqueActivo")
-        nota_reanalizar.setWordWrap(True)
-        layout.addWidget(nota_reanalizar)
-        self.btn_reanalizar_biblioteca = QPushButton("🔄 Reanalizar biblioteca — solo Música (recorte de silencio)")
         self.btn_reanalizar_biblioteca.clicked.connect(self._reanalizar_biblioteca)
-        layout.addWidget(self.btn_reanalizar_biblioteca)
+        grid_audio.addWidget(self.btn_reanalizar_biblioteca, 1, 0, 1, 2)
         if self._ventana_explorador is None:
             self.btn_reanalizar_biblioteca.setEnabled(False)
 
-        # Pedido explícito ("veo que nunca funciona el recorte de
-        # silencio") -- bug real de fondo encontrado: "Reanalizar
-        # biblioteca" contaba TODO intento como éxito sin fijarse si
-        # pydub/ffmpeg realmente estaban disponibles, así que un
-        # sistema con ese motor roto igual mostraba "N reanalizados"
-        # dando una falsa sensación de que funcionó. Este botón NUEVO
-        # corre una prueba real (sin tocar la biblioteca) para saber
-        # de antemano si el motor de marcas IN/OUT puede correr en
-        # esta instalación, y con qué falta exactamente si no.
-        nota_verificar_motor = QLabel(
-            "Verificar motor de análisis: confirma si pydub + ffmpeg están\n"
-            "disponibles (necesarios para calcular las marcas IN/OUT de\n"
-            "silencio y el nivelado) con una prueba real, sin tocar ningún\n"
-            "archivo de la biblioteca."
-        )
-        nota_verificar_motor.setObjectName("lblTituloBloqueActivo")
-        nota_verificar_motor.setWordWrap(True)
-        layout.addWidget(nota_verificar_motor)
-        self.btn_verificar_motor_audio = QPushButton("🩺 Verificar motor de análisis de audio")
-        self.btn_verificar_motor_audio.clicked.connect(self._verificar_motor_audio)
-        layout.addWidget(self.btn_verificar_motor_audio)
+        layout.addWidget(grupo_audio)
+
+        # ---------- Grupo 3: Mantenimiento de biblioteca ----------
+        grupo_biblioteca = QGroupBox("🗂 Mantenimiento de biblioteca")
+        grid_biblioteca = QGridLayout(grupo_biblioteca)
 
         # Pedido explícito ("¿esta verificación se puede hacer también
         # manual desde Configuraciones?"): la migración de duración
-        # faltante ya corre sola al arrancar la app
-        # (VentanaExplorador.iniciar_migracion_duracion_al_arrancar,
-        # con la barra de progreso gráfica) — este botón es el mismo
-        # mecanismo, disparable a mano en cualquier momento, sin tener
-        # que reiniciar el programa. Con la biblioteca ya migrada (el
-        # caso normal después del primer uso) no hace nada más que
-        # avisar que no había nada pendiente.
-        nota_verificar = QLabel(
-            "Verificar biblioteca: busca archivos sin la duración\n"
-            "calculada todavía (típico de una biblioteca migrada por\n"
-            "fuera de las altas normales, que sí la calculan al importar)\n"
-            "y la completa — mismo chequeo que ya corre solo al abrir el\n"
+        # faltante ya corre sola al arrancar la app — este botón es el
+        # mismo mecanismo, disparable a mano en cualquier momento.
+        self.btn_verificar_biblioteca = QPushButton("🔎 Duración faltante")
+        self.btn_verificar_biblioteca.setToolTip(
+            "Busca archivos sin la duración calculada todavía (típico de\n"
+            "una biblioteca migrada por fuera de las altas normales) y la\n"
+            "completa — mismo chequeo que ya corre solo al abrir el\n"
             "programa, para correrlo a mano sin tener que reiniciar."
         )
-        nota_verificar.setObjectName("lblTituloBloqueActivo")
-        nota_verificar.setWordWrap(True)
-        layout.addWidget(nota_verificar)
-        self.btn_verificar_biblioteca = QPushButton("🔎 Verificar biblioteca (duración faltante)")
         self.btn_verificar_biblioteca.clicked.connect(self._verificar_biblioteca)
-        layout.addWidget(self.btn_verificar_biblioteca)
+        grid_biblioteca.addWidget(self.btn_verificar_biblioteca, 0, 0)
         if self._ventana_explorador is None:
             self.btn_verificar_biblioteca.setEnabled(False)
 
         # Pedido explícito ("hacer esta ubicación de archivos perdidos
-        # de manera masiva en todo el explorador... verificación
-        # general de todos los archivos sin vinculación"): recorre
-        # TODA la biblioteca buscando archivos con el vínculo roto
-        # (movidos/borrados/renombrados por fuera de esta app) y los
-        # ofrece resolver uno por uno — mismo diálogo de "Buscar" que
-        # ya usa "📍 Ubicar" en el menú contextual de Ventana 3
-        # (Previo/Saltar/Vincular, más Tomar el nombre/Eliminar sobre
-        # los candidatos).
-        nota_perdidos = QLabel(
-            "Verificar archivos perdidos: recorre TODA la biblioteca\n"
-            "buscando materiales cuyo archivo de audio ya no está donde\n"
-            "el registro dice, y los revisa uno por uno con el mismo\n"
-            "buscador de \"Ubicar\" (Previo, Saltar, Vincular)."
+        # de manera masiva en todo el explorador"): recorre TODA la
+        # biblioteca buscando archivos con el vínculo roto (movidos/
+        # borrados/renombrados por fuera de esta app) y los ofrece
+        # resolver uno por uno — mismo diálogo de "Ubicar" del menú
+        # contextual de Ventana 3.
+        self.btn_verificar_perdidos = QPushButton("🔗 Archivos perdidos")
+        self.btn_verificar_perdidos.setToolTip(
+            "Recorre TODA la biblioteca buscando materiales cuyo archivo de\n"
+            "audio ya no está donde el registro dice, y los revisa uno por\n"
+            "uno con el mismo buscador de \"Ubicar\" (Previo, Saltar,\n"
+            "Vincular)."
         )
-        nota_perdidos.setObjectName("lblTituloBloqueActivo")
-        nota_perdidos.setWordWrap(True)
-        layout.addWidget(nota_perdidos)
-        self.btn_verificar_perdidos = QPushButton("🔗 Verificar archivos perdidos (todos)")
         self.btn_verificar_perdidos.clicked.connect(self._verificar_archivos_perdidos)
-        layout.addWidget(self.btn_verificar_perdidos)
+        grid_biblioteca.addWidget(self.btn_verificar_perdidos, 0, 1)
         if self._ventana_explorador is None:
             self.btn_verificar_perdidos.setEnabled(False)
 
-        # Pedido explícito: "búsqueda de duplicados en el explorador
-        # (ventana 3) por nombre, duración y tamaño con opción de
-        # elegir alguno de esos filtros incluso los 3 juntos".
-        nota_duplicados = QLabel(
-            "Buscar duplicados: agrupa materiales de toda la biblioteca\n"
-            "que coincidan por nombre, duración y/o tamaño (combinables) —\n"
-            "permite moverlos a otra categoría o eliminar el registro\n"
-            "sobrante, mostrando la ruta de categoría de cada uno."
+        # Pedido explícito: "búsqueda de duplicados... por nombre,
+        # duración y tamaño con opción de elegir alguno de esos
+        # filtros incluso los 3 juntos".
+        self.btn_buscar_duplicados = QPushButton("🧩 Duplicados")
+        self.btn_buscar_duplicados.setToolTip(
+            "Agrupa materiales de toda la biblioteca que coincidan por\n"
+            "nombre, duración y/o tamaño (combinables) — permite moverlos a\n"
+            "otra categoría o eliminar el registro sobrante, mostrando la\n"
+            "ruta de categoría de cada uno."
         )
-        nota_duplicados.setObjectName("lblTituloBloqueActivo")
-        nota_duplicados.setWordWrap(True)
-        layout.addWidget(nota_duplicados)
-        self.btn_buscar_duplicados = QPushButton("🧩 Buscar duplicados en el explorador")
         self.btn_buscar_duplicados.clicked.connect(self._buscar_duplicados)
-        layout.addWidget(self.btn_buscar_duplicados)
+        grid_biblioteca.addWidget(self.btn_buscar_duplicados, 1, 0)
         if self._ventana_explorador is None:
             self.btn_buscar_duplicados.setEnabled(False)
 
+        layout.addWidget(grupo_biblioteca)
         layout.addStretch()
 
         if not actualizador.es_instalacion_git():
@@ -672,7 +663,8 @@ class VentanaConfiguracion(QDialog):
                 "Esta copia no es una instalación por git, así que no se puede subir el log."
             )
 
-        return widget
+        contenedor_scroll.setWidget(widget)
+        return contenedor_scroll
 
     def _actualizar_info_log(self):
         if os.path.exists(ARCHIVO_LOG):

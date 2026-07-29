@@ -9606,6 +9606,122 @@ todo el resto.
     confirme que el triángulo ahora se ve siempre en las categorías con
     subniveles, y que el renombre de categoría se siente confiable con
     su Musicalizador/Programador reales.
+98. ~~Pestaña Diagnóstico reorganizada + tema visual "Claro" (estilo
+    Dinesat 9) implementado de punta a punta~~ — dos pedidos estéticos,
+    con una captura real de Hardata Dinesat 9 (edición clásica) de
+    referencia para el tema claro: "organizá mejor la pestaña
+    Diagnóstico de Configuraciones, los botones muchas veces quedan
+    largos y se tapan las letras, organizalo práctico, para que entre
+    todo fácil" + "diseñá el tema 'Claro' te paso como es el Dinesat.
+    Si podes hacer exactamente igual, sobre todo los colores...".
+
+    **a) Diagnóstico reorganizado**: la pestaña había ido creciendo,
+    ronda tras ronda (18 rondas distintas la tocaron desde que se creó
+    el sistema de log), hasta acumular 8 botones y 8 párrafos
+    explicativos siempre visibles, todo apilado en una sola columna
+    angosta. Reescrita en 3 `QGroupBox` temáticos — "📋 Log de la
+    aplicación" (Ver log/Subir a GitHub, en fila), "🎧 Historial y
+    análisis de audio" (Ver historial/Verificar motor de audio/
+    Reanalizar biblioteca, en grilla 2 columnas) y "🗂 Mantenimiento de
+    biblioteca" (Duración faltante/Archivos perdidos/Duplicados, en
+    grilla 2 columnas) — con los textos de botón ACORTADOS (ej. "🔄
+    Reanalizar biblioteca — solo Música (recorte de silencio)" →
+    "🔄 Reanalizar biblioteca (Música)") y el párrafo explicativo largo
+    de cada uno movido a `setToolTip()` (aparece al pasar el mouse) en
+    vez de ocupar espacio siempre. Toda la pestaña quedó envuelta en un
+    `QScrollArea` (`setWidgetResizable(True)`) — si en una ronda futura
+    se suma otro botón más, la pestaña scrollea en vez de volver a
+    apretarse.
+
+    **b) Tema "Claro" — implementado de punta a punta, no solo la
+    entrada del combo**: el combo de Configuración → General ya tenía
+    "Claro (próximamente)" desde hacía muchas rondas, pero nunca hubo
+    ningún QSS asociado — `main.py` siempre aplicaba el único
+    `QSS_APLICACION` (oscuro) sin importar el valor guardado. Refactor
+    de fondo en `gui/styles.py`: la hoja de estilos, antes un f-string
+    fijo armado a partir de constantes de módulo sueltas
+    (`COLOR_FONDO_PRINCIPAL`, etc.), pasó a ser una FUNCIÓN
+    `_generar_qss(paleta: dict)` que arma el QSS completo a partir de
+    una paleta de colores de SUPERFICIE — así los dos temas comparten
+    EXACTAMENTE los mismos selectores (imposible que uno se "olvide"
+    de un selector que el otro sí tiene), y solo cambian los valores.
+    `PALETA_OSCURA` (default, mismos valores de siempre, sin cambios
+    visuales) y `PALETA_CLARA` (nueva) se generan una sola vez cada una
+    (`QSS_APLICACION`/`QSS_APLICACION_CLARO`), y `qss_para_tema(tema)`
+    es el punto de entrada nuevo que elige cuál aplicar.
+    - **Colores de ESTADO/semánticos (rojo=reproduciendo, verde=
+      siguiente, celeste=selección, naranja=armado) quedaron
+      INTACTOS, iguales en los dos temas** — decisión de diseño
+      explícita: son significado, no superficie (mismo criterio ya
+      establecido en rondas anteriores: "los colores... es solo para
+      identificarlos", y el propio Dinesat real usa el mismo rojo/
+      verde en su tema claro y en el oscuro de la captura). Solo
+      cambiaron los colores de fondo/panel/header/borde/texto/
+      contadores/selección de árbol/botones genéricos.
+    - **Paleta clara diseñada a partir de la captura real de Dinesat**:
+      fondo general caqui/tan cálido (`#c7bb98`), título de cada panel
+      (`QGroupBox::title`, que en esta app hace de "barra de título de
+      ventana") en el mismo verde oscuro que los títulos de ventana de
+      Dinesat (`#2e4a2e`, con texto blanco — antes usaba el color de
+      texto general, que en el tema claro sería marrón oscuro sobre
+      fondo YA oscuro, ilegible), listas en tono crema/tan
+      (`#efe6c9`/`#e2d5ac` alternado), y los contadores
+      "00:00:00"/"Ahora"/"Luego" imitando el display marrón oscuro con
+      texto crema de la captura (`#3c2a25`/`#f2e6c9` — antes hardcoded
+      `#101010`/`#f5f5f5`, ahora parte de la paleta).
+    - **Bug real evitado de raíz, no encontrado después**: los botones
+      de "identidad" con relleno saturado (Play/Stop/Fade-Stop/Cut/
+      Play principal — verde/rojo/violeta/gris azulado) nunca tenían
+      `color:` propio, heredaban el `color` genérico de `QWidget` —
+      en el tema oscuro eso ya daba texto claro (funcionaba de
+      casualidad), pero en el tema claro el texto general es marrón
+      oscuro, lo que hubiera dejado esos 5 botones con texto oscuro
+      sobre fondo oscuro, ILEGIBLE. Corregido agregando `color: white`
+      explícito a los 5 ANTES de terminar la ronda, no como parche
+      posterior — confirmado con un test que inspecciona el bloque QSS
+      de cada uno.
+    - `main.py`: el tema guardado se lee y se aplica ANTES de construir
+      cualquier ventana (sin parpadeo oscuro→claro al abrir).
+      `MainWindow._aplicar_configuracion_en_vivo()` (el mismo método
+      que ya aplica en caliente nombre de emisora/volumen/dispositivo
+      de salida) ahora también reaplica el tema — cambiarlo en
+      Configuración y guardar lo aplica YA, sin reiniciar la app.
+    - `EtiquetaMarquesina` (el sticker "Ahora"/"Luego") y los
+      contadores de `lblTiempoTranscurrido`/`Restante` mantienen (o
+      ahora comparten, en el caso de los contadores) el look de
+      "display LCD oscuro" — deliberado, coincide con la propia
+      captura de Dinesat, que también tiene un display oscuro
+      insertado dentro de una ventana clara.
+
+    Probado con 2 scripts dedicados: `qss_para_tema()` resuelve los 3
+    casos (oscuro/claro/desconocido→oscuro), cada QSS generado usa
+    ÚNICA Y EXCLUSIVAMENTE su propia paleta (sin mezclarse), los 4
+    colores semánticos están presentes e idénticos en ambos temas, los
+    5 botones de identidad tienen `color: white` explícito, el combo
+    de Configuración ya no dice "próximamente", la pestaña Diagnóstico
+    quedó organizada en exactamente 3 `QGroupBox` dentro de un
+    `QScrollArea` con los 8 botones acortados (todos <40 caracteres,
+    con la explicación completa movida al tooltip); + un segundo
+    script que confirma el arranque real con el tema guardado en disco
+    (simulando `main.py`) y el cambio EN VIVO desde
+    `_aplicar_configuracion_en_vivo()` — + 2 capturas reales renderizadas
+    offscreen (ventana principal completa y la pestaña Diagnóstico) en
+    ambos temas para comparar visualmente antes de dar la ronda por
+    terminada, enviadas a Santiago — + `py_compile` de los 4 archivos
+    tocados (`gui/styles.py`, `main.py`, `gui/main_window.py`,
+    `gui/ventana_configuracion.py`) + smoke test de arranque completo
+    de la app sin traceback. **Sigue sin poder confirmarse con
+    fidelidad total en un display real** (el sandbox no tiene el motor
+    de fuentes/DPI exacto de la PC de Santiago, y los colores del
+    screenshot de Dinesat se estimaron a ojo, no se pudieron samplear
+    pixel a pixel): falta que Santiago confirme (1) que la pestaña
+    Diagnóstico ahora entra cómoda sin textos tapados, y (2) que el
+    tema Claro, una vez elegido en Configuración → General, se parece
+    lo suficiente a su Dinesat real — si algún color puntual no
+    convence (el verde de los títulos, el tono del caqui de fondo, el
+    marrón de los contadores), son ajustes rápidos y acotados ahora que
+    existe la paleta centralizada (`PALETA_CLARA` en `gui/styles.py`),
+    sin tener que tocar la lógica de ningún widget.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
