@@ -1023,6 +1023,7 @@ class MainWindow(QMainWindow):
             self.gestor_explorador.motor.set_dispositivo_salida(id_dispositivo_preescucha)
 
         self.ventana_explorador.repintar_colores_genero()
+        self.ventana_explorador.repintar_estilo_categorias()
 
     # ------------------------------------------------------------------
     # Ventana auxiliar flotante (preescucha / reproducción secundaria)

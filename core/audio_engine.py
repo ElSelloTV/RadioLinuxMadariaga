@@ -119,6 +119,10 @@ class MotorAudio(QObject):
         # cierra la ventana — cualquier detección posterior para ESA
         # MISMA reproducción se ignora en silencio.
         self._fin_ya_emitido = False
+        # Contador de generación de reproducción — ver el guard dentro
+        # de reproducir()/_tras_arranque() más abajo (bug real: "repite
+        # muy breve el inicio").
+        self._generacion_reproduccion = 0
         # Volumen que ESTE motor debería tener ahora mismo — la fuente
         # de verdad del volumen ya no es el reproductor de libVLC sino
         # este atributo (ver set_volumen / _emitir_posicion). Bug real
@@ -213,6 +217,16 @@ class MotorAudio(QObject):
         # Nueva ventana de "fin todavía no emitido" para ESTA
         # reproducción -- ver el guard `_fin_ya_emitido` en __init__.
         self._fin_ya_emitido = False
+        # Generación de ESTA reproducción -- ver `_tras_arranque()` más
+        # abajo, mismo espíritu que `_fin_ya_emitido`: protege contra un
+        # `_tras_arranque()` diferido de una llamada VIEJA que llegue a
+        # disparar después de que ya arrancó una reproducción NUEVA en
+        # este mismo motor (reproducir() llamado de nuevo rápido, ej. un
+        # Pisador cancelado/reemplazado dentro de la ventana de 150ms
+        # del diferido) -- sin esto, el seek/volumen viejo corrompería
+        # la reproducción nueva.
+        self._generacion_reproduccion += 1
+        generacion_de_esta_reproduccion = self._generacion_reproduccion
 
         # Bug real corregido — "el mismo archivo de Pisador reusado en
         # varios temas, deja de sonar después de la primera vez, ni
@@ -258,9 +272,6 @@ class MotorAudio(QObject):
 
         # El seek necesita que el media ya haya arrancado a
         # reproducirse; libvlc lo tolera con un pequeño retardo.
-        # SIEMPRE se hace, incluso a 0ms, por la misma razón que el
-        # stop() de arriba — reproducir dos veces seguidas el mismo
-        # archivo debe reiniciar la posición de forma confiable.
         # En el mismo diferido se RE-APLICA el volumen deseado: el
         # set_volumen() de arriba corre justo después de play(), y en
         # ese instante libVLC puede descartarlo en silencio porque la
@@ -269,10 +280,30 @@ class MotorAudio(QObject):
         # real era un Pisador o un tema reproduciéndose entero pero
         # MUDO. La red de seguridad final es _emitir_posicion(), que
         # re-aplica el volumen deseado en cada tick de posición.
+        #
+        # Bug real corregido — "repite muy breve el inicio" (Pisadores
+        # en Ventana 2/Auxiliar, y algunos ítems de Ventana 1): el seek
+        # de acá SIEMPRE se hacía, incluso a 0ms — pero el stop() de
+        # arriba YA garantiza que un play() nuevo arranca desde la
+        # posición 0 (es justo el fix del bug de "el Pisador reusado
+        # deja de sonar", documentado arriba). Con punto_inicio_ms en 0
+        # (frecuente en Pisadores/stings cortos sin silencio de cabeza,
+        # y en cualquier ítem donde el análisis de silencio no encontró
+        # nada para recortar), el archivo YA estaba sonando de forma
+        # correcta desde el instante 0 durante los `retardo_arranque_ms`
+        # (150ms por defecto) que tarda en dispararse este diferido —
+        # el `set_time(0)` de acá, en vez de ser un no-op, REBOBINABA
+        # ese contenido YA reproducido de vuelta al principio, sonando
+        # como si el inicio se repitiera. Corregido: el seek SOLO se
+        # hace si `punto_inicio_ms` es un offset real (> 0) — no hay
+        # nada que "reiniciar" si ya está sonando desde el principio.
         def _tras_arranque():
             if not self._disponible:
                 return
-            self._player.set_time(max(0, punto_inicio_ms))
+            if self._generacion_reproduccion != generacion_de_esta_reproduccion:
+                return  # una reproducción MÁS NUEVA ya arrancó en este motor
+            if punto_inicio_ms > 0:
+                self._player.set_time(punto_inicio_ms)
             self._player.audio_set_volume(self._volumen_deseado)
             self._aplicar_dispositivo_salida()
         QTimer.singleShot(self._retardo_arranque_ms, _tras_arranque)

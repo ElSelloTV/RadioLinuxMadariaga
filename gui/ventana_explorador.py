@@ -163,6 +163,13 @@ class VentanaExplorador(QWidget):
         # config guardada ya en la construcción, igual que hace
         # `repintar_colores_genero()`.
         self._colores_genero = cargar_configuracion()["apariencia"]["colores_genero"]
+        # Tema visual actual (pedido explícito, bug real corregido:
+        # "la letra sigue blanca y no se ve con el fondo claro") --
+        # mismo criterio que _colores_genero de arriba: se lee ya en
+        # la construcción para que la jerarquía de categorías nazca
+        # con el color correcto, y se refresca en vivo con
+        # repintar_estilo_categorias() (ver más abajo).
+        self._tema_actual = cargar_configuracion()["general"]["tema"]
         # Ordenar por columna (pedido explícito): click en el
         # encabezado ordena A-Z, un segundo click en la MISMA columna
         # invierte a Z-A.
@@ -647,7 +654,16 @@ class VentanaExplorador(QWidget):
     # colores por género de tree_archivos -- acá es tree_categorias,
     # un árbol distinto). A partir del nivel 5, se repite el estilo
     # del nivel 5 (no sigue aclarándose para siempre).
-    _ESTILOS_POR_NIVEL = [
+    #
+    # Bug real corregido ("la letra sigue blanca y no se ve con el
+    # fondo claro"): esta tabla estaba hardcodeada para el tema
+    # OSCURO -- colores blanco/gris claro, invisibles contra el fondo
+    # crema del tema Claro (tree_fondo). Ahora hay DOS tablas
+    # (oscuro/claro) y `_aplicar_estilo_por_nivel()` elige según
+    # `self._tema_actual` (leído en __init__ y actualizado en vivo por
+    # `repintar_estilo_categorias()`, mismo patrón ya usado para
+    # `repintar_colores_genero()`).
+    _ESTILOS_POR_NIVEL_OSCURO = [
         # (negrita, cursiva, mayúsculas, color, tamaño_relativo_pt)
         (True, False, True, "#e67e22", 1),    # nivel 1: categoría raíz
         (True, False, False, "#e0e0e0", 0),   # nivel 2
@@ -655,10 +671,17 @@ class VentanaExplorador(QWidget):
         (False, True, False, "#9a9a9a", 0),   # nivel 4
         (False, True, False, "#7a7a7a", -1),  # nivel 5+
     ]
+    _ESTILOS_POR_NIVEL_CLARO = [
+        (True, False, True, "#e67e22", 1),    # nivel 1: mismo naranja, ya contrasta bien
+        (True, False, False, "#241c10", 0),   # nivel 2: marrón casi negro
+        (False, False, False, "#4a3c28", 0),  # nivel 3
+        (False, True, False, "#6b5d3f", 0),   # nivel 4
+        (False, True, False, "#8a7a58", -1),  # nivel 5+
+    ]
 
     def _aplicar_estilo_por_nivel(self, item: QTreeWidgetItem, item_padre):
-        """Aplica el estilo del `_ESTILOS_POR_NIVEL` que corresponda a
-        la profundidad real de `item` (1 = categoría raíz).
+        """Aplica el estilo que corresponda a la profundidad real de
+        `item` (1 = categoría raíz) y al tema visual actual.
 
         El "MAYÚSCULAS" es solo de PINTADO (QFont.Capitalization.AllUppercase)
         — el texto real del ítem (item.text(0), lo que se guarda en
@@ -670,9 +693,8 @@ class VentanaExplorador(QWidget):
             nivel += 1
             nodo = nodo.parent()
 
-        negrita, cursiva, mayusculas, color, delta_pt = self._ESTILOS_POR_NIVEL[
-            min(nivel, len(self._ESTILOS_POR_NIVEL)) - 1
-        ]
+        tabla = self._ESTILOS_POR_NIVEL_CLARO if self._tema_actual == "claro" else self._ESTILOS_POR_NIVEL_OSCURO
+        negrita, cursiva, mayusculas, color, delta_pt = tabla[min(nivel, len(tabla)) - 1]
 
         fuente = item.font(0)
         fuente.setBold(negrita)
@@ -1048,6 +1070,21 @@ class VentanaExplorador(QWidget):
             item = raiz.child(i)
             registro = item.data(0, ROL_REGISTRO) or {}
             self._pintar_por_genero(item, registro.get("genero", ""))
+
+    def repintar_estilo_categorias(self):
+        """Refresca `self._tema_actual` y repinta la jerarquía de
+        negrita/cursiva/color por nivel de TODO el árbol de categorías
+        — llamado tras cambiar el tema en Configuración (bug real:
+        "la letra sigue blanca y no se ve con el fondo claro", mismo
+        patrón que `repintar_colores_genero()`)."""
+        self._tema_actual = cargar_configuracion()["general"]["tema"]
+        for i in range(self.tree_categorias.topLevelItemCount()):
+            self._repintar_estilo_categoria_recursivo(self.tree_categorias.topLevelItem(i))
+
+    def _repintar_estilo_categoria_recursivo(self, item: QTreeWidgetItem):
+        self._aplicar_estilo_por_nivel(item, item.parent())
+        for i in range(item.childCount()):
+            self._repintar_estilo_categoria_recursivo(item.child(i))
 
     # ------------------------------------------------------------------
     # Gestión de categorías (sin límite de niveles)
