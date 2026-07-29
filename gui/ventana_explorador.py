@@ -254,6 +254,13 @@ class VentanaExplorador(QWidget):
         self.tree_categorias.setObjectName("tree_categorias")
         self.tree_categorias.setHeaderLabels(["Categoría"])
         self.tree_categorias.setColumnCount(1)
+        # Pedido explícito ("agregá siempre 'el triángulo', para ser
+        # más intuitivo de que se debe hacer doble clic para desplegar
+        # hacia abajo si hay otro nivel más"): explícito por las dudas
+        # (ya es el default de Qt, pero un cambio futuro de tema/estilo
+        # no debería poder sacarlo en silencio) -- ver gui/styles.py
+        # por qué el QSS de ::branch de la ronda anterior lo tapaba.
+        self.tree_categorias.setRootIsDecorated(True)
         self.tree_categorias.currentItemChanged.connect(self._on_categoria_seleccionada)
         self.tree_categorias.archivos_soltados.connect(self._on_archivos_soltados_en_categoria)
         self.tree_categorias.orden_cambiado.connect(self._guardar_biblioteca_debounced)
