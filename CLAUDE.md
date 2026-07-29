@@ -9539,6 +9539,73 @@ todo el resto.
     que la nueva jerarquía visual (colores/negrita/cursiva + líneas) y
     el árbol ya no arrancando expandido de punta a punta se sienten
     más intuitivos para navegar sus 5 niveles reales de categorías.
+97. ~~Confirmación de Renombrar categoría (Musicalizador/Programador) +
+    bug real: el triángulo de expandir desapareció (efecto secundario
+    de las "líneas" de la ronda anterior)~~ — dos pedidos: "confirmame
+    que si cambio el nombre de una categoria principal, la
+    programación del Musicalizador y del programador no se ven
+    afectadas... que al cambio efectúe una búsqueda en esas listas y
+    actualice la ruta" + "me gustó lo que hiciste en Categorías y los 5
+    niveles diferenciados, solamente agregá siempre 'el triángulo'
+    para ser más intuitivo de que se debe hacer doble clic para
+    desplegar hacia abajo (si hay otro nivel más)".
+
+    **a) Confirmado con un test dedicado, sin necesitar cambios de
+    código — `corregir_referencias_categoria_renombrada()` (ronda 95)
+    YA cubre los 3 archivos**: se armó un escenario real (un formato
+    de Musicalizador con un ítem "aleatorio" apuntando a
+    `["Publicidad", "Bebidas"]` + un ítem "específico" con Pisador
+    apuntando a la misma categoría, y una programación guardada de
+    "Lunes" con un ítem Aleatorio de Ventana 1 apuntando también ahí)
+    y se renombró "Publicidad" → "Comerciales" — los 3 quedaron
+    corregidos a `["Comerciales", "Bebidas"]` (conservando la
+    subcategoría "Bebidas" intacta), confirmado releyendo
+    `musicalizador.json` y `programacion.json` de disco. Un
+    "renombre" sin cambio real (mismo nombre) no toca nada. La
+    respuesta corta para Santiago: **sí, renombrar una categoría
+    principal (o cualquier subcategoría) corrige sola las 3 listas por
+    fuera de la biblioteca** — Ventana 1 (`playlist_publicidad.json`,
+    además parcheado EN VIVO en el árbol que conduce el aire en ese
+    instante, sin esperar a un reinicio), el Musicalizador (ítems
+    "aleatorio" y el Pisador de cualquier ítem) y el Programador
+    (`programacion.json`, día de semana o fecha específica). Única
+    salvedad: si el Programador o el Musicalizador YA estaban
+    abiertos en pantalla en el momento del renombre, esa ventana en
+    particular no se auto-refresca (lee de disco recién al abrirse) —
+    cerrarla y volver a abrirla ya muestra la ruta corregida; esto no
+    aplica a Ventana 1, que sí se actualiza en caliente.
+
+    **b) Bug real de fondo — el triángulo de expandir/colapsar quedó
+    invisible, causado por la propia ronda anterior**: las "líneas de
+    conexión" QSS agregadas para las categorías de 5 niveles
+    (`QTreeWidget#tree_categorias::branch:has-siblings:...`) tienen un
+    efecto secundario real y conocido de Qt: en cuanto un stylesheet
+    toca CUALQUIER pseudo-estado de `::branch`, el motor de estilo deja
+    de dibujar el triángulo NATIVO de expandir/colapsar para los
+    estados que ese QSS no cubre explícitamente — y esa ronda nunca
+    cubrió `:closed`/`:open` (los estados que llevan el triángulo).
+    Resultado: el triángulo quedaba invisible en la práctica, justo la
+    señal que Santiago pidió reforzar. Corregido sacando el override de
+    `::branch` por completo (`gui/styles.py`) — `tree_categorias`
+    vuelve a usar el triángulo NATIVO del estilo activo (Fusion), que
+    siempre se dibuja solo en cualquier ítem con hijos, sin depender de
+    ningún asset propio — más `self.tree_categorias.setRootIsDecorated(True)`
+    explícito en `gui/ventana_explorador.py` (ya era el default de Qt,
+    pero ahora queda a prueba de que un cambio futuro de tema lo saque
+    en silencio). La jerarquía visual de negrita/cursiva/color por
+    nivel (`_aplicar_estilo_por_nivel`, sin cambios) sigue siendo la
+    señal PRINCIPAL — el triángulo nativo es un refuerzo adicional,
+    ahora garantizado en vez de una técnica QSS sin verificar.
+
+    Probado con dos scripts dedicados (round-trip completo de renombrar
+    categoría corrigiendo Musicalizador+Programador con datos reales +
+    confirmación de que `rootIsDecorated()` es `True` y que el QSS ya
+    no toca `::branch` de `tree_categorias`) + `py_compile` + smoke
+    test de arranque completo sin traceback. **Sigue sin poder
+    confirmarse visualmente con un display real**: falta que Santiago
+    confirme que el triángulo ahora se ve siempre en las categorías con
+    subniveles, y que el renombre de categoría se siente confiable con
+    su Musicalizador/Programador reales.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

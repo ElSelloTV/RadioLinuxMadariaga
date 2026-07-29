@@ -145,28 +145,23 @@ QTreeWidget#tree_archivos::item, QTreeWidget#tree_categorias::item {{
     padding: 1px;
 }}
 
-/* Ventana 3, árbol de categorías: líneas de conexión sutiles entre
-   niveles (pedido explícito, "hasta 5 niveles de categoría... colores,
-   negrita, LÍNEAS") — un complemento visual al gradiente de negrita/
-   color/tamaño por nivel que aplica gui/ventana_explorador.py
-   (_aplicar_estilo_por_nivel), no el único mecanismo: la fidelidad de
-   estas líneas vía QSS depende del motor de estilo activo, así que el
-   gradiente de fuente/color es la señal principal, esto es un
-   refuerzo. */
-QTreeWidget#tree_categorias::branch:has-siblings:!adjoins-item {{
-    border-image: none;
-    border-left: 1px solid #4a4a4a;
-}}
-QTreeWidget#tree_categorias::branch:has-siblings:adjoins-item {{
-    border-image: none;
-    border-left: 1px solid #4a4a4a;
-    border-bottom: 1px solid #4a4a4a;
-}}
-QTreeWidget#tree_categorias::branch:!has-children:!has-siblings:adjoins-item {{
-    border-image: none;
-    border-left: 1px solid #4a4a4a;
-    border-bottom: 1px solid #4a4a4a;
-}}
+/* Ventana 3, árbol de categorías: NADA de QSS custom sobre ::branch a
+   propósito (bug real de la ronda anterior, corregido acá) — las
+   líneas de conexión que se habían agregado ahí ("hasta 5 niveles...
+   colores, negrita, líneas") tienen un efecto secundario real de Qt:
+   en cuanto un stylesheet toca CUALQUIER pseudo-estado de ::branch,
+   Qt deja de dibujar el triángulo NATIVO de expandir/colapsar para
+   los estados que ese QSS no cubre explícitamente (acá nunca se
+   cubrieron :closed/:open) — el triángulo quedaba invisible en la
+   práctica, justo la señal que hace falta para saber que una
+   categoría tiene más niveles debajo. Corregido sacando el override
+   por completo: `tree_categorias` vuelve a usar el triángulo nativo
+   del estilo activo (Fusion), que SIEMPRE se dibuja solo en cualquier
+   ítem con hijos, sin depender de assets propios. La jerarquía visual
+   sigue viva vía negrita/cursiva/color por nivel
+   (_aplicar_estilo_por_nivel, gui/ventana_explorador.py) y
+   setRootIsDecorated(True) (mismo archivo) asegura que el triángulo
+   se vea también en las categorías de nivel 1. */
 
 /* ---------- Modo compacto: Ventana 1 (Publicidad) y Ventana 2 /
    Auxiliar (Emisión) — fuente y relleno más chicos para poder
