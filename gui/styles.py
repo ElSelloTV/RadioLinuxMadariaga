@@ -37,11 +37,17 @@ COLOR_ARMADO = "#e67e22"          # Naranja: acción diferida armada (Stop difer
 
 # Paleta de SUPERFICIE del tema OSCURO (default, sin cambios respecto
 # de siempre — mismos valores que antes vivían como constantes
-# sueltas COLOR_FONDO_PRINCIPAL/COLOR_FONDO_PANEL/etc.).
+# sueltas COLOR_FONDO_PRINCIPAL/COLOR_FONDO_PANEL/etc.). `chrome_fondo`/
+# `header_columnas_fondo` son claves NUEVAS (ronda de ajuste del tema
+# Claro) que antes compartían el valor de `fondo_header` — acá quedan
+# iguales a `fondo_header` a propósito, para que el tema oscuro no
+# cambie ni un píxel.
 PALETA_OSCURA = {
     "fondo_principal": "#2b2b2b",
     "fondo_panel": "#3a3a3a",
     "fondo_header": "#1f1f1f",
+    "chrome_fondo": "#1f1f1f",
+    "header_columnas_fondo": "#1f1f1f",
     "borde": "#555555",
     "texto": "#e0e0e0",
     "texto_secundario": "#9a9a9a",
@@ -62,32 +68,45 @@ PALETA_OSCURA = {
 }
 
 # Paleta de SUPERFICIE del tema CLARO — pedido explícito, imitando la
-# imagen real de Hardata Dinesat 9 que pasó Santiago: fondo general
-# caqui/tan cálido, título de cada panel en verde oscuro (como la
-# barra de título de cada ventana de Dinesat), contadores en un
-# display marrón oscuro con texto crema (como el reloj "00:00:00" de
-# la captura), listas en tono crema/tan más claro que el fondo.
+# imagen real de Hardata Dinesat 9 que pasó Santiago, con 3 ajustes
+# pedidos en la ronda siguiente ("la letra sigue blanca", "sacá el
+# verde de los botones de arriba", "no tan caqui, más plata"):
+# - `fondo_header` (verde oscuro) quedó RESERVADO solo para el título
+#   de cada panel (QGroupBox::title, "PROGRAMACIÓN"/"EMISIÓN"/etc — el
+#   equivalente a la barra de título de cada ventana de Dinesat). La
+#   toolbar/menú/barra de estado, que en la captura real de Dinesat
+#   son gris CLARO (no verde), pasan a usar `chrome_fondo` — un gris
+#   plata neutro, distinto del verde de los paneles.
+# - Fondo general aclarado y desaturado ("no tan caqui, más plata")
+#   respecto de la primera versión (`#c7bb98`/`#d6cba8`, bastante más
+#   saturado) a un beige-plata mucho más neutro.
+# - `header_columnas_fondo` (encabezado de columnas de las listas,
+#   "Título/Duración/Código") queda un tostado medio, con contraste
+#   suficiente para texto blanco sin necesitar ser tan oscuro como el
+#   título de panel.
 PALETA_CLARA = {
-    "fondo_principal": "#c7bb98",
-    "fondo_panel": "#d6cba8",
+    "fondo_principal": "#d6d2c4",
+    "fondo_panel": "#e2ded0",
     "fondo_header": "#2e4a2e",
-    "borde": "#9c8d64",
+    "chrome_fondo": "#c9c4b0",
+    "header_columnas_fondo": "#8f7f52",
+    "borde": "#ada088",
     "texto": "#241c10",
-    "texto_secundario": "#5c4e30",
-    "tree_fondo": "#efe6c9",
-    "tree_alterno": "#e2d5ac",
+    "texto_secundario": "#6b5d3f",
+    "tree_fondo": "#f0ecdf",
+    "tree_alterno": "#e6e0cd",
     "tree_seleccion": "#4a7ab5",
-    "menubar_hover": "#b8a97a",
-    "menu_item_hover": "#c3b78e",
-    "toolbar_boton": "#ddd3b0",
-    "toolbar_boton_hover": "#e9e0c1",
-    "toolbar_boton_pressed": "#c3b78e",
-    "boton_fondo": "#d6cba8",
-    "boton_hover": "#e3d9b5",
-    "boton_pressed": "#b7aa79",
+    "menubar_hover": "#b8ac86",
+    "menu_item_hover": "#c9bd97",
+    "toolbar_boton": "#ded7bf",
+    "toolbar_boton_hover": "#e9e2c9",
+    "toolbar_boton_pressed": "#c0b48a",
+    "boton_fondo": "#ded7bf",
+    "boton_hover": "#e9e2c9",
+    "boton_pressed": "#c0b48a",
     "contador_fondo": "#3c2a25",
     "contador_texto": "#f2e6c9",
-    "scrollbar_handle": "#a8985f",
+    "scrollbar_handle": "#a8996f",
 }
 
 
@@ -109,8 +128,16 @@ QWidget {{
 }}
 
 /* ---------- Menú superior ---------- */
+/* Pedido explícito ("en los botones de arriba se ve un fondo verde,
+   sacarlo"): la toolbar/menú son CHROME general de la app, no la
+   "barra de título" de un panel puntual — usan `chrome_fondo` (gris
+   plata en el tema claro), nunca `fondo_header` (verde oscuro,
+   reservado solo para QGroupBox::title más abajo, el equivalente a
+   la barra de título de CADA ventana en Dinesat). `color: {{p['texto']}}`
+   en vez de blanco fijo -- se ajusta solo a cualquier tono de
+   chrome_fondo, oscuro o claro. */
 QMenuBar {{
-    background-color: {p['fondo_header']};
+    background-color: {p['chrome_fondo']};
     color: {p['texto']};
     border-bottom: 1px solid {p['borde']};
     padding: 2px;
@@ -133,7 +160,7 @@ QMenu::item:selected {{
 
 /* ---------- Toolbar superior ---------- */
 QToolBar {{
-    background-color: {p['fondo_header']};
+    background-color: {p['chrome_fondo']};
     border-bottom: 1px solid {p['borde']};
     spacing: 4px;
     padding: 3px;
@@ -201,7 +228,7 @@ QTreeWidget::item:selected {{
     color: white;
 }}
 QHeaderView::section {{
-    background-color: {p['fondo_header']};
+    background-color: {p['header_columnas_fondo']};
     color: white;
     padding: 2px;
     border: 1px solid {p['borde']};
@@ -451,9 +478,9 @@ QFrame#frameLuego {{
 
 /* ---------- Barra de estado ---------- */
 QStatusBar {{
-    background-color: {p['fondo_header']};
+    background-color: {p['chrome_fondo']};
     border-top: 1px solid {p['borde']};
-    color: white;
+    color: {p['texto_secundario']};
 }}
 
 /* ---------- Splitter entre las 3 ventanas ---------- */

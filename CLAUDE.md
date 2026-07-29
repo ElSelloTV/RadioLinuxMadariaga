@@ -9722,6 +9722,131 @@ todo el resto.
     marrón de los contadores), son ajustes rápidos y acotados ahora que
     existe la paleta centralizada (`PALETA_CLARA` en `gui/styles.py`),
     sin tener que tocar la lógica de ningún widget.
+99. ~~3 ajustes al tema Claro (letra de categorías ilegible, verde de
+    más en la toolbar, muy caqui) + bug real de audio: "repite muy
+    breve el inicio" en Pisadores y algunos ítems de Ventana 1~~ —
+    pedido explícito tras probar la ronda anterior: "a) En las
+    categorías, la letra sigue blanca y no se ve con el fondo claro.
+    b) En los botones de arriba se ve un fondo verde. Sacarlo. c) No
+    tan caqui, algo más claro, estilo plata" + un bug de audio nuevo,
+    hermano del "en punto en punto" de una ronda anterior pero en el
+    otro extremo del clip: "en pisadores sobre la ventana 2, incluso
+    en algunos de la ventana 1, sucede al comienzo, como que repite
+    muy breve el inicio".
+
+    **a) Bug real — la jerarquía de colores por nivel de Ventana 3
+    (ronda 96) nunca fue theme-aware**: `_ESTILOS_POR_NIVEL` (ahora
+    `_ESTILOS_POR_NIVEL_OSCURO`) tenía colores blanco/gris claro
+    hardcodeados, pensados solo para el fondo oscuro de siempre —
+    invisibles contra el `tree_fondo` crema del tema Claro. Agregada
+    `_ESTILOS_POR_NIVEL_CLARO` (misma progresión de negrita/cursiva/
+    tamaño, pero con una escala de marrones oscuros en vez de grises
+    claros) y `_aplicar_estilo_por_nivel()` elige la tabla según
+    `self._tema_actual` (leído en `__init__`, mismo patrón ya
+    establecido para `self._colores_genero`). Nuevo
+    `VentanaExplorador.repintar_estilo_categorias()` (mismo criterio
+    que `repintar_colores_genero()`, ya existente) recorre TODO el
+    árbol de categorías reaplicando el estilo — llamado desde
+    `MainWindow._aplicar_configuracion_en_vivo()` junto al resto de lo
+    que ya se reaplica en caliente, así cambiar de tema y guardar
+    corrige el color de las categorías sin reiniciar la app.
+
+    **b) Bug real — la toolbar/menú/barra de estado usaban el mismo
+    verde oscuro que el título de cada panel**: `gui/styles.py` tenía
+    UNA sola clave (`fondo_header`) para dos conceptos DISTINTOS de la
+    captura real de Dinesat — la barra de título de CADA ventana
+    (verde oscuro, ej. "CONTACTO FM Emisión de publi...") y el chrome
+    general de la app (toolbar/menú superior, gris CLARO en la
+    captura real, nunca verde). Separado en dos claves nuevas:
+    `chrome_fondo` (toolbar/menú/barra de estado — gris plata en el
+    tema claro) y `header_columnas_fondo` (encabezado de columnas de
+    las listas, un tostado medio propio). `fondo_header` quedó
+    RESERVADO solo para `QGroupBox::title` (el título de cada panel —
+    PROGRAMACIÓN/EMISIÓN/EXPLORADOR — que sí debe seguir verde, igual
+    que Dinesat). De paso, el texto de `QMenuBar`/`QToolBar` pasó de
+    `color: white` fijo a `color: {p['texto']}` (se ajusta solo al
+    tono de `chrome_fondo`, oscuro o claro), y el de `QStatusBar`
+    volvió de `white` (hardcodeado sin querer en la ronda anterior) a
+    `texto_secundario` — el diseño ORIGINAL antes de este tema, ahora
+    correctamente theme-aware. En el tema oscuro, `chrome_fondo`/
+    `header_columnas_fondo` quedan con el MISMO valor que
+    `fondo_header` de siempre (`#1f1f1f`) — cero cambio visual ahí,
+    confirmado con un render de regresión.
+
+    **c) Paleta clara re-calibrada, menos caqui, más "plata"**: los
+    colores de fondo (`fondo_principal`/`fondo_panel`) pasaron de un
+    khaki bastante saturado (`#c7bb98`/`#d6cba8`) a un beige-plata
+    mucho más neutro y desaturado (`#d6d2c4`/`#e2ded0`) — el resto de
+    la paleta (bordes, botones, hover) se recalibró en conjunto para
+    mantener la cohesión visual. Los colores de estado (rojo/verde/
+    celeste/naranja) y los contadores tipo display (marrón oscuro con
+    texto crema) no se tocaron — no eran parte del pedido.
+
+    **d) Bug real de audio — "repite muy breve el inicio" (Pisadores
+    V2/Auxiliar, algunos ítems de V1)**: mismo mecanismo de fondo que
+    "en punto en punto" (ronda 96), pero en el extremo OPUESTO del
+    clip. `MotorAudio.reproducir()` SIEMPRE hacía un seek diferido
+    (`_tras_arranque()`, ~150ms después de `play()`) a
+    `punto_inicio_ms`, incluso cuando ese valor era `0` — el
+    comentario original decía que hacía falta "incluso a 0ms" para
+    garantizar el reinicio de posición al reproducir el mismo archivo
+    dos veces seguidas. Pero ese reinicio YA lo garantiza el
+    `self._player.stop()` que se ejecuta justo antes de `play()` (fix
+    de una ronda mucho anterior, "el Pisador reusado deja de sonar") —
+    el seek a 0ms del diferido era REDUNDANTE. El problema real: con
+    `punto_inicio_ms == 0` (frecuente en Pisadores/stings cortos sin
+    silencio de cabeza, y en cualquier ítem donde el análisis de
+    silencio no encontró nada para recortar), el archivo YA estaba
+    sonando correctamente desde el instante 0 durante esos ~150ms de
+    espera — el `set_time(0)` del diferido, en vez de ser un no-op,
+    REBOBINABA ese contenido ya reproducido de vuelta al principio,
+    sonando como si el inicio se repitiera. Corregido: el seek ahora
+    SOLO se hace si `punto_inicio_ms > 0` (hay un offset real que
+    saltar) — con `0` no hay nada que "reiniciar", el archivo ya está
+    en la posición correcta. De paso, se agregó un guard de
+    generación (`_generacion_reproduccion`, mismo espíritu que
+    `_fin_ya_emitido` de la ronda anterior) — protege contra un
+    `_tras_arranque()` diferido de una llamada VIEJA que dispare
+    después de que ya arrancó una reproducción NUEVA en el mismo motor
+    (ej. un Pisador cancelado/reemplazado dentro de la ventana de
+    150ms), que de otro modo corrompería la posición/volumen de la
+    reproducción nueva. **Nota sobre la idea original de Santiago**
+    ("que comience 500ms más tarde, si es posible"): un delay
+    adicional NO hubiera resuelto esto — solo habría corrido el
+    artefacto más tarde en el tiempo, sin eliminarlo (el `set_time(0)`
+    seguiría rebobinando lo que sea que haya sonado mientras tanto).
+    El fix real (saltear el seek redundante) elimina el problema de
+    raíz sin agregar ninguna demora — Pisadores/ítems cortos siguen
+    arrancando tan rápido como siempre.
+
+    Probado con 3 scripts dedicados: (1) tema — toolbar/menú/status
+    bar usan `chrome_fondo` (nunca el verde de `fondo_header`),
+    `QGroupBox::title` sigue verde, el fondo general está desaturado
+    (test de saturación RGB), tema oscuro con `chrome_fondo`/
+    `header_columnas_fondo` idénticos a `fondo_header` (cero cambio);
+    (2) categorías — nivel 2 en tema claro usa texto oscuro (antes
+    casi blanco, ilegible), tema oscuro conserva el gradiente de
+    siempre, `repintar_estilo_categorias()` actualiza un árbol ya
+    construido al cambiar de tema en vivo; (3) audio — con un player
+    VLC falso (mismo patrón que `test_volumen_robusto.py`):
+    `punto_inicio_ms=0` ya NO dispara ningún `set_time()`,
+    `punto_inicio_ms>0` sigue haciendo el seek real sin regresión, y
+    un `reproducir()` viejo en vuelo no corrompe uno nuevo arrancado
+    antes de que su diferido dispare — + 2 renders reales (tema claro
+    con un árbol de 5 niveles de categoría visible, y tema oscuro,
+    confirmado pixel a pixel que el header de columnas usa el color
+    exacto de `header_columnas_fondo`) enviados a Santiago para
+    comparar contra su pantalla real — + `py_compile` de los 3
+    archivos tocados (`gui/styles.py`, `gui/ventana_explorador.py`,
+    `core/audio_engine.py`, `gui/main_window.py`) + smoke test de
+    arranque completo sin traceback. **Sigue sin poder confirmarse con
+    audio/VLC real ni con fidelidad total de color en un display
+    real**: falta que Santiago confirme (1) que la letra de las
+    categorías ya se lee bien en el tema claro, (2) que la toolbar de
+    arriba ya no se ve verde, (3) que el tono plata le resulta menos
+    "caqui" que antes, y (4) — lo más importante — que los Pisadores de
+    Ventana 2/Auxiliar y los ítems cortos de Ventana 1 ya no repiten
+    el comienzo.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
@@ -9763,6 +9888,23 @@ todo el resto.
   flag reabierto en cada intento nuevo), mismo espíritu que
   `_generacion_pisador`/`_generacion_pausa_emision` ya documentados
   más abajo.
+- **Un seek "por las dudas" a la posición ACTUAL puede rebobinar
+  contenido que ya sonó de verdad** (bug real, ronda 99, "repite muy
+  breve el inicio" — hermano del bug de arriba, en el otro extremo del
+  clip): `MotorAudio.reproducir()` hacía un `set_time(punto_inicio_ms)`
+  diferido SIEMPRE, incluso con `punto_inicio_ms == 0` — la intención
+  original era "garantizar" el reinicio de posición al reproducir el
+  mismo archivo dos veces seguidas, pero ese reinicio YA lo garantiza
+  el `stop()` que corre justo antes de cada `play()` (fix de una ronda
+  mucho más vieja). Con el offset en 0, el archivo ya estaba sonando
+  bien desde el instante 0 durante los ~150ms que tarda en dispararse
+  el diferido — el seek "de garantía" terminaba rebobinando ese
+  contenido YA reproducido de vuelta al principio, un rebobinado
+  audible. **Regla**: un seek/reset "por las dudas" que se ejecuta
+  SIEMPRE, sin chequear si de verdad hace falta, puede terminar
+  deshaciendo trabajo real que ya ocurrió mientras tanto — antes de
+  agregar una salvaguarda incondicional, preguntarse qué pasa si se
+  ejecuta cuando YA NO hace falta.
 
 - **El Pisador no sonaba porque faltaba una delegación** (ver nota
   completa en Ventana 2): cuando un wrapper (`VentanaEmision`/
