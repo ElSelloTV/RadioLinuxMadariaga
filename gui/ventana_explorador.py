@@ -74,7 +74,7 @@ from gui.dialogo_agregar_archivo import DialogoAgregarArchivo
 from gui.dialogo_agregar_archivos_masivo import DialogoAgregarArchivosMasivo
 from gui.dialogo_vigencia import DialogoVigencia
 from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
-from gui.estado_ui import guardar_columnas, restaurar_columnas
+from gui.estado_ui import guardar_columnas, restaurar_columnas, guardar_valor, restaurar_valor
 from core.analizador_audio import analizar_audio
 from core.audio_engine import obtener_duracion_formateada
 from core.buscador_duplicados import buscar_grupos_duplicados
@@ -104,6 +104,13 @@ ROL_CATEGORIA_ORIGEN = Qt.ItemDataRole.UserRole + 22
 # Orden de columnas de tree_archivos (pedido explícito): Duración
 # primero, después Título/Artista/Categoría/Código.
 COL_DURACION, COL_TITULO, COL_ARTISTA, COL_CATEGORIA, COL_CODIGO = range(5)
+
+# Clave de persistencia (ui_state.ini, vía gui/estado_ui.py) de qué
+# categorías quedaron expandidas -- pedido explícito ("sacar que todo
+# el árbol se vea expandido... es molesto ver todo"): ya no se expande
+# todo por defecto, se recuerda EXACTAMENTE lo que el operador dejó
+# abierto la última vez (ver _restaurar_expansion_categorias()).
+CLAVE_CATEGORIAS_EXPANDIDAS = "explorador/categorias_expandidas"
 
 
 class VentanaExplorador(QWidget):
@@ -166,8 +173,23 @@ class VentanaExplorador(QWidget):
         self._timer_guardado_biblioteca = QTimer(self)
         self._timer_guardado_biblioteca.setSingleShot(True)
         self._timer_guardado_biblioteca.timeout.connect(self._guardar_biblioteca)
+        # Qué categorías quedaron expandidas la última vez (ver
+        # CLAVE_CATEGORIAS_EXPANDIDAS) -- se carga ANTES de construir/
+        # poblar el árbol para que el primer llenado ya respete esto.
+        valor_expansion = restaurar_valor(CLAVE_CATEGORIAS_EXPANDIDAS, [])
+        if isinstance(valor_expansion, str):
+            # Misma trampa de QSettings ya documentada en el Programador:
+            # una lista guardada de UN solo elemento vuelve como string
+            # suelto, no como lista de 1.
+            valor_expansion = [valor_expansion] if valor_expansion else []
+        self._categorias_expandidas_guardadas = set(valor_expansion or [])
         self._construir_ui()
         self._cargar_biblioteca_inicial()
+        # Conectadas DESPUÉS de la carga inicial a propósito -- así la
+        # restauración de expansión de arriba no dispara escrituras
+        # redundantes a ui_state.ini durante el arranque.
+        self.tree_categorias.itemExpanded.connect(lambda item: self._marcar_expansion_categoria(item, True))
+        self.tree_categorias.itemCollapsed.connect(lambda item: self._marcar_expansion_categoria(item, False))
 
     # ------------------------------------------------------------------
     def _construir_ui(self):
@@ -556,7 +578,37 @@ class VentanaExplorador(QWidget):
             self._deserializar_categoria(datos_categoria, None)
         if self.tree_categorias.topLevelItemCount() > 0:
             self.tree_categorias.setCurrentItem(self.tree_categorias.topLevelItem(0))
-        self.tree_categorias.expandAll()
+        self._restaurar_expansion_categorias()
+
+    def _restaurar_expansion_categorias(self):
+        """Pedido explícito ("sacar que todo el árbol se vea expandido
+        en esta ventana, es molesto ver todo"): ya NO se expande todo
+        con `expandAll()` -- se restaura EXACTAMENTE lo que el operador
+        había dejado abierto/cerrado (persistido en ui_state.ini, ver
+        CLAVE_CATEGORIAS_EXPANDIDAS). Una biblioteca nueva, o la
+        primera vez que corre esta versión, arranca TODO colapsado
+        (solo las categorías raíz visibles) -- el operador expande lo
+        que necesita, y queda recordado para la próxima."""
+        if not self._categorias_expandidas_guardadas:
+            return
+        for i in range(self.tree_categorias.topLevelItemCount()):
+            self._restaurar_expansion_categoria_recursivo(self.tree_categorias.topLevelItem(i))
+
+    def _restaurar_expansion_categoria_recursivo(self, item):
+        if " > ".join(self.ruta_de_categoria(item)) in self._categorias_expandidas_guardadas:
+            item.setExpanded(True)
+        for i in range(item.childCount()):
+            self._restaurar_expansion_categoria_recursivo(item.child(i))
+
+    def _marcar_expansion_categoria(self, item, expandido: bool):
+        clave = " > ".join(self.ruta_de_categoria(item))
+        if not clave:
+            return
+        if expandido:
+            self._categorias_expandidas_guardadas.add(clave)
+        else:
+            self._categorias_expandidas_guardadas.discard(clave)
+        guardar_valor(CLAVE_CATEGORIAS_EXPANDIDAS, sorted(self._categorias_expandidas_guardadas))
 
     def _deserializar_categoria(self, datos: dict, item_padre) -> QTreeWidgetItem:
         item = self._crear_item_categoria(item_padre, datos.get("nombre", ""))
@@ -576,27 +628,55 @@ class VentanaExplorador(QWidget):
         self._aplicar_estilo_por_nivel(item, item_padre)
         return item
 
-    @staticmethod
-    def _aplicar_estilo_por_nivel(item: QTreeWidgetItem, item_padre):
-        """Nivel 1 (categoría raíz): negrita + MAYÚSCULAS. Nivel 2
-        (subcategoría directa): negrita, sin tocar mayúsculas/minúsculas.
-        Nivel 3 en adelante: sin nada especial (como estaba).
+    # Pedido explícito ("suelo tener hasta 5 niveles de categoría y
+    # sub-categorías... ¿qué podríamos implementar para otorgar una
+    # mejor e intuitiva visibilidad? colores, negrita, líneas"):
+    # gradiente de 5 escalones -- cada nivel más profundo se ve más
+    # "liviano" (menos negrita, más chico, más tenue) que el anterior,
+    # así de un vistazo se distingue la profundidad sin tener que leer
+    # la indentación con atención. Los colores están elegidos para
+    # nunca chocar con otros significados ya establecidos en la app
+    # (el celeste de selección, el rojo/verde de estado de V1/V2, los
+    # colores por género de tree_archivos -- acá es tree_categorias,
+    # un árbol distinto). A partir del nivel 5, se repite el estilo
+    # del nivel 5 (no sigue aclarándose para siempre).
+    _ESTILOS_POR_NIVEL = [
+        # (negrita, cursiva, mayúsculas, color, tamaño_relativo_pt)
+        (True, False, True, "#e67e22", 1),    # nivel 1: categoría raíz
+        (True, False, False, "#e0e0e0", 0),   # nivel 2
+        (False, False, False, "#c9c9c9", 0),  # nivel 3
+        (False, True, False, "#9a9a9a", 0),   # nivel 4
+        (False, True, False, "#7a7a7a", -1),  # nivel 5+
+    ]
+
+    def _aplicar_estilo_por_nivel(self, item: QTreeWidgetItem, item_padre):
+        """Aplica el estilo del `_ESTILOS_POR_NIVEL` que corresponda a
+        la profundidad real de `item` (1 = categoría raíz).
 
         El "MAYÚSCULAS" es solo de PINTADO (QFont.Capitalization.AllUppercase)
         — el texto real del ítem (item.text(0), lo que se guarda en
         biblioteca.json vía _serializar_categoria) nunca se toca, para
         no pisar el nombre original guardado en disco."""
+        nivel = 1
+        nodo = item_padre
+        while nodo is not None:
+            nivel += 1
+            nodo = nodo.parent()
+
+        negrita, cursiva, mayusculas, color, delta_pt = self._ESTILOS_POR_NIVEL[
+            min(nivel, len(self._ESTILOS_POR_NIVEL)) - 1
+        ]
+
         fuente = item.font(0)
-        if item_padre is None:
-            fuente.setBold(True)
-            fuente.setCapitalization(QFont.Capitalization.AllUppercase)
-        elif item_padre.parent() is None:
-            fuente.setBold(True)
-            fuente.setCapitalization(QFont.Capitalization.MixedCase)
-        else:
-            fuente.setBold(False)
-            fuente.setCapitalization(QFont.Capitalization.MixedCase)
+        fuente.setBold(negrita)
+        fuente.setItalic(cursiva)
+        fuente.setCapitalization(
+            QFont.Capitalization.AllUppercase if mayusculas else QFont.Capitalization.MixedCase
+        )
+        if delta_pt and fuente.pointSize() > 0:
+            fuente.setPointSize(max(6, fuente.pointSize() + delta_pt))
         item.setFont(0, fuente)
+        item.setForeground(0, QBrush(QColor(color)))
 
     def _categoria_actual(self):
         return self.tree_categorias.currentItem()

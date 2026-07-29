@@ -145,6 +145,29 @@ QTreeWidget#tree_archivos::item, QTreeWidget#tree_categorias::item {{
     padding: 1px;
 }}
 
+/* Ventana 3, árbol de categorías: líneas de conexión sutiles entre
+   niveles (pedido explícito, "hasta 5 niveles de categoría... colores,
+   negrita, LÍNEAS") — un complemento visual al gradiente de negrita/
+   color/tamaño por nivel que aplica gui/ventana_explorador.py
+   (_aplicar_estilo_por_nivel), no el único mecanismo: la fidelidad de
+   estas líneas vía QSS depende del motor de estilo activo, así que el
+   gradiente de fuente/color es la señal principal, esto es un
+   refuerzo. */
+QTreeWidget#tree_categorias::branch:has-siblings:!adjoins-item {{
+    border-image: none;
+    border-left: 1px solid #4a4a4a;
+}}
+QTreeWidget#tree_categorias::branch:has-siblings:adjoins-item {{
+    border-image: none;
+    border-left: 1px solid #4a4a4a;
+    border-bottom: 1px solid #4a4a4a;
+}}
+QTreeWidget#tree_categorias::branch:!has-children:!has-siblings:adjoins-item {{
+    border-image: none;
+    border-left: 1px solid #4a4a4a;
+    border-bottom: 1px solid #4a4a4a;
+}}
+
 /* ---------- Modo compacto: Ventana 1 (Publicidad) y Ventana 2 /
    Auxiliar (Emisión) — fuente y relleno más chicos para poder
    achicar columnas de verdad (antes un mínimo de sección lo
