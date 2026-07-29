@@ -35,6 +35,7 @@ from gui.dialogo_listas_auxiliar import DialogoListasAuxiliar
 from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
 from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
 from gui.common_widgets import configurar_columnas_ajustables
+from gui.styles import qss_para_tema
 from gui import estado_ui
 
 from core.playlist_manager import GestorPublicidad, GestorExplorador, SchedulerAutomatico
@@ -978,6 +979,14 @@ class MainWindow(QMainWindow):
         dispositivo sin cortar la reproducción."""
         self._config = cargar_configuracion()
         self._actualizar_nombre_emisora()
+        # Tema visual (pedido explícito, "Diseñá el tema Claro"):
+        # cambiar el combo en Configuración → General se aplica ACÁ,
+        # en caliente, sin reiniciar la app -- mismo criterio ya
+        # establecido para el resto de "aplicar configuración en
+        # vivo" (nombre de emisora, volumen, dispositivo de salida).
+        app_actual = QApplication.instance()
+        if app_actual is not None:
+            app_actual.setStyleSheet(qss_para_tema(self._config["general"]["tema"]))
         audio = self._config["audio"]
         reproduccion = self._config["reproduccion"]
         fade = self._config["fade"]
