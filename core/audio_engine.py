@@ -95,6 +95,30 @@ class MotorAudio(QObject):
         self._player = None
         self._punto_fin_ms = None
         self._timer_fade_volumen = None
+        # Bug real corregido — "es la hora veintitres, en punto en
+        # punto" (HTH) y en general cualquier ítem repetido/salteado de
+        # más al terminar: `finalizo_item` podía emitirse DOS VECES
+        # para el mismo fin de reproducción — una desde el tick de
+        # `_emitir_posicion()` (corte por `punto_fin_ms`, conexión
+        # DIRECTA en el hilo principal) y otra desde el evento nativo
+        # `MediaPlayerEndReached` de libVLC (`_on_fin_reproduccion`,
+        # disparado desde un hilo interno de libVLC — la entrega al
+        # slot en el hilo principal queda ENCOLADA por Qt, así que
+        # puede procesarse recién después de que la primera ya haya
+        # arrancado el clip/ítem SIGUIENTE). Para un clip corto con
+        # margen de silencio casi nulo (los HTH, género de "corte
+        # estricto") ambas detecciones de "se terminó" caen casi
+        # siempre dentro de la misma ventana de tiempo. Con la cola de
+        # clips del Comando HTH ya en su último elemento, esa segunda
+        # emisión tardía volvía a evaluar "cola vacía" y disparaba
+        # OTRA vuelta de avance — sonando como si el último clip
+        # ("en punto") se repitiera. Corregido con un guard de una
+        # sola vez por reproducción: cada `reproducir()` nuevo abre una
+        # ventana fresca (`_fin_ya_emitido = False`); la PRIMERA
+        # detección de fin (sea cual sea el origen) emite la señal y
+        # cierra la ventana — cualquier detección posterior para ESA
+        # MISMA reproducción se ignora en silencio.
+        self._fin_ya_emitido = False
         # Volumen que ESTE motor debería tener ahora mismo — la fuente
         # de verdad del volumen ya no es el reproductor de libVLC sino
         # este atributo (ver set_volumen / _emitir_posicion). Bug real
@@ -186,6 +210,9 @@ class MotorAudio(QObject):
             self.cargar(ruta)
 
         self._punto_fin_ms = punto_fin_ms
+        # Nueva ventana de "fin todavía no emitido" para ESTA
+        # reproducción -- ver el guard `_fin_ya_emitido` en __init__.
+        self._fin_ya_emitido = False
 
         # Bug real corregido — "el mismo archivo de Pisador reusado en
         # varios temas, deja de sonar después de la primera vez, ni
@@ -582,7 +609,7 @@ class MotorAudio(QObject):
         if self._punto_fin_ms and actual_ms >= self._punto_fin_ms:
             self._timer_posicion.stop()
             self._player.stop()
-            self.finalizo_item.emit()
+            self._emitir_fin_una_vez()
             return
 
         limite_ms = self._punto_fin_ms if self._punto_fin_ms else largo_ms
@@ -600,6 +627,16 @@ class MotorAudio(QObject):
 
     def _on_fin_reproduccion(self, evento):
         self._timer_posicion.stop()
+        self._emitir_fin_una_vez()
+
+    def _emitir_fin_una_vez(self):
+        """Emite `finalizo_item` UNA sola vez por reproducción -- ver
+        el guard `_fin_ya_emitido` (comentario completo en __init__).
+        Cualquier detección de "fin" posterior a la primera, para esta
+        MISMA reproducción, se ignora en silencio."""
+        if self._fin_ya_emitido:
+            return
+        self._fin_ya_emitido = True
         self.finalizo_item.emit()
 
     def _on_error(self, evento):

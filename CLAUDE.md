@@ -9415,6 +9415,130 @@ todo el resto.
     un día, (6) que el título de Emisión muestre el FMT correcto en
     uso, y (7) que insertar un ciclo FMT por tiempo desde Emisión
     calcule una cantidad razonable de ítems para el tiempo pedido.
+96. ~~Bug real: el HTH repetía "en punto en punto" (finalizo_item
+    duplicado) + Ventana 3: jerarquía visual de 5 niveles + árbol ya
+    no arranca todo expandido~~ — dos pedidos: "¿Por qué hay veces que
+    la hora, cuando va al bloque horario, repite la hora en la parte
+    final? Por ejemplo dice: 'es la hora veintitres, en punto en
+    punto'... investigá si pasa por un error de carga, del buffer" +
+    "en la ventana de Categorías suelo tener hasta 5 niveles... ¿qué
+    podríamos implementar para otorgar una mejor e intuitiva
+    visibilidad? colores, negrita, líneas... también sacar que todo el
+    árbol se vea expandido, es molesto ver todo".
+
+    **a) Bug real de fondo — `finalizo_item` (MotorAudio) podía
+    emitirse DOS VECES para el mismo fin de reproducción**:
+    `core/audio_engine.py` tiene DOS orígenes independientes que
+    detectan "esta reproducción terminó" y cada uno emitía
+    `finalizo_item` por su cuenta — (1) el tick de posición
+    `_emitir_posicion()` (QTimer, hilo principal, conexión DIRECTA),
+    que corta apenas `actual_ms >= punto_fin_ms` (el punto de recorte
+    de silencio calculado por `core/analizador_audio.py`); y (2) el
+    evento NATIVO de libVLC `MediaPlayerEndReached`
+    (`_on_fin_reproduccion`, disparado desde un hilo INTERNO de
+    libVLC — la entrega al slot del hilo principal queda ENCOLADA por
+    Qt, así que puede procesarse recién más tarde, incluso después de
+    que la primera detección ya arrancó el clip/ítem SIGUIENTE). Para
+    un clip de duración normal esto casi nunca se nota (las dos
+    detecciones caen separadas en el tiempo), pero para un clip CORTO
+    con margen de silencio casi nulo — exactamente el caso de los
+    clips de voz del Comando HTH, género de "corte estricto"
+    (`tolerancia_silencio_v1_segundos`, cerca de 0) — ambas
+    detecciones caen dentro de la misma ventana muy angosta, y las DOS
+    emisiones de `finalizo_item` le llegan a
+    `GestorPublicidad._on_fin_de_item()` para lo que en la práctica es
+    UN SOLO fin de clip. Con la cola del Comando HTH ya en su último
+    elemento (ej. "MINUTOS 00" — "en punto"), esa segunda emisión
+    tardía volvía a evaluar "cola vacía" y disparaba otra vuelta de
+    avance sobre el mismo estado, sonando como si el último clip se
+    repitiera — "en punto en punto". Corregido con un guard de UNA
+    SOLA VEZ por reproducción (`MotorAudio._fin_ya_emitido`,
+    `_emitir_fin_una_vez()`): cada `reproducir()` nuevo reabre la
+    ventana (`_fin_ya_emitido = False`); la PRIMERA detección de fin
+    (venga de donde venga) emite la señal y cierra la ventana —
+    cualquier detección posterior para ESA MISMA reproducción se
+    ignora en silencio. Reemplaza los dos `self.finalizo_item.emit()`
+    directos (en `_emitir_posicion()` y en `_on_fin_reproduccion()`)
+    por `self._emitir_fin_una_vez()`. Este bug no era exclusivo del
+    HTH — cualquier ítem corto de cualquier ventana (Publicidad/
+    Separador, corte estricto) podía sufrir el mismo doble-avance,
+    solo que con un clip de voz de 1-2 segundos es mucho más
+    perceptible y reproducible.
+
+    **b) Ventana 3 — jerarquía visual de 5 niveles**: `gui/ventana_explorador.py:
+    _aplicar_estilo_por_nivel()` (ya existía desde una ronda anterior,
+    PR #2 — negrita+MAYÚSCULAS para el nivel 1, negrita para el nivel
+    2, nada para el resto) se reescribió como gradiente de 5 escalones
+    (`_ESTILOS_POR_NIVEL`, tabla de negrita/cursiva/mayúsculas/color/
+    tamaño por nivel, calculado por profundidad REAL de ancestros, no
+    solo "es raíz o no"): nivel 1 negrita+MAYÚSCULAS+color naranja
+    acento (`#e67e22`, mismo tono ya usado para el nombre de emisora/
+    contorno del botón AUTOMÁTICO); nivel 2 negrita, texto normal;
+    nivel 3 peso normal, color apenas más tenue; nivel 4 cursiva, más
+    tenue todavía (`#9a9a9a`, ya usado como color de texto secundario
+    en el resto de la app); nivel 5 en adelante cursiva + el tono más
+    tenue de todos, tamaño de fuente 1pt más chico — a partir de ahí
+    se repite el estilo del nivel 5 (no sigue aclarándose para
+    siempre). Cada color se eligió para NUNCA chocar con otro
+    significado ya establecido en la app (el celeste de selección
+    `#5dade2`, el rojo/verde de estado de Ventana 1/2, los colores por
+    género de `tree_archivos` — este es un árbol DISTINTO,
+    `tree_categorias`). El texto REAL del ítem (lo que se persiste en
+    `biblioteca.json`) nunca se toca — es solo pintado. Complementado
+    con un bloque QSS nuevo (`gui/styles.py`,
+    `QTreeWidget#tree_categorias::branch`) que dibuja líneas de
+    conexión sutiles entre niveles (pedido explícito "líneas") — a
+    propósito no es el mecanismo PRINCIPAL (la fidelidad de esta
+    técnica vía pseudo-estados QSS depende del motor de estilo activo
+    y no se puede verificar sin un display real), el gradiente de
+    fuente/color es la señal confiable y ya confirmada por test.
+
+    **c) El árbol ya NO arranca todo expandido — recuerda
+    exactamente lo que el operador dejó abierto**: `expandAll()` (se
+    llamaba SIEMPRE después de cargar la biblioteca) se reemplazó por
+    `_restaurar_expansion_categorias()`, que reconstruye el estado de
+    expansión ítem por ítem a partir de un set persistido
+    (`ui_state.ini`, vía `gui/estado_ui.guardar_valor`/
+    `restaurar_valor` — mismo mecanismo genérico que ya usa el
+    Programador para "recordar la última categoría navegada", con la
+    misma normalización de la trampa de QSettings ya documentada: una
+    lista guardada de un solo elemento vuelve como string suelto, no
+    como lista de 1). Cada categoría identificada por su camino de
+    nombres completo (`ruta_de_categoria()`, ya existente, unido con
+    " > " — mismo criterio que `core/rotacion_categoria.py`).
+    `tree_categorias.itemExpanded`/`itemCollapsed` (conectados DESPUÉS
+    de la carga inicial, para que restaurar el estado guardado no
+    dispare guardados redundantes) actualizan el set y lo persisten en
+    cada click del operador — así lo que se deja abierto/cerrado
+    sobrevive cerrar y reabrir la aplicación. Una biblioteca nueva, o
+    la primera vez que corre esta versión (sin nada guardado todavía),
+    arranca TOTALMENTE colapsada (solo las categorías raíz visibles) —
+    exactamente el pedido ("sacar que todo el árbol se vea expandido...
+    es molesto ver todo"). El "reveal" puntual que ya existía al crear
+    una subcategoría nueva (`padre.setExpanded(True)`, para mostrar de
+    inmediato lo recién creado) no se tocó — sigue funcionando igual,
+    independiente de este mecanismo de recordar el estado general.
+
+    Probado con dos scripts dedicados: el fix del motor de audio
+    (llamar `_emitir_fin_una_vez()` 3 veces seguidas simulando la
+    doble detección real produce UNA sola emisión de `finalizo_item`;
+    un `reproducir()` nuevo reabre la ventana y el próximo fin real sí
+    emite) + la jerarquía visual (gradiente de negrita/cursiva/
+    mayúsculas/color confirmado en los 5 niveles de un árbol real de
+    prueba — Publicidad > Clientes > Supermercados > Ofertas > Verano
+    — árbol nuevo arranca colapsado sin estado guardado, expandir/
+    colapsar a mano persiste y se saca correctamente, y recargar la
+    biblioteca con un estado guardado previo restaura EXACTAMENTE eso,
+    ni más ni menos) — + `py_compile` de los 3 archivos tocados +
+    smoke test de arranque completo de la app sin traceback. **No se
+    pudo correr la suite de regresión de scripts de rondas anteriores**
+    (ninguno está commiteado al repo, ver ronda 90). **Sigue sin poder
+    probarse con audio/VLC real ni con la biblioteca real de
+    Santiago**: falta que confirme (1) que el Comando HTH de HORA ya
+    no repite "en punto" (ni ningún otro clip corto) al final, y (2)
+    que la nueva jerarquía visual (colores/negrita/cursiva + líneas) y
+    el árbol ya no arrancando expandido de punta a punta se sienten
+    más intuitivos para navegar sus 5 niveles reales de categorías.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
@@ -9432,6 +9556,31 @@ todo el resto.
   usar SIEMPRE `detener()` de verdad, nunca `pausar()` — aunque
   pausar parezca más elegante/menos disruptivo a primera vista.
 - El bug de Drag&Drop que no funcionaba (ver regla de oro arriba).
+- **`MotorAudio.finalizo_item` podía emitirse DOS VECES para el mismo
+  fin de reproducción** (bug real, ronda 96, "en punto en punto" del
+  HTH): dos orígenes independientes detectan "esta reproducción
+  terminó" — el tick de `_emitir_posicion()` (corte por
+  `punto_fin_ms`, hilo principal, conexión directa) y el evento nativo
+  `MediaPlayerEndReached` de libVLC (`_on_fin_reproduccion`, disparado
+  desde un hilo INTERNO de libVLC, entregado al hilo principal vía una
+  conexión Qt ENCOLADA que puede procesarse más tarde de lo esperado)
+  — para un clip CORTO con margen de silencio casi nulo (como los
+  clips de voz del HTH) ambas detecciones caen casi siempre dentro de
+  la misma ventana de tiempo, así que las DOS emisiones le llegan al
+  handler para lo que en la práctica es un solo fin real, duplicando
+  cualquier avance de cola/playlist enganchado a esa señal. Corregido
+  con un guard de una sola vez por reproducción
+  (`MotorAudio._fin_ya_emitido`/`_emitir_fin_una_vez()`, reabierto en
+  cada `reproducir()` nuevo). **Regla**: cualquier señal que combine
+  un origen basado en TIMER (hilo principal, síncrono) con un origen
+  basado en un EVENTO NATIVO de libVLC (hilo ajeno, entrega asíncrona)
+  para detectar el mismo hecho es candidata a doble emisión — no
+  asumir que "ya se manejó" en un origen alcanza para cubrir al otro;
+  agregar un guard explícito de una sola vez por evento (generación/
+  flag reabierto en cada intento nuevo), mismo espíritu que
+  `_generacion_pisador`/`_generacion_pausa_emision` ya documentados
+  más abajo.
+
 - **El Pisador no sonaba porque faltaba una delegación** (ver nota
   completa en Ventana 2): cuando un wrapper (`VentanaEmision`/
   `VentanaAuxiliar`) delega métodos en `PanelReproductor`, hay que
