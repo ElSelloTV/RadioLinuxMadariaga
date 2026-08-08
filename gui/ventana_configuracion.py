@@ -20,6 +20,7 @@ necesario para emitir publicidad y música de forma automática.
 import json
 import os
 import sys
+import threading
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QTabWidget, QWidget,
@@ -31,7 +32,7 @@ from PySide6.QtCore import Qt, QUrl, QProcess
 from PySide6.QtGui import QColor, QDesktopServices
 
 from config.settings import (
-    cargar_configuracion, guardar_configuracion,
+    cargar_configuracion, guardar_configuracion, registrar_error,
     ARCHIVO_LOG, ARCHIVO_HISTORIAL_REPRODUCCION,
 )
 from core.audio_engine import MotorAudio
@@ -127,13 +128,47 @@ class VentanaConfiguracion(QDialog):
         return slider
 
     def _listar_dispositivos_disponibles(self):
-        try:
-            motor_temporal = MotorAudio()
-            if motor_temporal.esta_disponible():
-                return motor_temporal.listar_dispositivos()
-        except Exception:
-            pass
-        return []
+        """Arma un MotorAudio() temporal SOLO para listar dispositivos
+        (mientras Emisión/Publicidad/Auxiliar/Pisador ya están sonando
+        con sus propias instancias de libVLC en el mismo proceso).
+
+        Bug real de producción, encontrado tras instalar
+        `pulseaudio-utils`/`libpulsedsp` en una PC (necesarios para que
+        Viper4Linux pueda listar dispositivos vía `pactl`): con esas
+        librerías presentes, `audio_output_device_list_get()` del
+        módulo "pulse" de libVLC puede quedar COLGADO PARA SIEMPRE si
+        ya hay otras instancias de libVLC reproduciendo en el mismo
+        proceso — exactamente el caso real de esta ventana, que se abre
+        con la radio ya al aire. Como esto corre en el hilo principal
+        de Qt (esta app nunca usó threading para el resto), un cuelgue
+        acá freeza TODA la aplicación — ventana, timers de reproducción
+        y audio incluidos — sin ningún error ni traceback visible.
+
+        Corregido con un timeout duro: se corre en un hilo aparte
+        (daemon — si no vuelve a tiempo, se abandona solo, sin bloquear
+        nada del resto del proceso) y si no responde en 3s se muestra
+        solo la opción "default" en vez de congelar la app. Nunca más
+        debería poder tirar abajo el aire por esto."""
+        resultado = {"dispositivos": []}
+
+        def _consultar():
+            try:
+                motor_temporal = MotorAudio()
+                if motor_temporal.esta_disponible():
+                    resultado["dispositivos"] = motor_temporal.listar_dispositivos()
+            except Exception:
+                pass
+
+        hilo = threading.Thread(target=_consultar, daemon=True)
+        hilo.start()
+        hilo.join(timeout=3.0)
+        if hilo.is_alive():
+            registrar_error(
+                "VentanaConfiguracion: listar_dispositivos() no respondió en "
+                "3s (probable cuelgue del módulo 'pulse' de libVLC con otras "
+                "instancias ya reproduciendo) -- se muestra solo 'default'."
+            )
+        return resultado["dispositivos"]
 
     # ------------------------------------------------------------------
     # Tab: Fade / Transiciones
