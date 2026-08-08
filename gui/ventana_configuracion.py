@@ -19,8 +19,8 @@ necesario para emitir publicidad y música de forma automática.
 
 import json
 import os
+import subprocess
 import sys
-import threading
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QTabWidget, QWidget,
@@ -128,47 +128,50 @@ class VentanaConfiguracion(QDialog):
         return slider
 
     def _listar_dispositivos_disponibles(self):
-        """Arma un MotorAudio() temporal SOLO para listar dispositivos
-        (mientras Emisión/Publicidad/Auxiliar/Pisador ya están sonando
-        con sus propias instancias de libVLC en el mismo proceso).
+        """Lista los dispositivos de audio reales corriendo
+        `core/audio_engine.py` como PROCESO APARTE (`python3 -m
+        core.audio_engine`), nunca dentro de este proceso.
 
-        Bug real de producción, encontrado tras instalar
-        `pulseaudio-utils`/`libpulsedsp` en una PC (necesarios para que
-        Viper4Linux pueda listar dispositivos vía `pactl`): con esas
-        librerías presentes, `audio_output_device_list_get()` del
-        módulo "pulse" de libVLC puede quedar COLGADO PARA SIEMPRE si
-        ya hay otras instancias de libVLC reproduciendo en el mismo
-        proceso — exactamente el caso real de esta ventana, que se abre
-        con la radio ya al aire. Como esto corre en el hilo principal
-        de Qt (esta app nunca usó threading para el resto), un cuelgue
-        acá freeza TODA la aplicación — ventana, timers de reproducción
-        y audio incluidos — sin ningún error ni traceback visible.
+        Segunda vuelta de un bug real de producción: la primera
+        corrección (un MotorAudio() temporal armado en un HILO con
+        timeout de 3s, para no colgar la ventana si
+        `audio_output_device_list_get()` del módulo "pulse" de libVLC
+        se cuelga con otras instancias ya reproduciendo en el mismo
+        proceso) evitaba el freeze, pero un hilo abandonado no puede
+        cerrar su conexión de PulseAudio -- tras varias horas de abrir
+        Configuración repetidas veces en producción, cada cuelgue dejó
+        una conexión viva para siempre, hasta que `pipewire-pulse`
+        empezó a rechazar TODO ("too many client application
+        connections"), tirando abajo hasta `pactl`.
 
-        Corregido con un timeout duro: se corre en un hilo aparte
-        (daemon — si no vuelve a tiempo, se abandona solo, sin bloquear
-        nada del resto del proceso) y si no responde en 3s se muestra
-        solo la opción "default" en vez de congelar la app. Nunca más
-        debería poder tirar abajo el aire por esto."""
-        resultado = {"dispositivos": []}
-
-        def _consultar():
-            try:
-                motor_temporal = MotorAudio()
-                if motor_temporal.esta_disponible():
-                    resultado["dispositivos"] = motor_temporal.listar_dispositivos()
-            except Exception:
-                pass
-
-        hilo = threading.Thread(target=_consultar, daemon=True)
-        hilo.start()
-        hilo.join(timeout=3.0)
-        if hilo.is_alive():
-            registrar_error(
-                "VentanaConfiguracion: listar_dispositivos() no respondió en "
-                "3s (probable cuelgue del módulo 'pulse' de libVLC con otras "
-                "instancias ya reproduciendo) -- se muestra solo 'default'."
+        Corregido de raíz: un PROCESO aparte, si no responde a tiempo,
+        se mata con SIGKILL desde afuera -- el sistema operativo cierra
+        su conexión de PulseAudio solo al matarlo, sin dejar nada
+        pendiente nunca, a diferencia de un hilo que comparte el mismo
+        proceso. Un timeout/error acá siempre degrada a mostrar solo
+        "default", nunca vuelve a poder colgar ni ensuciar la app."""
+        try:
+            raiz_proyecto = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            resultado = subprocess.run(
+                [sys.executable, "-m", "core.audio_engine"],
+                capture_output=True, text=True, timeout=5, cwd=raiz_proyecto,
             )
-        return resultado["dispositivos"]
+            if resultado.returncode == 0 and resultado.stdout.strip():
+                # Tomamos SOLO la última línea de stdout como el JSON --
+                # `core/audio_engine.py` puede imprimir avisos sueltos
+                # antes (ej. "VLC no está instalado"), y el JSON en sí
+                # siempre es lo último que imprime el script.
+                ultima_linea = resultado.stdout.strip().splitlines()[-1]
+                return [tuple(d) for d in json.loads(ultima_linea)]
+        except subprocess.TimeoutExpired:
+            registrar_error(
+                "VentanaConfiguracion: listar_dispositivos() (proceso aparte) "
+                "no respondió en 5s -- matado sin dejar ninguna conexión de "
+                "PulseAudio abierta. Se muestra solo 'default'."
+            )
+        except Exception:
+            pass
+        return []
 
     # ------------------------------------------------------------------
     # Tab: Fade / Transiciones
