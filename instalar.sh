@@ -19,6 +19,32 @@ CARPETA_DESTINO="$HOME/RadioLinuxMadariaga"
 
 echo "== RadioLinuxMadariaga — instalación/actualización =="
 
+# Bug real reportado: si falta "git" en el sistema, bash tira un error
+# críptico en la línea del "git clone" ("git: orden no encontrada") sin
+# decir qué paquete instalar — indistinguible para alguien que recién
+# arranca de "el script está roto". Se chequea ACÁ, antes de intentar
+# nada, con un mensaje claro y el comando exacto para resolverlo.
+if ! command -v git >/dev/null 2>&1; then
+    echo ""
+    echo "ERROR: falta instalar 'git' en este sistema (necesario para"
+    echo "descargar/actualizar el repositorio). Instalalo con:"
+    echo ""
+    echo "  sudo apt install -y git"
+    echo ""
+    echo "y volvé a correr este instalador."
+    exit 1
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo ""
+    echo "ERROR: falta instalar 'python3' en este sistema. Instalalo con:"
+    echo ""
+    echo "  sudo apt install -y python3"
+    echo ""
+    echo "y volvé a correr este instalador."
+    exit 1
+fi
+
 if [ -d "$CARPETA_DESTINO/.git" ]; then
     echo "Ya existe una instalación en $CARPETA_DESTINO — actualizando..."
     git -C "$CARPETA_DESTINO" pull --ff-only
@@ -32,6 +58,31 @@ cd "$CARPETA_DESTINO"
 echo "Creando entorno virtual (si no existe)..."
 if [ ! -d "venv" ]; then
     python3 -m venv venv
+fi
+
+# Mismo criterio que el chequeo de git/python3 de arriba: si falta el
+# paquete "python3-venv" del sistema, `python3 -m venv` puede fallar en
+# silencio (o crear una carpeta venv/ incompleta, sin pip adentro) —
+# confirmado ACÁ, antes de que el próximo paso falle con un error de
+# "no such file or directory" igual de críptico.
+if [ ! -x "venv/bin/pip" ]; then
+    # El nombre del paquete real en Debian/Ubuntu suele ser específico
+    # de la versión (ej. "python3.13-venv", no un genérico "python3-venv"
+    # a secas) — se calcula acá para dar el comando EXACTO, igual que ya
+    # hace el propio mensaje de error de Python en este caso.
+    VERSION_PYTHON="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+    PAQUETE_VENV="python3-venv"
+    [ -n "$VERSION_PYTHON" ] && PAQUETE_VENV="python3-venv python${VERSION_PYTHON}-venv"
+    echo ""
+    echo "ERROR: el entorno virtual se creó incompleto (falta venv/bin/pip)."
+    echo "Normalmente esto pasa si falta el paquete de Python 'venv' del"
+    echo "sistema. Instalalo con:"
+    echo ""
+    echo "  sudo apt install -y $PAQUETE_VENV"
+    echo ""
+    echo "y volvé a correr este instalador (podés borrar la carpeta 'venv'"
+    echo "incompleta antes, con: rm -rf $CARPETA_DESTINO/venv)."
+    exit 1
 fi
 
 echo "Instalando dependencias de Python..."
