@@ -1102,11 +1102,31 @@ class VentanaConfiguracion(QDialog):
         else:
             combo.setEditText(valor)
 
+    def _valor_dispositivo_combo(self, combo: QComboBox) -> str:
+        """Devuelve el dispositivo elegido en un combo Master/
+        Preescucha (editable). Bug real de producción: `currentData()`
+        de un QComboBox editable sigue devolviendo el dato del ÍTIMO
+        ÍTEM seleccionado por índice, INCLUSO DESPUÉS de escribir texto
+        libre a mano — tipear (o `setEditText()`) no cambia
+        `currentIndex()` — así que `currentData() or currentText()`
+        (como estaba antes) casi siempre terminaba guardando el
+        dispositivo VIEJO, ignorando por completo lo recién tipeado
+        (confirmado en producción: el operador escribía un nombre de
+        sink de pactl a mano y, al guardar, quedaba otra cosa
+        completamente distinta). Corregido comparando el texto actual
+        contra el texto que debería tener el ítem realmente
+        seleccionado: si coinciden, no se tocó nada — se usa el id
+        "limpio" de `currentData()`; si no coinciden, se escribió algo
+        a mano — se usa ese texto tal cual."""
+        texto_actual = combo.currentText().strip()
+        indice = combo.currentIndex()
+        if indice >= 0 and combo.itemText(indice) == texto_actual:
+            return combo.currentData() or texto_actual
+        return texto_actual
+
     def _guardar_y_cerrar(self):
-        self._config["audio"]["dispositivo_master"] = self.combo_dispositivo_master.currentData() \
-            or self.combo_dispositivo_master.currentText()
-        self._config["audio"]["dispositivo_preescucha"] = self.combo_dispositivo_preescucha.currentData() \
-            or self.combo_dispositivo_preescucha.currentText()
+        self._config["audio"]["dispositivo_master"] = self._valor_dispositivo_combo(self.combo_dispositivo_master)
+        self._config["audio"]["dispositivo_preescucha"] = self._valor_dispositivo_combo(self.combo_dispositivo_preescucha)
         self._config["audio"]["volumen_master"] = self.slider_volumen_master.value()
         self._config["audio"]["volumen_preescucha"] = self.slider_volumen_preescucha.value()
 
