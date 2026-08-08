@@ -674,6 +674,30 @@ class MotorAudio(QObject):
         self.error_reproduccion.emit(f"Error reproduciendo: {self._ruta_actual}")
 
 
+if __name__ == "__main__":
+    # Invocado como PROCESO APARTE por
+    # VentanaConfiguracion._listar_dispositivos_disponibles() (gui/
+    # ventana_configuracion.py) -- nunca a mano. Bug real de
+    # producción: listar dispositivos armaba un MotorAudio() temporal
+    # DENTRO del mismo proceso que ya tiene otras instancias de libVLC
+    # reproduciendo -- si esa consulta se cuelga (le pasa al módulo
+    # "pulse" bajo ciertas condiciones), un primer fix (hilo con
+    # timeout de 3s) evitaba el freeze de la ventana, pero la conexión
+    # de PulseAudio del hilo abandonado NUNCA se cerraba -- tras varias
+    # horas de abrir Configuración, `pipewire-pulse` terminó
+    # rechazando TODAS las conexiones nuevas ("too many client
+    # application connections"), cortando hasta `pactl`. Un hilo de
+    # Python no puede abortar una llamada C bloqueante de forma
+    # segura ni liberar su socket; un PROCESO aparte sí -- si no
+    # responde a tiempo, se lo mata con SIGKILL desde afuera, y el
+    # sistema operativo cierra su conexión de PulseAudio solo, sin
+    # dejar nada pendiente.
+    import json as _json
+    _motor = MotorAudio()
+    _dispositivos = _motor.listar_dispositivos() if _motor.esta_disponible() else []
+    print(_json.dumps(_dispositivos))
+
+
 def obtener_duracion_formateada(ruta: str) -> str:
     """Duración 'hh:mm:ss' de un archivo de audio usando mutagen.
 
