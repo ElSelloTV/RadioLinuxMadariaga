@@ -20,10 +20,95 @@ en vez de lanzar una excepción no controlada.
 --------------------------------------------------------
 """
 
+import subprocess
+import time
+
 import vlc
 from PySide6.QtCore import QObject, Signal, QTimer
 
 from config.settings import registrar_evento, cargar_configuracion
+
+
+def _es_nombre_pactl_directo(id_dispositivo) -> bool:
+    """True si `id_dispositivo` es un nombre de sink de PipeWire/pactl
+    escrito DIRECTO (ej. "alsa_output.pci-0000_00_14.2.analog-stereo",
+    tal cual lo devuelve `pactl list sinks short`) — a diferencia del
+    formato "modulo||dispositivo" que arma `listar_dispositivos()` a
+    partir de los módulos de audio de libVLC.
+
+    Fallback real de producción: en instalaciones donde libVLC no
+    tiene compilado un módulo de salida "pulse" (confirmado en una PC
+    real — `audio_output_list_get()` solo devolvía módulo "alsa"),
+    `audio_output_device_set()` no tiene forma de apuntar a un sink de
+    PipeWire específico — con PipeWire manejando la placa de forma
+    exclusiva, un dispositivo ALSA "crudo" (`hw:CARD=...`) elegido de
+    la lista no hace nada, en silencio. Escribiendo el nombre real del
+    sink a mano en el combo de Configuración -> Audio (es editable)
+    se activa `mover_stream_nuevo_a_sink()` en su lugar — ver
+    `MotorAudio.reproducir()`."""
+    return bool(id_dispositivo) and id_dispositivo != "default" and "||" not in id_dispositivo
+
+
+def _ids_sink_inputs_actuales() -> set:
+    """[IDs de pactl] de los sink-inputs (streams de audio) que existen
+    AHORA MISMO — snapshot usado por `mover_stream_nuevo_a_sink()` para
+    detectar cuál es NUEVO después de arrancar una reproducción."""
+    try:
+        salida = subprocess.run(
+            ["pactl", "list", "sink-inputs", "short"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if salida.returncode != 0:
+            return set()
+        return {
+            linea.split("\t")[0].strip()
+            for linea in salida.stdout.splitlines() if linea.strip()
+        }
+    except Exception:
+        return set()
+
+
+def mover_stream_nuevo_a_sink(ids_previos: set, nombre_sink: str,
+                                intentos: int = 8, espera_seg: float = 0.15) -> bool:
+    """Busca, entre los sink-inputs actuales, el que NO estaba en
+    `ids_previos` (el que acaba de aparecer al arrancar a reproducir) y
+    lo mueve al sink indicado con `pactl move-sink-input` — mismo
+    mecanismo ya confirmado funcionando a mano en producción
+    (`pactl set-default-sink`/`move-sink-input`) para cuando libVLC no
+    puede targetear un sink de PipeWire específico por su cuenta (ver
+    `_es_nombre_pactl_directo`). Reintenta un ratito porque el
+    sink-input puede tardar unos milisegundos en registrarse tras
+    play(). Devuelve True si encontró y movió algo."""
+    for _ in range(intentos):
+        try:
+            salida = subprocess.run(
+                ["pactl", "list", "sink-inputs", "short"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if salida.returncode == 0:
+                for linea in salida.stdout.splitlines():
+                    if not linea.strip():
+                        continue
+                    id_actual = linea.split("\t")[0].strip()
+                    if id_actual and id_actual not in ids_previos:
+                        subprocess.run(
+                            ["pactl", "move-sink-input", id_actual, nombre_sink],
+                            capture_output=True, text=True, timeout=2,
+                        )
+                        registrar_evento(
+                            f"MotorAudio: movido sink-input {id_actual} -> "
+                            f"'{nombre_sink}' vía pactl (fallback sin módulo "
+                            f"'pulse' en libVLC)"
+                        )
+                        return True
+        except Exception:
+            pass
+        time.sleep(espera_seg)
+    registrar_evento(
+        f"MotorAudio: mover_stream_nuevo_a_sink() no encontró ningún "
+        f"sink-input nuevo tras {intentos} intentos (target: '{nombre_sink}')"
+    )
+    return False
 
 MENSAJE_VLC_NO_DISPONIBLE = (
     "VLC no está instalado o no se encontró libvlc. "
@@ -251,6 +336,16 @@ class MotorAudio(QObject):
         if self._timer_fade_volumen is not None:
             self._timer_fade_volumen.stop()
 
+        # Ver _es_nombre_pactl_directo() -- si el dispositivo configurado
+        # es un nombre de sink de pactl escrito directo (no un ID de
+        # módulo de libVLC), la snapshot se toma ACÁ, antes de play(),
+        # para que mover_stream_nuevo_a_sink() (llamado más abajo, ya
+        # con la reproducción arrancada) pueda distinguir el sink-input
+        # que recién aparece de los que ya existían.
+        ids_previos_pactl = None
+        if _es_nombre_pactl_directo(self._id_dispositivo):
+            ids_previos_pactl = _ids_sink_inputs_actuales()
+
         self._player.play()
         self._timer_posicion.start()
 
@@ -306,6 +401,8 @@ class MotorAudio(QObject):
                 self._player.set_time(punto_inicio_ms)
             self._player.audio_set_volume(self._volumen_deseado)
             self._aplicar_dispositivo_salida()
+            if ids_previos_pactl is not None:
+                mover_stream_nuevo_a_sink(ids_previos_pactl, self._id_dispositivo)
         QTimer.singleShot(self._retardo_arranque_ms, _tras_arranque)
 
     def pausar(self):
