@@ -771,6 +771,45 @@ class MotorAudio(QObject):
         self.error_reproduccion.emit(f"Error reproduciendo: {self._ruta_actual}")
 
 
+def listar_dispositivos_pactl():
+    """[(nombre_sink, descripcion), ...] leído directo de `pactl list
+    sinks` — reemplaza la enumeración vía libVLC
+    (`audio_output_list_get()`), que en instalaciones sin módulo
+    "pulse" compilado (confirmado en una PC real) devuelve una lista
+    interminable de variantes ALSA (hw/plughw/dmix/dsnoop/surround
+    2.1-7.1, una por cada tarjeta) que además NO enrutan de verdad —
+    pedido explícito: "no quiero la lista interminable de salidas...
+    modificá para que tome las mismas salidas que veo en KMix".
+
+    `pactl` es la MISMA fuente de verdad que ya usa KMix (y
+    Viper4Linux) — el nombre de sink que devuelve acá NUNCA tiene el
+    separador "||" que usaba el formato viejo, así que activa SIEMPRE
+    el fallback de `mover_stream_nuevo_a_sink()` al reproducir (ver
+    `_es_nombre_pactl_directo`) — cualquier opción de esta lista nueva
+    enruta de forma confiable, no solo la escrita a mano."""
+    try:
+        salida = subprocess.run(
+            ["pactl", "list", "sinks"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if salida.returncode != 0:
+            return []
+    except Exception:
+        return []
+
+    dispositivos = []
+    nombre_actual = None
+    for linea in salida.stdout.splitlines():
+        linea_limpia = linea.strip()
+        if linea_limpia.startswith("Name:"):
+            nombre_actual = linea_limpia.split(":", 1)[1].strip()
+        elif linea_limpia.startswith("Description:") and nombre_actual:
+            descripcion = linea_limpia.split(":", 1)[1].strip()
+            dispositivos.append((nombre_actual, descripcion))
+            nombre_actual = None
+    return dispositivos
+
+
 if __name__ == "__main__":
     # Invocado como PROCESO APARTE por
     # VentanaConfiguracion._listar_dispositivos_disponibles() (gui/
@@ -790,8 +829,7 @@ if __name__ == "__main__":
     # sistema operativo cierra su conexión de PulseAudio solo, sin
     # dejar nada pendiente.
     import json as _json
-    _motor = MotorAudio()
-    _dispositivos = _motor.listar_dispositivos() if _motor.esta_disponible() else []
+    _dispositivos = listar_dispositivos_pactl()
     print(_json.dumps(_dispositivos))
 
 

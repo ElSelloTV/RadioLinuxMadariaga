@@ -96,7 +96,7 @@ class VentanaConfiguracion(QDialog):
 
         dispositivos = self._listar_dispositivos_disponibles()
         for combo in (self.combo_dispositivo_master, self.combo_dispositivo_preescucha):
-            combo.addItem("default (salida del sistema)", "default")
+            combo.addItem("PipeWire (por defecto del sistema)", "default")
             for id_dispositivo, descripcion in dispositivos:
                 combo.addItem(f"{descripcion} ({id_dispositivo})", id_dispositivo)
 
