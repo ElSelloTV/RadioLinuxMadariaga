@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
         self._construir_menu()
         self._construir_toolbar()
         self._construir_paneles_centrales()
+        self._aplicar_tamano_fuente_ventanas()
         self._construir_status_bar()
         self._conectar_señales()
         self._inicializar_motores_audio()
@@ -1024,6 +1025,26 @@ class MainWindow(QMainWindow):
 
         self.ventana_explorador.repintar_colores_genero()
         self.ventana_explorador.repintar_estilo_categorias()
+        self._aplicar_tamano_fuente_ventanas()
+
+    def _aplicar_tamano_fuente_ventanas(self):
+        """Pedido explícito ("el monitor suele estar lejos y cuesta
+        leer con el tamaño actual... configurable por las 3 ventanas
+        separadas"): tamaño de letra independiente para Publicidad
+        (V1), Emisión (V2 -- el Auxiliar comparte el mismo valor, ya
+        que reutiliza el mismo widget de lista, PanelReproductor) y el
+        Explorador (V3, archivos + categorías). `setStyleSheet()` a
+        nivel de INSTANCIA (no de la hoja global de la app) siempre
+        gana sobre la QSS general para ese widget puntual -- mismo
+        criterio que ya usa el resto de la app para pintar colores en
+        caliente sin reiniciar."""
+        tamanos = self._config["apariencia"]["tamano_fuente_ventanas"]
+        self.ventana_publicidad.tree.setStyleSheet(f"font-size: {tamanos['publicidad']}pt;")
+        self.ventana_emision.tree.setStyleSheet(f"font-size: {tamanos['emision']}pt;")
+        if self._ventana_auxiliar is not None:
+            self._ventana_auxiliar.tree.setStyleSheet(f"font-size: {tamanos['emision']}pt;")
+        self.ventana_explorador.tree_archivos.setStyleSheet(f"font-size: {tamanos['explorador']}pt;")
+        self.ventana_explorador.tree_categorias.setStyleSheet(f"font-size: {tamanos['explorador']}pt;")
 
     # ------------------------------------------------------------------
     # Ventana auxiliar flotante (preescucha / reproducción secundaria)
@@ -1065,6 +1086,7 @@ class MainWindow(QMainWindow):
             self._ventana_auxiliar.solicitud_agregar_item_aleatorio.connect(self._agregar_item_aleatorio_auxiliar)
             self._ventana_auxiliar.solicitud_guardar_lista.connect(self._guardar_lista_auxiliar)
             self._ventana_auxiliar.solicitud_cargar_lista.connect(self._cargar_lista_auxiliar)
+            self._aplicar_tamano_fuente_ventanas()
 
         self._ventana_auxiliar.show()
         self._ventana_auxiliar.raise_()

@@ -81,6 +81,7 @@ class PanelReproductor(QWidget):
         super().__init__(parent)
         self._item_reproduciendo = None
         self._item_siguiente = None
+        self._portapapeles = []  # ver _copiar_seleccionados()/_pegar_despues_de()
         self._arrastrando_slider = False
         self.slider_progreso = None
         self._stop_bloqueado_por_automatico = False
@@ -538,6 +539,67 @@ class PanelReproductor(QWidget):
         item_padre.setExpanded(True)
         return item
 
+    # ------------------------------------------------------------------
+    # Copiar/Pegar (pedido explícito: "no sería duplicar el archivo
+    # físico sino duplicar el ítem" — un mismo tema puede aparecer más
+    # de una vez en la lista, ej. repetir una tanda a otra hora del
+    # ciclo, sin tener que volver a arrastrarlo desde el Explorador).
+    # Portapapeles PROPIO de este panel (Ventana 2 y Auxiliar tienen
+    # cada uno el suyo, no se comparte entre los dos).
+    # ------------------------------------------------------------------
+    def _copiar_seleccionados(self, seleccionados: list):
+        """Guarda una copia de los datos (no la referencia al
+        QTreeWidgetItem, que puede desaparecer) de cada ítem de NIVEL
+        SUPERIOR seleccionado -- un Pisador anidado no se copia suelto,
+        viaja junto con su tema principal si lo tiene."""
+        self._portapapeles = []
+        for item in seleccionados:
+            if item.parent() is not None:
+                continue
+            entrada = {
+                "titulo": item.text(0), "duracion": item.text(1), "codigo": item.text(2),
+                "ruta": item.data(0, Qt.ItemDataRole.UserRole) or "",
+                "analisis": dict(item.data(0, ROL_ANALISIS_AUDIO) or {}),
+                "pisador": None,
+            }
+            if item.childCount() > 0:
+                hijo = item.child(0)
+                posicion_pisador = hijo.data(0, ROL_POSICION_PISADOR) or "inicio"
+                titulo_pisador = hijo.text(0)
+                if titulo_pisador.startswith("↳ "):
+                    titulo_pisador = titulo_pisador[2:]
+                if posicion_pisador == "final" and titulo_pisador.endswith(" (Outro)"):
+                    titulo_pisador = titulo_pisador[:-len(" (Outro)")]
+                entrada["pisador"] = {
+                    "titulo": titulo_pisador, "duracion": hijo.text(1), "codigo": hijo.text(2),
+                    "ruta": hijo.data(0, Qt.ItemDataRole.UserRole) or "",
+                    "posicion": posicion_pisador,
+                }
+            self._portapapeles.append(entrada)
+
+    def _pegar_despues_de(self, item_referencia):
+        """Inserta una copia NUEVA e independiente de cada ítem del
+        portapapeles, en orden, arrancando justo debajo de
+        `item_referencia` (o al final de la lista si no hay ninguno
+        seleccionado). Los pegados nacen en estado normal (nunca
+        heredan rojo/verde de dónde estaban al copiarlos)."""
+        if not self._portapapeles:
+            return
+        indice = self.tree.indexOfTopLevelItem(item_referencia) + 1 if item_referencia is not None \
+            else self.tree.topLevelItemCount()
+        for entrada in self._portapapeles:
+            item = QTreeWidgetItem([entrada["titulo"], entrada["duracion"], entrada["codigo"]])
+            item.setData(0, ROL_ESTADO_ITEM, ESTADO_NORMAL)
+            item.setData(0, Qt.ItemDataRole.UserRole, entrada["ruta"])
+            item.setData(0, ROL_ANALISIS_AUDIO, dict(entrada["analisis"]))
+            self.tree.insertTopLevelItem(indice, item)
+            if entrada["pisador"] is not None:
+                pis = entrada["pisador"]
+                self.agregar_pisador(indice, pis["titulo"], pis["duracion"], pis["codigo"],
+                                      pis["ruta"], pis["posicion"])
+            indice += 1
+        self._scroll_al_final_con_aire()
+
     def quitar_pisador(self, fila_padre: int):
         item_padre = self.tree.topLevelItem(fila_padre)
         if item_padre is None or item_padre.childCount() == 0:
@@ -649,7 +711,12 @@ class PanelReproductor(QWidget):
         if item_bajo_cursor is not None and item_bajo_cursor not in seleccionados:
             self.tree.setCurrentItem(item_bajo_cursor)
             seleccionados = [item_bajo_cursor]
-        if not seleccionados and not self._permitir_agregar_item and not self._permitir_ciclo_fmt:
+        if (
+            not seleccionados
+            and not self._permitir_agregar_item
+            and not self._permitir_ciclo_fmt
+            and not self._portapapeles
+        ):
             return
 
         item_unico = seleccionados[0] if len(seleccionados) == 1 else None
@@ -674,6 +741,16 @@ class PanelReproductor(QWidget):
         if seleccionados:
             texto_quitar = "✕ Quitar de la lista" if item_unico is not None else f"✕ Quitar {len(seleccionados)} de la lista"
             accion_borrar = menu.addAction(texto_quitar)
+
+        accion_copiar = None
+        accion_pegar = None
+        if any(item.parent() is None for item in seleccionados):
+            texto_copiar = "📋 Copiar" if item_unico is not None else f"📋 Copiar {len(seleccionados)}"
+            accion_copiar = menu.addAction(texto_copiar)
+        accion_pegar = menu.addAction("📌 Pegar")
+        accion_pegar.setEnabled(bool(self._portapapeles))
+        if seleccionados:
+            menu.addSeparator()
 
         accion_info = None
         if item_unico is not None:
@@ -700,6 +777,11 @@ class PanelReproductor(QWidget):
             self.solicitud_agregar_item_aleatorio.emit()
         elif accion_ciclo_fmt is not None and elegida == accion_ciclo_fmt:
             self.solicitud_agregar_ciclo_fmt.emit()
+        elif accion_copiar is not None and elegida == accion_copiar:
+            self._copiar_seleccionados(seleccionados)
+        elif accion_pegar is not None and elegida == accion_pegar:
+            referencia = item_bajo_cursor if item_bajo_cursor is not None else (seleccionados[-1] if seleccionados else None)
+            self._pegar_despues_de(referencia)
         elif accion_borrar is not None and elegida == accion_borrar:
             bloqueados = [item.text(0) for item in seleccionados if not self.quitar_item(item)]
             if bloqueados:

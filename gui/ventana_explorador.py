@@ -80,7 +80,7 @@ from core.audio_engine import obtener_duracion_formateada
 from core.buscador_duplicados import buscar_grupos_duplicados
 from config.settings import (
     cargar_configuracion, cargar_biblioteca, guardar_biblioteca, tolerancia_silencio_para_genero,
-    parametros_nivelado, corregir_referencias_categoria_renombrada,
+    parametros_nivelado, corregir_referencias_categoria_renombrada, registrar_error,
 )
 
 EXTENSIONES_SOPORTADAS = (".mp3", ".wav", ".mp4", ".m4a")
@@ -1216,6 +1216,8 @@ class VentanaExplorador(QWidget):
         if not datos:
             return
 
+        ruta = self._copiar_a_biblioteca(ruta, datos["item_categoria"], datos["genero"])
+
         config = cargar_configuracion()
         # Pedido explícito ("corte de silencio estricto"): Publicidad
         # y Separadores usan una tolerancia sin margen — ver
@@ -1322,6 +1324,7 @@ class VentanaExplorador(QWidget):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             for indice, ruta in enumerate(rutas):
+                ruta = self._copiar_a_biblioteca(ruta, item_categoria, genero)
                 analisis = analizar_audio(
                     ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio,
                     objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs,
@@ -1590,6 +1593,52 @@ class VentanaExplorador(QWidget):
                 return
 
         self._aplicar_nuevo_archivo(item, categoria, item.data(0, ROL_REGISTRO), ruta_nueva)
+
+    def _copiar_a_biblioteca(self, ruta_origen: str, item_categoria, genero: str) -> str:
+        """Copia `ruta_origen` a la carpeta real de la biblioteca que
+        corresponde a `item_categoria`/`genero`, y devuelve la ruta
+        NUEVA -- pedido explícito: "cuando alguien inserta un
+        dispositivo externo (pen drive o celular)... el sistema deberá
+        copiar el archivo en la computadora en la carpeta
+        correspondiente de la categoría, haciendo el mismo proceso
+        como si apretara el botón de agregar". Hasta esta ronda, NI
+        "＋ Agregar" NI el arrastre externo copiaban nada -- el
+        registro quedaba apuntando tal cual a la ruta de origen (el
+        pendrive, el teléfono), así que desconectar ese dispositivo
+        dejaba el archivo "perdido" -- exactamente la clase de
+        problema que el diálogo "Vincular archivo perdido" (rondas
+        79-81) repara DESPUÉS. Copiar al importar previene el problema
+        de raíz en vez de solo curarlo más tarde.
+
+        Fail-open: si la copia falla por cualquier motivo (disco
+        lleno, permisos, origen ilegible), devuelve la ruta ORIGINAL
+        sin copiar -- nunca bloquea el alta por esto, mismo criterio
+        que `analizar_audio()`/`_tamano_bytes()` ante fallas de I/O."""
+        config = cargar_configuracion()
+        raiz = config["rutas"]["biblioteca_musical"] if genero == "Musica" \
+            else config["rutas"]["biblioteca_publicidad"]
+
+        from gui.dialogo_vincular_archivo import _sanitizar_nombre_archivo
+        carpeta_destino = raiz
+        for nombre in self.ruta_de_categoria(item_categoria):
+            carpeta_destino = os.path.join(carpeta_destino, _sanitizar_nombre_archivo(nombre))
+
+        try:
+            os.makedirs(carpeta_destino, exist_ok=True)
+            nombre_archivo = _sanitizar_nombre_archivo(os.path.basename(ruta_origen))
+            base, ext = os.path.splitext(nombre_archivo)
+            destino = os.path.join(carpeta_destino, nombre_archivo)
+            if os.path.abspath(destino) == os.path.abspath(ruta_origen):
+                return ruta_origen  # ya está en el lugar correcto, no hay nada que copiar
+            contador = 2
+            while os.path.exists(destino):
+                destino = os.path.join(carpeta_destino, f"{base} ({contador}){ext}")
+                contador += 1
+            shutil.copy2(ruta_origen, destino)
+            return destino
+        except OSError as error:
+            registrar_error(f"No se pudo copiar '{ruta_origen}' a la biblioteca: {error}")
+            return ruta_origen
 
     @staticmethod
     def _tamano_bytes(ruta: str):
