@@ -504,6 +504,33 @@ class VentanaConfiguracion(QDialog):
             self._chk_sin_color_genero[genero] = chk_sin_color
             form.addRow(f"{genero}:", self._envolver_layout(fila))
 
+        # Tamaño de fuente por ventana (pedido explícito: "el monitor
+        # suele estar lejos y cuesta leer con el tamaño actual...
+        # configurable por las 3 ventanas separadas"). Auxiliar
+        # comparte el mismo valor que Emisión (mismo widget de lista,
+        # PanelReproductor) -- no es una de "las 3 ventanas" que pidió
+        # Santiago (Publicidad/Emisión/Explorador), así que no tiene
+        # selector propio.
+        nota_fuente = QLabel(
+            "Tamaño de letra de las listas, por ventana (el Auxiliar\n"
+            "usa el mismo tamaño que Emisión — comparten la misma lista)."
+        )
+        nota_fuente.setObjectName("lblTituloBloqueActivo")
+        form.addRow(nota_fuente)
+
+        self.spin_fuente_publicidad = QSpinBox()
+        self.spin_fuente_publicidad.setRange(6, 20)
+        self.spin_fuente_publicidad.setSuffix(" pt")
+        self.spin_fuente_emision = QSpinBox()
+        self.spin_fuente_emision.setRange(6, 20)
+        self.spin_fuente_emision.setSuffix(" pt")
+        self.spin_fuente_explorador = QSpinBox()
+        self.spin_fuente_explorador.setRange(6, 20)
+        self.spin_fuente_explorador.setSuffix(" pt")
+        form.addRow("Ventana 1 (Publicidad):", self.spin_fuente_publicidad)
+        form.addRow("Ventana 2 (Emisión / Auxiliar):", self.spin_fuente_emision)
+        form.addRow("Ventana 3 (Explorador):", self.spin_fuente_explorador)
+
         return widget
 
     def _envolver_layout(self, layout) -> QWidget:
@@ -1095,6 +1122,11 @@ class VentanaConfiguracion(QDialog):
                 self._pintar_boton_color(genero, "#808080")
                 self._chk_sin_color_genero[genero].setChecked(True)
 
+        tamanos_fuente = self._config["apariencia"]["tamano_fuente_ventanas"]
+        self.spin_fuente_publicidad.setValue(tamanos_fuente["publicidad"])
+        self.spin_fuente_emision.setValue(tamanos_fuente["emision"])
+        self.spin_fuente_explorador.setValue(tamanos_fuente["explorador"])
+
     def _seleccionar_en_combo(self, combo: QComboBox, valor: str):
         indice = combo.findData(valor)
         if indice >= 0:
@@ -1167,6 +1199,12 @@ class VentanaConfiguracion(QDialog):
             else:
                 colores_genero[genero] = self._botones_color_genero[genero].property("color_hex")
         self._config["apariencia"]["colores_genero"] = colores_genero
+
+        self._config["apariencia"]["tamano_fuente_ventanas"] = {
+            "publicidad": self.spin_fuente_publicidad.value(),
+            "emision": self.spin_fuente_emision.value(),
+            "explorador": self.spin_fuente_explorador.value(),
+        }
 
         guardar_configuracion(self._config)
         self.accept()

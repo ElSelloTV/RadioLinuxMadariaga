@@ -163,6 +163,19 @@ CONFIG_POR_DEFECTO = {
             "Artistica": "#1565c0",
             "HTH": "#00838f",
         },
+        # Tamaño de fuente de las listas, POR VENTANA (pedido explícito:
+        # "el monitor suele estar lejos y cuesta leer con el tamaño
+        # actual... debe haber una selección de tamaño de fuente
+        # configurable por las 3 ventanas separadas") — Publicidad
+        # (Ventana 1), Emisión (Ventana 2, el mismo valor se aplica
+        # también al Auxiliar -- comparte el mismo widget de lista) y
+        # Explorador (Ventana 3, archivos + categorías). En puntos (pt),
+        # 8 es el tamaño de fábrica de siempre (gui/styles.py).
+        "tamano_fuente_ventanas": {
+            "publicidad": 8,
+            "emision": 8,
+            "explorador": 8,
+        },
     },
     # Comando HTH (Hora-Temperatura-Humedad) — coordenadas para la
     # consulta de clima en vivo (ver core/clima_meteo.py). Default:

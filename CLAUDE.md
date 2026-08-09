@@ -9847,6 +9847,149 @@ todo el resto.
     "caqui" que antes, y (4) — lo más importante — que los Pisadores de
     Ventana 2/Auxiliar y los ítems cortos de Ventana 1 ya no repiten
     el comienzo.
+100. ~~3 pedidos tras salir al aire con más operadores: copiar
+    archivos de dispositivos externos a la biblioteca, Copiar/Pegar
+    en Ventana 2/Auxiliar, tamaño de fuente configurable por
+    ventana~~ — pedido explícito, 3 puntos (a, c, d — sin "b" en la
+    numeración de Santiago) apenas empezaron a operar con más gente:
+    "ahi esta funcionando con los otros operadores y surgen los
+    primeros detalles que me piden".
+
+    **a) Archivo de un dispositivo externo (pendrive/celular)
+    arrastrado a la biblioteca — ahora se COPIA a la carpeta real de
+    la app, nunca queda dependiendo del dispositivo**: hasta esta
+    ronda, arrastrar un archivo desde un pendrive/celular montado a
+    Ventana 3 (alta individual o import masivo) guardaba la ruta TAL
+    CUAL — si el operador después desconectaba el dispositivo, el
+    material quedaba "perdido" (mismo síntoma que ya resolvían
+    "Ubicar"/"Vincular" de rondas anteriores, pero evitable de raíz en
+    vez de tener que reconciliarlo después). Nuevo
+    `VentanaExplorador._copiar_a_biblioteca(ruta_origen, item_categoria,
+    genero)` (`gui/ventana_explorador.py`): copia el archivo a la
+    carpeta REAL y administrada de la app —
+    `rutas.biblioteca_musical` si el género es "Musica", si no
+    `rutas.biblioteca_publicidad` — dentro de la subcarpeta que
+    refleja el camino de categorías (`ruta_de_categoria()`, ya
+    existente), sanitizando el nombre de archivo (reusa
+    `_sanitizar_nombre_archivo()` de `gui/dialogo_vincular_archivo.py`,
+    import local para no crear un ciclo) y resolviendo colisiones de
+    nombre con un sufijo numérico. Si el archivo YA estaba dentro de
+    la carpeta administrada (ej. reimportar algo que ya se había
+    copiado antes), no se copia de nuevo — se usa la ruta tal cual.
+    Fail-open ante cualquier `OSError` (disco lleno, permisos, el
+    pendrive se desconectó a mitad de copia): degrada devolviendo la
+    ruta ORIGINAL sin romper el alta, mismo criterio de siempre en
+    este proyecto ante operaciones de filesystem que pueden fallar.
+    Llamado desde `_dar_de_alta_archivo()` (alta individual, justo
+    después de confirmar el diálogo, antes de analizar el audio) y
+    desde `_importar_archivos_masivo()` (import en lote, por archivo,
+    antes de analizarlo) — el resto del flujo (análisis de silencio,
+    persistencia) sigue exactamente igual sobre la ruta ya copiada,
+    "haciendo el mismo proceso como si apretara el botón de agregar"
+    tal cual pidió Santiago.
+
+    **c) Copiar/Pegar en el menú contextual de Ventana 2 y Auxiliar
+    (pedido explícito, aclarado por Santiago: "no sería duplicar el
+    archivo físico sino duplicar el ítem")**: nuevo portapapeles
+    PROPIO de cada `PanelReproductor` (`self._portapapeles`, una lista
+    en memoria — Ventana 2 y el Auxiliar tienen cada uno el suyo, no
+    se comparten). Dos métodos nuevos:
+    - `_copiar_seleccionados(seleccionados)`: guarda los DATOS (nunca
+      la referencia al `QTreeWidgetItem`, que puede desaparecer) de
+      cada ítem de NIVEL SUPERIOR seleccionado — título/duración/
+      código/ruta/análisis de audio, y si tiene un Pisador anidado,
+      también sus datos (con el prefijo "↳ " y el sufijo " (Outro)"
+      pelados del título guardado, para poder re-crearlo limpio al
+      pegar vía `agregar_pisador()`).
+    - `_pegar_despues_de(item_referencia)`: inserta una copia NUEVA e
+      INDEPENDIENTE de cada ítem del portapapeles, en orden, arrancando
+      justo debajo de `item_referencia` (o al final de la lista si no
+      hay ninguna referencia) — el pegado nace SIEMPRE en estado
+      normal (nunca hereda rojo/verde del ítem que se copió, aunque
+      ese ítem estuviera sonando en el momento de copiarlo) y con su
+      propio Pisador re-creado si correspondía.
+    Menú contextual (`_mostrar_menu_contextual()`): "📋 Copiar" (solo
+    aparece si hay algún ítem de nivel superior en la selección) y
+    "📌 Pegar" (siempre visible, deshabilitado si el portapapeles está
+    vacío) — el guard de apertura del menú se amplió para que también
+    se abra con **nada seleccionado** si el portapapeles tiene algo
+    (así se puede pegar al final de la lista haciendo click derecho en
+    un espacio vacío). El punto de inserción al pegar es el ítem bajo
+    el cursor del click derecho (o el último seleccionado, si el click
+    fue sobre la selección existente) — mismo criterio ya usado por el
+    resto de las acciones del menú contextual de este panel.
+
+    **d) Tamaño de fuente configurable POR VENTANA (pedido explícito:
+    "el monitor suele estar lejos y cuesta leer con el tamaño
+    actual")**: nueva clave `apariencia.tamano_fuente_ventanas`
+    (`config/settings.py`, dict `{"publicidad": 8, "emision": 8,
+    "explorador": 8}` — 8pt es el tamaño de fábrica de siempre en
+    `gui/styles.py`, así una instalación existente no "salta" de
+    tamaño al actualizar) con 3 `QSpinBox` nuevos (rango 6-20pt) en
+    Configuración → Apariencia, debajo de los colores por género —
+    "Ventana 1 (Publicidad)", "Ventana 2 (Emisión / Auxiliar)" y
+    "Ventana 3 (Explorador)". **Decisión de diseño explicada, no
+    preguntada literalmente**: el Auxiliar comparte el valor de
+    Emisión (no tiene selector propio) porque reutiliza EXACTAMENTE el
+    mismo widget de lista (`PanelReproductor`/`tree_reproductor`) y no
+    es una de "las 3 ventanas" que Santiago nombró (Publicidad/
+    Emisión/Explorador) — mismo criterio ya usado en otras rondas para
+    tratar al Auxiliar como una extensión de Ventana 2, no una cuarta
+    ventana aparte. Nuevo `MainWindow._aplicar_tamano_fuente_ventanas()`:
+    aplica `setStyleSheet(f"font-size: {n}pt;")` directo sobre cada
+    `QTreeWidget` (`ventana_publicidad.tree`, `ventana_emision.tree`,
+    `ventana_explorador.tree_archivos`/`tree_categorias`, y
+    `_ventana_auxiliar.tree` si ya está abierto) — un stylesheet puesto
+    a nivel de INSTANCIA siempre gana sobre la hoja de estilos general
+    de la app para ese widget puntual, mismo mecanismo ya usado para
+    aplicar color en caliente. Se llama en 3 momentos: al construir
+    `MainWindow` (arranque, justo después de armar los paneles), desde
+    `_aplicar_configuracion_en_vivo()` (guardar Configuración lo aplica
+    YA, sin reiniciar — mismo patrón que nombre de emisora/tema/
+    volumen) y al crear el Auxiliar por primera vez (`abrir_ventana_
+    auxiliar()`, para que herede el tamaño de Emisión desde que se
+    abre, no recién en el próximo guardado de Configuración).
+
+    Probado con 4 scripts dedicados: **(a)** un script que simula
+    categorías falsas + config con rutas temporales, confirmando que
+    un archivo "externo" queda copiado dentro de la carpeta
+    administrada con el nombre sanitizado, que reimportar algo ya
+    copiado no lo duplica, y que colisiones de nombre se resuelven con
+    sufijo; **(c)** copiar un ítem con Pisador y pegarlo en una
+    posición intermedia (el original queda intacto, el pegado es un
+    `QTreeWidgetItem` nuevo, nace en estado normal aunque el original
+    estuviera "reproduciendo", el Pisador se re-crea), copiar selección
+    múltiple, pegar con portapapeles vacío como no-op seguro, y — a
+    nivel del propio menú contextual, interceptando `QMenu.addAction`
+    para capturar la instancia real y pisarle el `exec()` de INSTANCIA
+    (nunca de clase, ver la nota ya documentada sobre esta trampa de
+    testing más abajo) — confirmado que el menú se abre con el
+    portapapeles lleno aunque no haya nada seleccionado, y que elegir
+    "Pegar"/"Copiar" dispara la lógica correcta de punta a punta;
+    **(d)** round-trip de configuración (instalación nueva con los
+    defaults, una config VIEJA sin la clave nueva autocompletándose sin
+    romperse, guardar valores personalizados desde la UI real de
+    Configuración) + una `MainWindow` REAL construida en offscreen
+    confirmando que los 3 tamaños se aplican al arrancar, que el
+    Auxiliar hereda el de Emisión al abrirse por primera vez, y que
+    `_aplicar_configuracion_en_vivo()` reaplica los 3 en caliente
+    (incluido el Auxiliar ya abierto) — + `py_compile` de los 5
+    archivos tocados (`config/settings.py`, `gui/main_window.py`,
+    `gui/panel_reproductor.py`, `gui/ventana_configuracion.py`,
+    `gui/ventana_explorador.py`) + smoke test de arranque completo de
+    la app sin traceback. **No se pudo correr la suite de regresión de
+    scripts de rondas anteriores** (ninguno está commiteado al repo,
+    ver ronda 90). **Sigue sin poder confirmarse con hardware/uso real
+    con varios operadores a la vez**: falta que Santiago confirme (1)
+    que arrastrar un archivo desde un pendrive/celular ya deja el
+    material copiado en la PC (probarlo desconectando el dispositivo
+    después y confirmando que sigue sonando), (2) que Copiar/Pegar en
+    Ventana 2 y Auxiliar se siente natural para repetir una tanda en
+    otro punto de la lista sin tener que volver a arrastrarla desde el
+    Explorador, y (3) que los 3 tamaños de letra nuevos se leen bien de
+    lejos con su monitor real, y que 6-20pt es un rango suficiente para
+    lo que necesita (si hace falta más grande, es un simple cambio de
+    rango en el `QSpinBox`).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
