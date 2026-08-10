@@ -813,6 +813,11 @@ class MainWindow(QMainWindow):
         # exista) y lo mantiene actualizado de ahí en más.
         self.gestor_emision.al_cambiar_formato_activo = self.ventana_emision.establecer_sufijo_titulo
         self.ventana_emision.establecer_sufijo_titulo(self.gestor_emision.formato_musicalizador_activo())
+        # Pedido explícito (botón azul "HORA/TEMP"): si el operador lo
+        # aprieta y no hay nada para reproducir (falta un clip, o no
+        # hay datos de clima todavía), avisa en la barra de estado en
+        # vez de quedar en silencio sin ninguna señal.
+        self.gestor_emision.al_fallar_hth_manual = lambda mensaje: self.statusBar().showMessage(mensaje, 6000)
 
         self.gestor_publicidad = GestorPublicidad(
             self.ventana_publicidad,

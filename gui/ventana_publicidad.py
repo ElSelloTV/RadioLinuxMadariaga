@@ -522,7 +522,10 @@ class VentanaPublicidad(QWidget):
             self.lbl_estado.setText("Automático Activo")
             self.lbl_estado.setProperty("activo", "true")
         else:
-            self.btn_automatico.setText("MAN")
+            # Pedido explícito ("que diga expresamente MANUAL, no MAN"):
+            # el botón es lo bastante ancho para el texto completo con
+            # la fuente 9pt nueva de gui/styles.py.
+            self.btn_automatico.setText("MANUAL")
             self.btn_automatico.setProperty("activo", "false")
             self.lbl_estado.setText("Modo Manual")
             self.lbl_estado.setProperty("activo", "false")

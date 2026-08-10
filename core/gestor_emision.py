@@ -109,6 +109,7 @@ from core.audio_engine import MotorAudio
 from core.analizador_audio import volumen_ajustado_por_ganancia
 from core.musicalizador import generar_serie
 from core.buscador_duplicados import duracion_a_segundos
+from core.hth import resolver_comando_hth
 from config.settings import (
     cargar_playlist_emision, guardar_playlist_emision, registrar_error, registrar_evento,
     guardar_ultimo_fmt, obtener_ultimo_fmt,
@@ -215,6 +216,30 @@ class GestorPlaylist:
         # conoce nada de Qt/GUI, solo avisa.
         self.al_cambiar_formato_activo = None
 
+        # HORA/TEMPERATURA manual (pedido explícito, botón azul,
+        # exclusivo de Ventana 2): "sin fade ni nada, PISANDO lo que
+        # haya sonando" -- se corta el motor principal con detener()
+        # de verdad (nunca pausar(), ver la regla ya establecida en
+        # este archivo para handoffs que después vuelven "de cero") y
+        # los clips se reproducen uno atrás de otro en un motor
+        # DEDICADO, para no interferir con el estado de self.motor
+        # mientras suenan. Al agotarse la cola, retoma la reproducción
+        # normal desde el ítem armado (mismo camino que el botón
+        # Play), no reanuda a mitad de canción. Callback opcional
+        # (`al_fallar_hth_manual`) para avisar a la GUI si no había
+        # nada para reproducir (falta un clip, o no hay datos de
+        # clima) -- GestorPlaylist no muestra ningún diálogo por sí
+        # solo.
+        self.motor_anuncio_manual = MotorAudio(id_dispositivo)
+        self.motor_anuncio_manual.finalizo_item.connect(self._on_fin_clip_anuncio_manual)
+        self.motor_anuncio_manual.error_reproduccion.connect(
+            lambda mensaje: registrar_error(f"[HTH manual] {mensaje}")
+        )
+        self._cola_anuncio_manual = []
+        self._generacion_anuncio_manual = 0
+        self._generacion_clip_actual_anuncio_manual = 0
+        self.al_fallar_hth_manual = None
+
         self._conectar_motor(self.motor)
 
         self.motor_pisador.finalizo_item.connect(self._on_pisador_finalizado)
@@ -239,6 +264,8 @@ class GestorPlaylist:
         self.panel.item_doble_click.connect(self._on_doble_click)
         if hasattr(self.panel, "solicitud_buscar_posicion"):
             self.panel.solicitud_buscar_posicion.connect(self._buscar_posicion)
+        if hasattr(self.panel, "solicitud_hth_manual"):
+            self.panel.solicitud_hth_manual.connect(self.reproducir_hth_manual)
 
         if self.persistir:
             self._timer_guardado = QTimer()
@@ -365,6 +392,14 @@ class GestorPlaylist:
             self._marcar_siguiente_con_refill(candidata)
 
     def reproducir_actual(self):
+        # Si el operador aprieta Play mientras el anuncio manual de
+        # HORA/TEMPERATURA todavía está sonando, cancela ESE anuncio
+        # (motor dedicado + cola) antes de arrancar nada acá -- si no,
+        # el ítem armado empezaría a sonar ENCIMA de los clips que
+        # todavía están en curso. Si la cola ya estaba vacía (este
+        # mismo llamado puede venir del propio anuncio, al terminar),
+        # esto es un no-op.
+        self._cancelar_anuncio_manual_en_curso()
         # Pedido explícito: arrancar a sonar desde silencio corta a la
         # ventana "hermana" (Auxiliar <-> Emisión) — ANTES de tocar
         # nada acá, para que el corte y el arranque queden lo más
@@ -448,6 +483,7 @@ class GestorPlaylist:
         self._iniciar_crossfade(duracion_segundos=DURACION_FUNDIDO_MANUAL_SEGUNDOS)
 
     def _pausar(self):
+        self._cancelar_anuncio_manual_en_curso()
         registrar_evento(f"Pausa (Emisión persistir={self.persistir})")
         self.motor.pausar()
         if self._pisador_activo:
@@ -455,6 +491,7 @@ class GestorPlaylist:
         self._actualizar_indicador()
 
     def detener(self):
+        self._cancelar_anuncio_manual_en_curso()
         registrar_evento(f"Stop (Emisión persistir={self.persistir})")
         self.motor.detener()
         if self._motor_saliente_crossfade is not None:
@@ -501,6 +538,118 @@ class GestorPlaylist:
         if hasattr(self.panel, "set_stop_diferido_armado"):
             self.panel.set_stop_diferido_armado(False)
         registrar_evento(f"Stop diferido: desarmado (Emisión persistir={self.persistir})")
+
+    # ------------------------------------------------------------------
+    # Botón azul "HORA/TEMP" (pedido explícito, exclusivo de Ventana 2):
+    # reproduce el Comando HTH de HORA + el de TEMPERATURA, uno atrás
+    # del otro, cortando LIMPIO (sin fundido) lo que estuviera sonando.
+    #
+    # A diferencia del Comando HTH real de Ventana 1 (que concatena sus
+    # clips sobre el MISMO motor que conduce esa lista, ver
+    # core/playlist_manager.py:_reproducir_comando_hth), acá el motor
+    # principal (self.motor) NO se toca mientras suena el anuncio: se
+    # corta con detener() de verdad (nunca pausar() — misma regla ya
+    # establecida en este archivo para cualquier handoff que después
+    # tiene que "volver limpio") y los clips se reproducen en un motor
+    # DEDICADO (self.motor_anuncio_manual). Al agotarse la cola, se
+    # retoma la reproducción normal desde el ítem armado (mismo camino
+    # que el botón Play) — el ítem interrumpido arranca de nuevo desde
+    # el principio, nunca "a mitad de canción" (pedido explícito no
+    # cubre qué pasa después; se optó por reusar el camino de Play ya
+    # probado en vez de inventar un mecanismo nuevo de pausa/resume,
+    # con todo el riesgo de estados intermedios que eso implica).
+    # ------------------------------------------------------------------
+    def reproducir_hth_manual(self):
+        if self._ventana_explorador is None:
+            registrar_error("HTH manual: no hay acceso al Explorador, no se puede resolver la hora/temperatura.")
+            self._avisar_fallo_hth_manual("No se pudo acceder a la biblioteca del Explorador.")
+            return
+
+        clips = []
+        for parametro in ("HORA", "TEMPERATURA"):
+            resueltos = resolver_comando_hth(self._ventana_explorador, parametro)
+            if resueltos:
+                clips.extend(resueltos)
+
+        if not clips:
+            registrar_error(
+                "HTH manual: faltan los clips de voz de HORA/TEMPERATURA, o no hay datos "
+                "de clima disponibles -- no se reprodujo nada."
+            )
+            self._avisar_fallo_hth_manual(
+                "Faltan los clips de voz de HORA/TEMPERATURA, o no hay datos de clima "
+                "disponibles todavía -- no se reprodujo nada."
+            )
+            return
+
+        self._generacion_anuncio_manual += 1
+        generacion = self._generacion_anuncio_manual
+        registrar_evento(
+            f"HTH manual: reproduciendo {len(clips)} clip(s), cortando lo que estuviera "
+            f"sonando (Emisión persistir={self.persistir})"
+        )
+        # Corte limpio e INMEDIATO, sin fundido -- pedido explícito
+        # ("Debe salir limpia, sin fade ni nada. PISANDO lo que haya
+        # sonando").
+        self.motor.detener()
+        self._cola_anuncio_manual = list(clips)
+        self._reproducir_siguiente_clip_anuncio_manual(generacion)
+
+    def _avisar_fallo_hth_manual(self, mensaje: str):
+        if self.al_fallar_hth_manual is not None:
+            self.al_fallar_hth_manual(mensaje)
+
+    def _cancelar_anuncio_manual_en_curso(self):
+        """Aborta la cola/motor del anuncio manual si había uno en
+        curso -- llamado desde cualquier otro punto que tome control
+        real de la reproducción mientras tanto (Stop, Pausa, Play, Cut,
+        crossfade) para que ni el audio del anuncio siga sonando de
+        fondo ni su "resume" diferido pise lo que se está por hacer."""
+        if self._cola_anuncio_manual:
+            self._cola_anuncio_manual = []
+            self._generacion_anuncio_manual += 1
+            self.motor_anuncio_manual.detener()
+
+    def _reproducir_siguiente_clip_anuncio_manual(self, generacion: int):
+        if generacion != self._generacion_anuncio_manual:
+            return  # se disparó otro anuncio manual más nuevo, o algo lo canceló
+        if not self._cola_anuncio_manual:
+            # Terminó el anuncio -- retoma la reproducción normal.
+            self.reproducir_actual()
+            return
+        ruta = self._cola_anuncio_manual.pop(0)
+        # Mismo patrón que el Comando HTH real de Ventana 1 (bug real
+        # corregido ahí, ronda 44: "no quiero silencios al final...
+        # deben ser enganchados") -- se busca el registro completo por
+        # ruta para aplicar SU recorte de silencio/nivelado, así los
+        # clips de voz concatenados (HORA XX + MINUTOS XX, etc.) no
+        # dejan un hueco muerto entre uno y otro. Fail-open si el
+        # registro no aparece (nunca romper el anuncio por esto).
+        analisis = {}
+        registro = self._ventana_explorador.buscar_registro_por_ruta(ruta)
+        if registro:
+            analisis = registro
+        # Bug real evitado (mismo patrón que _generacion_pisador, ver
+        # nota al inicio del archivo): `motor_anuncio_manual.finalizo_item`
+        # es un slot SIN argumentos, disparado de forma asíncrona por
+        # libVLC -- si ahí se releyera `self._generacion_anuncio_manual`
+        # (el valor YA actualizado en ese instante) en vez del valor
+        # vigente CUANDO SE DESPACHÓ este clip, la comparación de
+        # generación de arriba sería un no-op inútil (siempre
+        # "coincide consigo misma"), dejando pasar un clip abandonado
+        # tras un Stop/Play/Cut de por medio. Se guarda acá, antes de
+        # arrancar el clip, y `_on_fin_clip_anuncio_manual()` lee ESTE
+        # valor capturado, no el corriente.
+        self._generacion_clip_actual_anuncio_manual = generacion
+        self.motor_anuncio_manual.reproducir(
+            ruta,
+            punto_inicio_ms=analisis.get("punto_inicio_ms") or 0,
+            punto_fin_ms=analisis.get("punto_fin_ms"),
+            ganancia_db=analisis.get("ganancia_db") or 0.0,
+        )
+
+    def _on_fin_clip_anuncio_manual(self):
+        self._reproducir_siguiente_clip_anuncio_manual(self._generacion_clip_actual_anuncio_manual)
 
     def ceder_control_al_terminar_item(self, callback):
         """Pedido explícito (bug real reportado con audio real):
@@ -640,6 +789,12 @@ class GestorPlaylist:
     def _iniciar_crossfade(self, duracion_segundos: float = None):
         if self._crossfade_en_curso:
             return  # defensivo: no superponer dos crossfades a la vez
+        # Defensivo (en la práctica no debería poder dispararse un
+        # crossfade con self.motor detenido durante el anuncio manual
+        # de HORA/TEMPERATURA, pero cancelar acá también evita que un
+        # "resume" diferido pise una transición que arrancó mientras
+        # tanto por otro camino).
+        self._cancelar_anuncio_manual_en_curso()
         duracion_segundos = self.duracion_fade_segundos if duracion_segundos is None else duracion_segundos
 
         total = self.panel.cantidad_items()
@@ -884,6 +1039,11 @@ class GestorPlaylist:
         self._avanzar(es_reintento=True)
 
     def _avanzar(self, es_reintento: bool):
+        # Cut (o cualquier otro disparador de avance) mientras el
+        # anuncio manual de HORA/TEMPERATURA está sonando: cancelarlo
+        # antes de tocar nada más, para que no siga sonando de fondo
+        # ni su "resume" diferido pise el avance que se está por hacer.
+        self._cancelar_anuncio_manual_en_curso()
         if self._ceder_control_armado:
             # Pedido explícito: el ítem que estaba sonando llegó a su
             # fin NATURAL — recién ACÁ se libera Emisión de verdad

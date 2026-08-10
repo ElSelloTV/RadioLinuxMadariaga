@@ -10204,6 +10204,128 @@ derecha (no solo sobre la columna de categorías) y que el diálogo de
 clasificación se abre solo, individual o masivo según cuántos archivos
 soltó de una vez.
 
+102. ~~Botón azul "HORA/TEMP" manual en Ventana 2 (corte limpio, sin
+    fade, pisando lo que suene) + botón AUTOMÁTICO con texto explícito
+    y color distinguible del Stop~~ — dos pedidos:
+
+    **A) Botón azul "HORA/TEMP" — reproduce manualmente HORA +
+    TEMPERATURA, cortando limpio lo que esté sonando**: pedido
+    explícito, "un botón color azul en los comandos de la ventana 2,
+    donde pueda reproducirse la hora y la temperatura de manera
+    manual. Debe salir limpia, sin fade ni nada. PISANDO lo que haya
+    sonando." Nuevo botón "🕐 HORA/TEMP" (`objectName btnHthManual`,
+    azul `#2980b9` — el MISMO tono que ya usa `COLOR_COMANDO` para los
+    Comandos FMT/HTH del árbol de Ventana 1, consistente con ese
+    significado ya establecido), 4to botón de la fila inferior de
+    transporte de `PanelReproductor` (Pausa/Cut/Stop diferido/HORA-TEMP)
+    — exclusivo de Ventana 2 vía un parámetro nuevo
+    `permitir_hth_manual: bool`, mismo criterio ya usado para
+    `permitir_ciclo_fmt` (la Auxiliar nunca lo recibe, ni siquiera
+    re-exporta la señal `solicitud_hth_manual` en `VentanaAuxiliar`).
+
+    **Motor** (`core/gestor_emision.py:reproducir_hth_manual()`):
+    resuelve los clips de HORA y de TEMPERATURA por separado
+    (`core.hth.resolver_comando_hth`, el MISMO motor puro ya usado por
+    el Comando HTH real de Ventana 1 — "todo o nada" por comando: si
+    HORA falla se saltea solo ESE, si TEMPERATURA falla se saltea solo
+    ESA, si los DOS fallan no se reproduce nada) y los concatena (HORA
+    primero, TEMPERATURA después). **Decisión de diseño explicada, no
+    trivial**: en vez de PAUSAR el motor principal (que resumiría
+    exactamente en la posición donde se cortó), se usa `detener()` de
+    verdad — misma regla YA establecida en este archivo para cualquier
+    handoff que después tiene que "volver limpio" (ver "Cosas ya
+    resueltas" más abajo, "Nunca usar PAUSA para un handoff...") — y al
+    agotarse la cola de clips se llama a `reproducir_actual()` (el
+    MISMO camino ya probado del botón Play), así el ítem interrumpido
+    arranca de nuevo desde el principio en vez de reanudar a mitad de
+    canción con un mecanismo de pausa nuevo y frágil. Los clips suenan
+    en un motor `MotorAudio` DEDICADO (`self.motor_anuncio_manual`,
+    nunca el principal ni el del Pisador) — el corte del motor
+    principal es inmediato (`motor.detener()`, sin ninguna rampa de
+    volumen), y entre un clip y el siguiente tampoco hay ningún
+    fundido (mismo criterio "sin fade ni nada" del pedido).
+
+    **Bug real de generación evitado ANTES de llegar a Santiago,
+    encontrado escribiendo el test** (mismo patrón `_generacion_pisador`
+    ya documentado en este archivo, pero con una variante nueva): el
+    slot `motor_anuncio_manual.finalizo_item` no recibe ningún
+    argumento — si `_on_fin_clip_anuncio_manual()` releía
+    `self._generacion_anuncio_manual` (el valor YA actualizado en ese
+    instante) para pasárselo de vuelta a
+    `_reproducir_siguiente_clip_anuncio_manual()`, la comparación de
+    generación quedaba comparando un valor "contra sí mismo" — SIEMPRE
+    coincidía, así que la protección contra interrupciones (Stop/Play/
+    Cut mientras el anuncio está sonando) no protegía nada: un clip
+    abandonado por un Stop de por medio igual seguía la cola vieja o
+    reanudaba de más. Corregido guardando la generación VIGENTE en un
+    atributo (`self._generacion_clip_actual_anuncio_manual`) justo
+    ANTES de arrancar cada clip — `_on_fin_clip_anuncio_manual()` lee
+    ESE valor capturado (el que tenía el clip que de verdad terminó),
+    nunca el corriente. `_cancelar_anuncio_manual_en_curso()` (que
+    vacía la cola, bumpea la generación y detiene
+    `motor_anuncio_manual`) se llama al INICIO de `detener()`,
+    `_pausar()`, `reproducir_actual()`, `_avanzar()` e
+    `_iniciar_crossfade()` — cualquier otra acción del operador que
+    tome control real de la reproducción mientras el anuncio suena lo
+    cancela de raíz, sin dejarlo sonando de fondo ni con un "resume"
+    diferido que pise lo que se acaba de hacer.
+
+    Si no hay ningún clip resoluble (falta uno de voz, o no hay datos
+    de clima todavía), NO se toca el motor principal para nada (nunca
+    interrumpe si no hay nada para poner en su lugar) y se avisa por
+    un callback nuevo (`al_fallar_hth_manual`, conectado en
+    `MainWindow` a un mensaje de 6s en la barra de estado) — mismo
+    criterio de siempre, GestorPlaylist no muestra diálogos por sí
+    solo.
+
+    **B) Botón AUTOMÁTICO: texto explícito + color distinguible de
+    Stop**: pedido explícito, "que diga expresamente 'AUTO' y
+    'MANUAL'... más distinguible en color que el botón de Stop, que se
+    ubique mejor a simple vista" (el único botón AUTOMÁTICO de la app
+    vive en Ventana 1/Publicidad, no "Ventana 3" como decía el pedido
+    — corregido sin comentarios, es el mismo botón de siempre). El
+    texto OFF pasó de la abreviatura "MAN" a "MANUAL" completo (ON
+    sigue siendo "AUTO", ya era explícito). **Causa real del problema
+    de color**: antes el botón era ROJO en los DOS estados — relleno
+    rojo (`#e74c3c`) cuando ON, borde rojo (`COLOR_REPRODUCIENDO`,
+    `#c0392b`) cuando OFF — al lado del botón Stop (también rojo,
+    `#922b21`), desde lejos ("el monitor suele estar lejos", ya
+    mencionado en una ronda mucho anterior sobre tamaño de fuente) las
+    dos lecturas se confundían fácil, "dos botones rojos". Recoloreado
+    a una familia dorado/ámbar EXCLUSIVA de este botón (`COLOR_AUTOMATICO_ON
+    = "#f1c40f"` con borde `#b7950b`, `COLOR_AUTOMATICO_OFF = "#4a4a4a"`
+    con borde `#8d6608`) — nunca rojo en ningún estado, así que ya no
+    compite visualmente ni con Stop ni con el rojo de "reproduciendo".
+    Fuente subida de 8pt (heredado de `btnTransporte`) a 9pt bold
+    específico de este botón, para que pese un poco más a simple vista
+    sin tener que moverlo de lugar (sigue emparejado con Stop en la
+    fila superior, posición ya establecida en una ronda anterior a
+    pedido explícito "más intuitivo y a la vista").
+
+    Probado con `test_boton_hth_manual_y_automatico.py` (nuevo,
+    dedicado): el botón dice "AUTO"/"MANUAL" sin abreviar; los 4
+    colores nuevos del AUTOMÁTICO (fill+borde de los 2 estados)
+    confirmados SIN ningún tono rojo compartido con Stop/COLOR_REPRODUCIENDO;
+    el botón HORA/TEMP existe solo en Ventana 2, la Auxiliar ni
+    siquiera re-exporta la señal; apretar el botón corta el motor
+    principal YA (sin fade), encadena HORA→MINUTOS→TEMPERATURA en el
+    motor dedicado sin volver a tocar el principal, y al agotar la
+    cola retoma con `reproducir_actual()`; un Stop a mitad del anuncio
+    invalida la cola vieja de verdad (confirmado con una señal de fin
+    "tardía" simulando la condición de carrera real que motivó el fix
+    de generación); sin clips resolubles no corta nada y avisa por el
+    callback — + `py_compile` de los 6 archivos tocados + smoke test
+    de arranque completo sin traceback. **Sigue sin poder probarse con
+    audio/VLC real** (como todo lo que toca `core/audio_engine.py` —
+    el sandbox no tiene libVLC): falta que Santiago confirme (1) que
+    el botón AUTOMÁTICO ahora se distingue de un vistazo del Stop en
+    su pantalla real, y (2) que apretar "HORA/TEMP" corta de verdad lo
+    que estuviera sonando sin ningún fundido, se escucha el anuncio
+    completo, y el tema interrumpido retoma normal al terminar (desde
+    el principio, no a mitad — comportamiento elegido a propósito, ver
+    la explicación de diseño arriba, avisar si en cambio esperaba que
+    resumiera exactamente donde se cortó).
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
@@ -10219,6 +10341,19 @@ soltó de una vez.
   después hay que "empezar de cero" (no reanudar la MISMA posición),
   usar SIEMPRE `detener()` de verdad, nunca `pausar()` — aunque
   pausar parezca más elegante/menos disruptivo a primera vista.
+- **Un guard de "generación" solo protege si el valor comparado se
+  CAPTURA en el momento del despacho, no si se relee "en vivo" dentro
+  del propio callback asíncrono** (bug evitado antes de llegar a
+  Santiago, ronda 102, botón HORA/TEMP manual): con un slot SIN
+  argumentos disparado por una señal asíncrona (ej.
+  `MotorAudio.finalizo_item`), pasarle `self._generacion_actual` (el
+  valor YA actualizado en ese instante) para comparar contra sí mismo
+  más adelante es un no-op — SIEMPRE va a coincidir. El patrón
+  correcto (ya usado antes para `_generacion_pisador`) es guardar la
+  generación VIGENTE en un atributo aparte justo ANTES de despachar la
+  operación async (ej. `self._generacion_clip_actual = generacion`
+  antes de `motor.reproducir(...)`), y que el callback lea ESE valor
+  capturado, nunca el corriente.
 - El bug de Drag&Drop que no funcionaba (ver regla de oro arriba).
 - **`MotorAudio.finalizo_item` podía emitirse DOS VECES para el mismo
   fin de reproducción** (bug real, ronda 96, "en punto en punto" del
