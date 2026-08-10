@@ -1268,13 +1268,54 @@ class VentanaExplorador(QWidget):
     # un solo diálogo de categoría+género para todo el lote.
     # ------------------------------------------------------------------
     def _agregar_archivos(self):
-        rutas, _ = QFileDialog.getOpenFileNames(
+        """Pedido explícito, con video real del operador mostrando el
+        intento fallido: "abrí la ventana de abajo... navegá hasta el
+        archivo y arrastrá a la categoría que ya tiene seleccionada".
+        Antes esto usaba `QFileDialog.getOpenFileNames()` -- la versión
+        BLOQUEANTE/MODAL del diálogo. El video mostró al operador
+        arrastrando un archivo DESDE ese mismo diálogo hacia la lista
+        de categorías de atrás -- el cursor mostraba "prohibido" no
+        porque el drop target estuviera mal (`tree_categorias`/
+        `tree_archivos` ya aceptan drops externos, ronda anterior),
+        sino porque un diálogo MODAL bloquea CUALQUIER entrega de
+        eventos a la ventana detrás mientras está abierto, incluido un
+        drag&drop -- el drag se veía arrancar bien (Qt sí arma el
+        drag desde la vista interna del diálogo), pero nunca llegaba a
+        destino. Reemplazado por una instancia NO MODAL del MISMO
+        diálogo (misma navegación, mismas columnas, ningún cambio para
+        quien sigue eligiendo con un click + "Open" de toda la vida) --
+        con el diálogo ya no bloqueando nada, el operador puede dejarlo
+        abierto y arrastrar uno o varios archivos directo desde ahí
+        hacia la categoría ya elegida a la izquierda, o hacia la lista
+        de archivos de la derecha (mismo destino: la categoría actual)."""
+        dialogo_existente = getattr(self, "_dialogo_agregar_archivos", None)
+        if dialogo_existente is not None and dialogo_existente.isVisible():
+            dialogo_existente.raise_()
+            dialogo_existente.activateWindow()
+            return
+
+        dialogo = QFileDialog(
             self, "Agregar archivos de audio", os.path.expanduser("~"),
             "Audio (*.mp3 *.wav *.mp4 *.m4a)",
         )
-        if not rutas:
-            return
+        dialogo.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        dialogo.setWindowModality(Qt.WindowModality.NonModal)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.filesSelected.connect(self._on_archivos_elegidos_para_agregar)
+        # Referencia guardada para que Python no lo recolecte mientras
+        # está abierto (ya no es un .exec() bloqueante que lo mantenga
+        # vivo por sí solo) y para el guard de arriba (no abrir dos a
+        # la vez).
+        self._dialogo_agregar_archivos = dialogo
+        dialogo.show()
 
+    def _on_archivos_elegidos_para_agregar(self, rutas):
+        """Se dispara al confirmar el diálogo NO modal de "＋ Agregar"
+        con el click clásico en "Open" -- el arrastre directo desde
+        ese mismo diálogo hacia la categoría (ver docstring de
+        `_agregar_archivos`) NO pasa por acá, va directo a
+        `_on_archivos_soltados_en_categoria`/`_on_archivos_soltados_en_lista`
+        vía los drop targets ya existentes."""
         rutas_validas = [ruta for ruta in rutas if ruta.lower().endswith(EXTENSIONES_SOPORTADAS)]
         if not rutas_validas:
             return
