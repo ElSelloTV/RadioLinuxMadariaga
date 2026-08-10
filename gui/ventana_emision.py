@@ -29,6 +29,7 @@ class VentanaEmision(QWidget):
     solicitud_agregar_pisador = Signal(int)
     solicitud_buscar_posicion = Signal(int)
     solicitud_agregar_ciclo_fmt = Signal()
+    solicitud_hth_manual = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -39,8 +40,12 @@ class VentanaEmision(QWidget):
         # cantidad de tiempo de programación aleatoria FMT"): exclusivo
         # de Ventana 2 -- permitir_ciclo_fmt=True (la Auxiliar nunca lo
         # recibe, mismo criterio que FMT/Musicalizador en general).
+        # Pedido explícito posterior ("un botón azul... hora y
+        # temperatura de manera manual"): mismo criterio de exclusividad,
+        # permitir_hth_manual=True.
         self.panel = PanelReproductor(
             "EMISIÓN", mostrar_barra_progreso=True, permitir_ciclo_fmt=True,
+            permitir_hth_manual=True,
         )
         layout.addWidget(self.panel)
 
@@ -56,6 +61,7 @@ class VentanaEmision(QWidget):
         self.panel.solicitud_agregar_pisador.connect(self.solicitud_agregar_pisador.emit)
         self.panel.solicitud_buscar_posicion.connect(self.solicitud_buscar_posicion.emit)
         self.panel.solicitud_agregar_ciclo_fmt.connect(self.solicitud_agregar_ciclo_fmt.emit)
+        self.panel.solicitud_hth_manual.connect(self.solicitud_hth_manual.emit)
 
     # ------------------------------------------------------------------
     # Delegación: API pública usada por core/playlist_manager.py

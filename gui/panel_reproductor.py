@@ -74,10 +74,12 @@ class PanelReproductor(QWidget):
     solicitud_agregar_item_especifico = Signal()  # pedido explícito: menú contextual del Auxiliar
     solicitud_agregar_item_aleatorio = Signal()   # ídem, elegir un ítem al azar de una categoría
     solicitud_agregar_ciclo_fmt = Signal()        # pedido explícito: menú contextual, solo Ventana 2 (Emisión)
+    solicitud_hth_manual = Signal()               # pedido explícito: botón azul, solo Ventana 2 (Emisión)
 
     def __init__(self, titulo_panel: str,
                  mostrar_barra_progreso: bool = False, acepta_desde_publicidad: bool = False,
-                 permitir_agregar_item: bool = False, permitir_ciclo_fmt: bool = False, parent=None):
+                 permitir_agregar_item: bool = False, permitir_ciclo_fmt: bool = False,
+                 permitir_hth_manual: bool = False, parent=None):
         super().__init__(parent)
         self._item_reproduciendo = None
         self._item_siguiente = None
@@ -98,6 +100,12 @@ class PanelReproductor(QWidget):
         # (el FMT/Musicalizador es un concepto exclusivo de Emisión,
         # nunca del Auxiliar).
         self._permitir_ciclo_fmt = permitir_ciclo_fmt
+        # Pedido explícito ("un botón color azul en los comandos de la
+        # ventana 2, donde pueda reproducirse la hora y la temperatura
+        # de manera manual... pisando lo que haya sonando"): igual
+        # criterio que permitir_ciclo_fmt -- exclusivo de Ventana 2, la
+        # Auxiliar nunca lo prende.
+        self._permitir_hth_manual = permitir_hth_manual
         self._construir_ui(titulo_panel, mostrar_barra_progreso, acepta_desde_publicidad)
 
     # ------------------------------------------------------------------
@@ -243,6 +251,23 @@ class PanelReproductor(QWidget):
         fila_inferior.addWidget(self.btn_pausa)
         fila_inferior.addWidget(self.btn_cut)
         fila_inferior.addWidget(self.btn_stop_diferido)
+        # Pedido explícito ("un botón color azul en los comandos de la
+        # ventana 2... reproducirse la hora y la temperatura de manera
+        # manual. Debe salir limpia, sin fade ni nada. PISANDO lo que
+        # haya sonando"): 4to botón de esta fila, exclusivo de Ventana
+        # 2 (mismo criterio que permitir_ciclo_fmt) — la lógica real
+        # de resolver los clips y cortar/reanudar vive en
+        # core/gestor_emision.py:reproducir_hth_manual.
+        if self._permitir_hth_manual:
+            self.btn_hth_manual = QPushButton("🕐 HORA/TEMP")
+            self.btn_hth_manual.setObjectName("btnHthManual")
+            self.btn_hth_manual.setProperty("class", "btnTransporte")
+            self.btn_hth_manual.setToolTip(
+                "Reproduce HORA y TEMPERATURA ahora mismo, cortando de "
+                "inmediato lo que esté sonando (sin fundido)."
+            )
+            self.btn_hth_manual.clicked.connect(self.solicitud_hth_manual.emit)
+            fila_inferior.addWidget(self.btn_hth_manual)
         grilla.addLayout(fila_inferior)
 
         barra_botones.addLayout(grilla)

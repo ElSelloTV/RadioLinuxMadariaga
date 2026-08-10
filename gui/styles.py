@@ -30,8 +30,18 @@ PALETA_CLARA y aplicados vía _generar_qss(paleta).
 # filas rojo/verde).
 COLOR_REPRODUCIENDO = "#c0392b"   # Rojo: evento en emisión
 COLOR_SIGUIENTE = "#27ae60"       # Verde: próximo evento
-COLOR_AUTOMATICO_ON = "#e74c3c"
-COLOR_AUTOMATICO_OFF = "#555555"
+# Pedido explícito ("que sea más distinguible en color que el botón de
+# Stop, que se ubique mejor a simple vista"): el botón AUTOMÁTICO
+# antes era rojo (ON) o gris con borde ROJO (OFF) — al lado del botón
+# Stop (también rojo, #922b21), desde lejos las dos lecturas se
+# confundían fácil ("dos botones rojos"). Recoloreado a una familia de
+# dorado/ámbar exclusiva de este botón, que no se usa en NINGÚN otro
+# botón/estado de la app — se distingue de un vistazo tanto de Stop
+# (rojo) como de "reproduciendo" (rojo) y "en cola" (verde).
+COLOR_AUTOMATICO_ON = "#f1c40f"
+COLOR_AUTOMATICO_ON_BORDE = "#b7950b"
+COLOR_AUTOMATICO_OFF = "#4a4a4a"
+COLOR_AUTOMATICO_OFF_BORDE = "#8d6608"
 COLOR_SELECCION = "#5dade2"       # Celeste: cursor de selección (Dinesat), nunca reemplaza rojo/verde
 COLOR_ARMADO = "#e67e22"          # Naranja: acción diferida armada (Stop diferido)
 
@@ -379,6 +389,21 @@ QPushButton#btnCut {{
 }}
 QPushButton#btnCut:hover {{ background-color: #46617a; }}
 
+/* Botón "HORA/TEMP" manual (pedido explícito, exclusivo de Ventana 2:
+   "un botón color azul en los comandos... reproducirse la hora y la
+   temperatura de manera manual... sin fade ni nada, pisando lo que
+   haya sonando"): mismo azul (#2980b9) que ya usa COLOR_COMANDO para
+   los Comandos FMT/HTH en el árbol de Ventana 1 -- hardcodeado acá en
+   vez de referenciar la constante porque este bloque QSS se genera
+   ANTES de que COLOR_COMANDO se defina más abajo en el archivo (ver
+   core/gestor_emision.py:reproducir_hth_manual para la lógica real). */
+QPushButton#btnHthManual {{
+    background-color: #2980b9;
+    color: white;
+    font-weight: bold;
+}}
+QPushButton#btnHthManual:hover {{ background-color: #3498db; }}
+
 /* Stop diferido: deja terminar el ítem actual y recién ahí frena
    todo — queda "armado" (naranja) hasta que se ejecute o se
    desarme con un segundo click, mismo patrón visual que el botón
@@ -405,20 +430,30 @@ QLabel#lblNombreEstacion {{
     letter-spacing: 1px;
 }}
 
-/* Contorno rojo PERMANENTE (esté ON u OFF) para ubicarlo mejor de un
-   vistazo — pedido explícito. El relleno rojo + cambio de texto al
-   activarlo NO cambia, sigue siendo la única señal de estado real. */
+/* Contorno PERMANENTE (esté ON u OFF) para ubicarlo mejor de un
+   vistazo — pedido explícito. Pedido explícito posterior ("que sea
+   más distinguible en color que el botón de Stop, que se ubique
+   mejor a simple vista"): antes era rojo en los dos estados (relleno
+   rojo cuando ON, borde rojo cuando OFF) — al lado del Stop (también
+   rojo), leído desde lejos las dos lecturas se confundían. Ahora
+   dorado/ámbar en los DOS estados (nunca rojo), fuente un poco más
+   grande que el resto de `btnTransporte` para que pese más a simple
+   vista sin tener que mover el botón de lugar — el relleno sólido
+   ON/gris OFF sigue siendo la única señal de estado real, el color
+   dorado del contorno es solo para ubicarlo. */
 QPushButton#btnAutomatico[activo="true"] {{
     background-color: {COLOR_AUTOMATICO_ON};
-    border: 2px solid #ff6b5b;
+    border: 2px solid {COLOR_AUTOMATICO_ON_BORDE};
     font-weight: bold;
-    color: white;
+    font-size: 9pt;
+    color: black;
 }}
 QPushButton#btnAutomatico[activo="false"] {{
     background-color: {COLOR_AUTOMATICO_OFF};
-    border: 2px solid {COLOR_REPRODUCIENDO};
+    border: 2px solid {COLOR_AUTOMATICO_OFF_BORDE};
     font-weight: bold;
-    color: #cccccc;
+    font-size: 9pt;
+    color: #dddddd;
 }}
 
 /* ---------- Contadores de tiempo (estilo display) ----------
