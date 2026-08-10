@@ -10326,6 +10326,74 @@ soltó de una vez.
     la explicación de diseño arriba, avisar si en cambio esperaba que
     resumiera exactamente donde se cortó).
 
+103. ~~LA CAUSA REAL de "no se puede arrastrar y soltar para cargar
+    ítems" (ronda 101/102 no alcanzaba): el diálogo "＋ Agregar" es
+    MODAL, bloquea el drag&drop hacia la ventana de atrás~~ — Santiago
+    mandó un VIDEO REAL del operador ("a ver si con un video del
+    operador entendés de una vez") mostrando el intento exacto: abre
+    "＋ Agregar" (el diálogo nativo `QFileDialog.getOpenFileNames`),
+    navega hasta la carpeta del archivo (`/home/radio/Escritorio/
+    PUBLICIDADES DANIEL`), y trata de ARRASTRAR un archivo (`LOS
+    AMIGOS LOCUTOR.mp3`) directo desde la lista del propio diálogo
+    hacia la categoría ya seleccionada, visible detrás — el cursor
+    muestra el ícono de "prohibido" (⊘) sobre el panel de destino.
+
+    **Diagnóstico correcto, confirmado cuadro por cuadro del video**
+    (`ffmpeg` instalado en el sandbox para extraer frames a 2fps y
+    poder mirarlo, ya que el entorno no tenía reproductor de video):
+    el DRAG se ve arrancar bien — Qt arma el pixmap de arrastre
+    ("LOS AMIGOS LOCUTOR.mp3...") y lo sigue con el cursor — el
+    problema NO es que el drop target esté mal armado (`tree_archivos`/
+    `tree_categorias` YA aceptan drops externos desde la ronda
+    anterior, 101) — es que **un diálogo MODAL bloquea CUALQUIER
+    entrega de eventos a la ventana padre mientras está abierto**,
+    incluido un evento de drag&drop, sin importar qué tan bien esté
+    armado el drop target del otro lado — la ronda 101 solucionó el
+    problema equivocado (asumió que el operador arrastraría desde un
+    gestor de archivos EXTERNO ya abierto aparte, cuando en la
+    práctica siempre usa el propio botón "＋ Agregar" de la app,
+    que hasta ahora abría un diálogo bloqueante).
+
+    **Corregido de raíz**: `VentanaExplorador._agregar_archivos()`
+    (`gui/ventana_explorador.py`) reemplazó la llamada estática
+    bloqueante `QFileDialog.getOpenFileNames()` por una INSTANCIA
+    propia de `QFileDialog` con `setWindowModality(Qt.WindowModality.
+    NonModal)` + `.show()` en vez de `.exec()` — MISMO diálogo, misma
+    navegación, mismas columnas ("Look in:"/"Computer"/"radio",
+    idéntico a lo que se ve en el video), CERO cambio visual para
+    quien sigue eligiendo un archivo con un click + "Open" de toda la
+    vida (ese flujo se conserva intacto, ahora disparado por la señal
+    `filesSelected` en vez de por el valor de retorno de una llamada
+    bloqueante, en `_on_archivos_elegidos_para_agregar()`). Con el
+    diálogo ya NO bloqueante, el operador puede dejarlo abierto y
+    arrastrar uno o varios archivos directo desde ahí hacia la
+    categoría ya elegida a la izquierda, o hacia la lista de archivos
+    de la derecha (mismo destino de siempre: la categoría actual) —
+    reusa el 100% del mecanismo de drop ya construido en la ronda
+    101, sin tocarlo. Guard nuevo (`self._dialogo_agregar_archivos`,
+    con `WA_DeleteOnClose`): si el operador clickea "＋ Agregar" de
+    nuevo mientras el diálogo ya está abierto, no se abre uno
+    duplicado — se trae el existente al frente (`raise_()`/
+    `activateWindow()`).
+
+    Probado con `test_dialogo_agregar_no_modal.py` (nuevo, dedicado):
+    el diálogo construido es `Qt.WindowModality.NonModal` y queda
+    visible sin bloquear; clickear "＋ Agregar" con uno ya abierto no
+    crea un segundo; elegir 1 archivo vía `filesSelected` (simulando
+    el click en "Open") sigue disparando el alta individual sobre la
+    categoría actual, elegir 2+ sigue disparando el import masivo —
+    exactamente el mismo comportamiento de siempre; cerrar el diálogo
+    y volver a abrir "＋ Agregar" crea uno nuevo sin problema — +
+    `py_compile` + smoke test de arranque completo sin traceback.
+    **Sigue sin poder confirmarse con hardware/OS real** (el sandbox
+    no tiene forma de simular un drag&drop real entre ventanas del
+    sistema operativo): falta que Santiago repita EXACTAMENTE la
+    prueba del video — abrir "＋ Agregar", navegar hasta el archivo, y
+    arrastrarlo hacia la categoría ya seleccionada — y confirme que
+    esta vez el cursor ya no muestra "prohibido" y el archivo se
+    agrega con normalidad (abriendo el diálogo de clasificación de
+    siempre, individual o masivo según cuántos arrastró).
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
@@ -10355,6 +10423,20 @@ soltó de una vez.
   antes de `motor.reproducir(...)`), y que el callback lea ESE valor
   capturado, nunca el corriente.
 - El bug de Drag&Drop que no funcionaba (ver regla de oro arriba).
+- **Un diálogo MODAL bloquea CUALQUIER entrega de eventos a la ventana
+  detrás mientras está abierto — incluido un drag&drop, sin importar
+  qué tan bien esté armado el drop target del otro lado** (bug real
+  con video, ronda 103): `QFileDialog.getOpenFileNames()` (la versión
+  estática/bloqueante) arma un diálogo modal — un drag iniciado DESDE
+  ese mismo diálogo hacia la ventana padre (detrás) siempre muestra
+  el cursor "prohibido", aunque el drop target de destino ya acepte
+  drops externos perfectamente. **Regla**: si un operador reporta que
+  "no puede arrastrar" hacia una ventana que tiene un diálogo modal
+  propio abierto encima (de la MISMA app u otra), sospechar primero de
+  la modalidad antes que del código del drop target — la solución
+  suele ser volver ese diálogo puntual `Qt.WindowModality.NonModal`
+  (`.show()` + señal `filesSelected`, en vez de `.exec()`/la llamada
+  estática bloqueante), no tocar nada del lado que recibe el drop.
 - **`MotorAudio.finalizo_item` podía emitirse DOS VECES para el mismo
   fin de reproducción** (bug real, ronda 96, "en punto en punto" del
   HTH): dos orígenes independientes detectan "esta reproducción
