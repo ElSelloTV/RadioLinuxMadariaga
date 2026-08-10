@@ -535,9 +535,20 @@ class GestorPlaylist:
         si varios ítems rotos caían seguidos, `reintentos_maximos`
         se agotaba y `_on_error()` cortaba TODO el aire. Marca/desmarca
         la X roja de error en el mismo momento en que se evalúa cada
-        fila — igual que V1, sincronizado en vivo."""
+        fila — igual que V1, sincronizado en vivo.
+
+        Ronda posterior (mismo criterio, portado de V1 -- pedido
+        explícito ahí: "si elimino ítem de la ventana 3, no debe
+        reproducirse igual"): el archivo puede seguir existiendo en
+        disco aunque el operador haya sacado su REGISTRO del
+        Explorador — `os.path.exists()` solo no alcanza, también hace
+        falta que la ruta siga en la biblioteca en vivo (cacheado, ver
+        VentanaExplorador.ruta_existe_en_biblioteca())."""
         ruta = self.panel.ruta_en_fila(fila)
         if not ruta or not os.path.exists(ruta):
+            self.panel.marcar_item_con_error_en_fila(fila, True)
+            return False
+        if self._ventana_explorador is not None and not self._ventana_explorador.ruta_existe_en_biblioteca(ruta):
             self.panel.marcar_item_con_error_en_fila(fila, True)
             return False
         self.panel.marcar_item_con_error_en_fila(fila, False)

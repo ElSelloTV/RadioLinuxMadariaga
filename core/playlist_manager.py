@@ -342,7 +342,23 @@ class GestorPublicidad:
         ruta = item.data(0, Qt.ItemDataRole.UserRole)
         if not ruta:
             return False
-        if not os.path.exists(ruta):
+        # Pedido explícito ("si elimino ítem de la ventana 3, la
+        # ventana 1 no debe reproducir el audio... se quitó del
+        # explorador un archivo que estaba programado, y llegado la
+        # hora lo reprodujo igual"): el archivo físico puede seguir
+        # existiendo en disco aunque el operador haya sacado su
+        # REGISTRO de la biblioteca (Ventana 3) — sacar el registro no
+        # borra necesariamente el archivo. `os.path.exists()` solo no
+        # alcanza; también hace falta que la ruta siga registrada en
+        # la biblioteca en vivo (ver ruta_existe_en_biblioteca(),
+        # cacheada — nunca recorre toda la biblioteca en cada chequeo).
+        # Fail-open sin `_ventana_explorador` (nunca debería faltar en
+        # producción, pero no debe romper nada si faltara).
+        en_biblioteca = (
+            self._ventana_explorador is None
+            or self._ventana_explorador.ruta_existe_en_biblioteca(ruta)
+        )
+        if not os.path.exists(ruta) or not en_biblioteca:
             self.ventana.marcar_item_con_error(item, True)
             return False
         self.ventana.marcar_item_con_error(item, False)
@@ -1180,11 +1196,14 @@ class SchedulerAutomatico:
       silencio — pedido explícito "como debe sonar toda estación de
       radio". Al disparar un bloque, Emisión baja en fade mientras el
       bloque ya está sonando encima; al volver, Emisión sube en fade.
-    - Al INICIAR el programa (punto a del pedido): reproduce solo el
-      bloque VIGENTE — el de hora más tardía que ya pasó ("el último
-      bloque menor más cercano a la actual"), nunca el primero del
-      árbol. Si no hay bloque vigente y el modo AUTOMÁTICO está activo,
-      arranca directamente Emisión.
+    - Al INICIAR el programa, con Automático activo, SIEMPRE arranca
+      Emisión (Música) directamente — nunca un bloque "vigente" de
+      Publicidad de forma retroactiva (pedido explícito, ver
+      `_arrancar_al_iniciar`). Los bloques horarios quedan esperando
+      su hora real, disparados solo por `_tick()` cuando el reloj
+      efectivamente cruza esa hora. Activar el Automático A MANO en
+      pleno uso sigue disparando el bloque vigente de inmediato (ver
+      `_on_automatico_cambiado`, sin cambios).
     - A medianoche (o al iniciar) carga sola la programación resuelta
       para hoy (fecha específica > patrón semanal — ver
       config/settings.py:resolver_programacion_del_dia), si hay alguna
@@ -1215,11 +1234,6 @@ class SchedulerAutomatico:
         # disparado (freno por hora, fin del árbol, cascada de errores)
         # — mismo destino que el fin de un bloque disparado.
         self.gestor_publicidad.al_finalizar_reproduccion = self._al_terminar_publicidad
-
-        # Aviso al operador cuando el arranque automático no encuentra
-        # ningún bloque horario vigente (lo setea MainWindow — la GUI
-        # muestra la advertencia, el core no crea widgets).
-        self.al_no_encontrar_bloque = None
 
         self.ventana.automatico_cambiado.connect(self._on_automatico_cambiado)
 
@@ -1321,37 +1335,25 @@ class SchedulerAutomatico:
         return mejor
 
     def _arrancar_al_iniciar(self):
-        bloque = self._bloque_vigente()
-        if bloque is not None:
-            # Pedido explícito: un bloque horario SOLO se dispara con
-            # el botón AUTOMÁTICO activo — antes se disparaba siempre
-            # por horario, sin importar el estado del botón.
-            if not self.ventana.esta_en_automatico():
-                registrar_evento(
-                    f"Inicio: hay un bloque horario vigente ('{bloque.text(0)}') pero "
-                    "el Automático está apagado — no se dispara."
-                )
-                return
-            registrar_evento(
-                f"Inicio: reproduciendo el bloque horario vigente '{bloque.text(0)}'"
-            )
-            hora_str = self.ventana.hora_de_bloque(bloque)
-            if hora_str:
-                self._horas_disparadas_hoy.add(hora_str)
-            self._disparar_bloque(bloque)
-            return
-        # No hay bloque vigente para reproducir: avisar al operador
-        # (pedido explícito: "No se encontró Bloque Horario en este
-        # momento en la programación") y, con Automático activo (el
-        # estado por defecto al abrir), arrancar Emisión sin pedir
-        # permiso, desde el ítem en rojo (el primero por defecto).
-        if self.al_no_encontrar_bloque:
-            try:
-                self.al_no_encontrar_bloque()
-            except Exception as error:
-                registrar_error(f"Inicio: error mostrando el aviso de bloque faltante: {error}")
+        """Pedido explícito ("el automático debe estar activado, eso
+        es correcto, pero que comience emitiendo la música que está
+        en la ventana 2, no la publicidad de la ventana 1... debe
+        esperar SÍ O SÍ al bloque horario y hora especificada"): al
+        ABRIR el programa ya NUNCA se dispara un bloque "vigente" de
+        forma retroactiva/inmediata — antes, si eran (por ejemplo)
+        las 14:10 y existía un bloque de las 14hs, arrancaba
+        DIRECTAMENTE ese bloque de Publicidad, saltando Emisión por
+        completo. Ese comportamiento de "recuperar" el bloque vigente
+        queda reservado EXCLUSIVAMENTE para activar el botón
+        AUTOMÁTICO A MANO en pleno uso (ver `_on_automatico_cambiado`,
+        pedido explícito de una ronda anterior, sin cambios acá) — el
+        arranque del programa siempre empieza por Emisión (Música) si
+        el Automático está activo, y los bloques horarios quedan
+        esperando su hora real: `_tick()` los sigue disparando, pero
+        solo en el instante exacto en que el reloj cruza esa hora,
+        nunca antes."""
         if self.ventana.esta_en_automatico():
-            registrar_evento("Inicio: sin bloque vigente — arranca Emisión (Automático activo)")
+            registrar_evento("Inicio: arranca Emisión (Automático activo, esperando el próximo bloque horario)")
             self._reanudar_o_arrancar_emision()
 
     # ------------------------------------------------------------------

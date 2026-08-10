@@ -42,7 +42,6 @@ from core.playlist_manager import GestorPublicidad, GestorExplorador, SchedulerA
 from core.gestor_emision import GestorPlaylist
 from core.audio_engine import obtener_duracion_formateada
 from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
-from core import actualizador
 from config.settings import (
     cargar_configuracion, registrar_evento,
     guardar_lista_auxiliar, listar_listas_auxiliares,
@@ -85,7 +84,6 @@ class MainWindow(QMainWindow):
         self._tamaños_splitter_previos = None
         self._cerrando_por_actualizacion = False
         self._preload_activo = False
-        self._proceso_buscar_actualizacion = None
 
         self._config = cargar_configuracion()
 
@@ -113,18 +111,12 @@ class MainWindow(QMainWindow):
         self._refrescador_clima = RefrescadorClima(self._coordenadas_clima_actuales)
         self._refrescador_clima.iniciar()
 
-        # Pedido explícito: buscar actualización SOLA al abrir el
-        # programa (antes solo se buscaba a mano, en Configuración →
-        # Actualizaciones). Ahora corre en un QProcess asíncrono (ver
-        # core/actualizador.buscar_actualizacion_async) — como ya NO
-        # puede congelar nada, el defer de 2.5s (mismo de siempre) es
-        # solo para no competir con el arranque de la radio, no por
-        # miedo a que bloquee. Se mantiene deliberadamente largo (no
-        # se achicó): varios scripts de test bombean el event loop por
-        # un par de segundos para procesar timers diferidos (fades,
-        # etc.) sin esperar disparar esto — un defer corto dispara un
-        # `git fetch` REAL contra el repo en medio de esos tests.
-        QTimer.singleShot(2500, self._buscar_actualizacion_automatica)
+        # Pedido explícito ("sacar la búsqueda de actualizaciones al
+        # abrir el programa — se actualizará solo por el menú
+        # Configuración, como está"): la búsqueda automática al
+        # arrancar (agregada en una ronda anterior) se sacó por
+        # completo — Configuración → Actualizaciones sigue teniendo su
+        # propio botón manual, independiente de esto, sin cambios.
 
         # Pedido explícito ("veo que nunca funciona el recorte de
         # silencio") -- bug real de fondo: un fallo del motor de
@@ -473,68 +465,6 @@ class MainWindow(QMainWindow):
             self._preload_activo = False
 
     # ------------------------------------------------------------------
-    # Buscar actualización SOLA al abrir el programa (pedido explícito)
-    # ------------------------------------------------------------------
-    def _buscar_actualizacion_automatica(self):
-        """Antes solo se buscaba a mano en Configuración →
-        Actualizaciones — ahora también se chequea sola al abrir. Corre
-        con `actualizador.buscar_actualizacion_async()` — pedido
-        explícito ("no debe impedir la reproducción inmediata y con
-        automático activado"): el único paso lento de esto es de red
-        (git fetch), y antes corría SINCRÓNICO en el mismo hilo que la
-        radio — con una conexión lenta, eso podía congelar la app
-        entera (incluida música ya sonando) hasta 30s. Ahora es un
-        QProcess asíncrono: nunca bloquea nada, la radio sigue su
-        curso normal mientras se resuelve en segundo plano. Se guarda
-        la referencia en self._proceso_buscar_actualizacion para que
-        Python no lo recolecte a mitad de camino."""
-        self._mostrar_preload("Buscando actualización...", duracion_ms=500)
-        self._proceso_buscar_actualizacion = actualizador.buscar_actualizacion_async(
-            self._on_resultado_busqueda_actualizacion
-        )
-
-    def _on_resultado_busqueda_actualizacion(self, hay_actualizacion: bool, mensaje: str):
-        self._proceso_buscar_actualizacion = None
-        if not hay_actualizacion:
-            registrar_evento(f"Buscar actualización automática: {mensaje}")
-            return
-
-        registrar_evento("Buscar actualización automática: hay una disponible.")
-        if not self._preguntar_actualizar_ahora():
-            return
-
-        self._mostrar_preload("Descargando actualización...", duracion_ms=500)
-        exito, mensaje_aplicar = actualizador.aplicar_actualizacion()
-        if not exito:
-            QMessageBox.warning(self, "Actualizar", mensaje_aplicar)
-            return
-
-        QMessageBox.information(self, "Actualizar", "Actualización aplicada. La aplicación se va a reiniciar.")
-        # Mismo flag que ya usa el botón manual de Configuración: evita
-        # que closeEvent vuelva a preguntar por la emisión en curso.
-        self.preparar_cierre_por_actualizacion()
-        actualizador.reiniciar_aplicacion(QApplication.instance())
-
-    def _preguntar_actualizar_ahora(self) -> bool:
-        """Extraído aparte (en vez de en línea dentro de
-        _buscar_actualizacion_automatica) para poder testear la
-        decisión sin simular un click real sobre un QMessageBox real
-        — offscreen no puede. Botones con texto propio en vez de Sí/No
-        genérico, pedido explícito: "preguntar si desea actualizar
-        ahora o luego"."""
-        caja = QMessageBox(self)
-        caja.setWindowTitle("Actualización disponible")
-        caja.setText(
-            "Hay una actualización disponible para Auto-Radio Tuyú.\n"
-            "¿Querés actualizarla ahora? La aplicación se va a reiniciar sola."
-        )
-        boton_ahora = caja.addButton("Actualizar ahora", QMessageBox.ButtonRole.AcceptRole)
-        boton_luego = caja.addButton("Más tarde", QMessageBox.ButtonRole.RejectRole)
-        caja.setDefaultButton(boton_luego)
-        caja.exec()
-        return caja.clickedButton() is boton_ahora
-
-    # ------------------------------------------------------------------
     # Señales entre ventanas
     # ------------------------------------------------------------------
     def _conectar_señales(self):
@@ -568,25 +498,6 @@ class MainWindow(QMainWindow):
         # deshabilita en VentanaPublicidad._toggle_automatico(). La
         # Auxiliar no se toca (es preescucha, no el aire).
         self.ventana_emision.set_stop_habilitado(not activo)
-
-    def _avisar_sin_bloque_horario(self):
-        """Aviso del arranque automático (pedido explícito, texto
-        textual de Santiago): no hay bloque horario vigente en la
-        programación al abrir. NO es modal-bloqueante (show(), no
-        exec()): Emisión arranca sola inmediatamente después de este
-        aviso y no debe quedar esperando un click en OK."""
-        registrar_evento("Inicio: no se encontró bloque horario vigente en la programación")
-        self.statusBar().showMessage(
-            "No se encontró Bloque Horario en este momento en la programación.", 10000
-        )
-        self._aviso_sin_bloque = QMessageBox(self)
-        self._aviso_sin_bloque.setIcon(QMessageBox.Icon.Warning)
-        self._aviso_sin_bloque.setWindowTitle("Programación")
-        self._aviso_sin_bloque.setText(
-            "No se encontró Bloque Horario en este momento en la programación"
-        )
-        self._aviso_sin_bloque.setStandardButtons(QMessageBox.StandardButton.Ok)
-        self._aviso_sin_bloque.show()
 
     def _verificar_motor_analisis_al_iniciar(self):
         """Ver comentario en __init__. Corre la prueba real (audio
@@ -944,7 +855,6 @@ class MainWindow(QMainWindow):
         self.scheduler_automatico = SchedulerAutomatico(
             self.ventana_publicidad, self.gestor_publicidad, self.gestor_emision
         )
-        self.scheduler_automatico.al_no_encontrar_bloque = self._avisar_sin_bloque_horario
         # Pedido explícito: Play manual en Ventana 1 corta Emisión con
         # fundido SIEMPRE (incluso con el Automático activo).
         self.gestor_publicidad.al_arrancar_manual = self.scheduler_automatico.cortar_emision_por_play_manual
@@ -1044,7 +954,19 @@ class MainWindow(QMainWindow):
         if self._ventana_auxiliar is not None:
             self._ventana_auxiliar.tree.setStyleSheet(f"font-size: {tamanos['emision']}pt;")
         self.ventana_explorador.tree_archivos.setStyleSheet(f"font-size: {tamanos['explorador']}pt;")
-        self.ventana_explorador.tree_categorias.setStyleSheet(f"font-size: {tamanos['explorador']}pt;")
+        # Bug real corregido (pedido explícito: "se aplica solo hasta
+        # 3 niveles, no a todos"): tree_categorias NO alcanza con un
+        # setStyleSheet() -- toda su jerarquía se arma EAGER, antes de
+        # que este método corra por primera vez (VentanaExplorador
+        # carga la biblioteca completa en su propio __init__, que pasa
+        # DENTRO de _construir_paneles_centrales, siempre antes de
+        # llegar acá) -- cada nodo ya queda con una fuente EXPLÍCITA
+        # (tamaño ya resuelto) desde su creación, y un QFont explícito
+        # ya no vuelve a heredar del stylesheet del widget por más que
+        # este cambie después. establecer_tamano_fuente_categorias()
+        # recorre TODO el árbol y fuerza el tamaño correcto en los 5
+        # niveles, sin importar cuándo se creó cada nodo.
+        self.ventana_explorador.establecer_tamano_fuente_categorias(tamanos["explorador"])
 
     # ------------------------------------------------------------------
     # Ventana auxiliar flotante (preescucha / reproducción secundaria)
