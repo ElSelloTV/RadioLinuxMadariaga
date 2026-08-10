@@ -753,20 +753,68 @@ class ArbolReproductorConDrop(QTreeWidget):
 
 
 class ArbolOrigenArrastre(QTreeWidget):
-    """QTreeWidget que ES ORIGEN de arrastre (DragOnly) hacia otras ventanas.
+    """QTreeWidget que ES ORIGEN de arrastre hacia otras ventanas, Y
+    ADEMÁS acepta que se le SUELTEN archivos encima (pedido explícito:
+    "arrastrando y soltando, sin importar el origen (pen drive, carpeta
+    del escritorio, usb externo, etc)... luego sí, abrir el diálogo
+    para clasificar" — antes SOLO se podía cargar con el botón "＋
+    Agregar"; arrastrar un archivo externo directo sobre la LISTA de
+    archivos de la derecha, que es lo primero que un operador prueba
+    de manera intuitiva, no hacía nada, ya que este árbol era DragOnly
+    puro). El árbol de categorías (`ArbolCategoriasConDrop`, a la
+    izquierda) YA aceptaba drops desde antes — esto suma un segundo
+    punto de entrada igual de válido, más intuitivo para quien mira la
+    lista de archivos y no la columna angosta de categorías.
 
     Solo los ítems con una ruta física guardada en
-    Qt.ItemDataRole.UserRole (columna 0) se pueden arrastrar; los
-    nodos de categoría (sin ruta) simplemente no inician drag. Con
-    selección múltiple activa, arrastra TODOS los seleccionados de
-    una vez (varios archivos en el mismo mimeData) — quien reciba el
-    drop en la otra punta ya recorre la lista completa.
+    Qt.ItemDataRole.UserRole (columna 0) se pueden ARRASTRAR desde
+    acá; los nodos de categoría (sin ruta) simplemente no inician
+    drag. Con selección múltiple activa, arrastra TODOS los
+    seleccionados de una vez (varios archivos en el mismo mimeData) —
+    quien reciba el drop en la otra punta ya recorre la lista
+    completa.
+
+    Emite `archivos_soltados(lista_de_rutas)` con el lote completo al
+    soltar — sin `item_destino` (a diferencia de `ArbolConDrop`, acá
+    no hay "sobre qué ítem" cayó el drop, la interpretación siempre es
+    "agregar a la categoría actualmente seleccionada", igual criterio
+    que ya usa el botón "＋ Agregar").
     """
+
+    archivos_soltados = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDragEnabled(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        if event.source() is not self and (event.mimeData().hasUrls() or event.mimeData().hasText()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.source() is not self and (event.mimeData().hasUrls() or event.mimeData().hasText()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if event.source() is self:
+            event.ignore()
+            return
+        rutas = []
+        if event.mimeData().hasUrls():
+            rutas = [url.toLocalFile() for url in event.mimeData().urls() if url.toLocalFile()]
+        elif event.mimeData().hasText():
+            rutas = [event.mimeData().text()]
+        rutas_validas = [ruta for ruta in rutas if ruta]
+        if rutas_validas:
+            self.archivos_soltados.emit(rutas_validas)
+        event.acceptProposedAction()
 
     def startDrag(self, supportedActions):
         items = [item for item in self.selectedItems() if item.data(0, Qt.ItemDataRole.UserRole)]
