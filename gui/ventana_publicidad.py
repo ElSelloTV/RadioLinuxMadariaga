@@ -282,6 +282,14 @@ class VentanaPublicidad(QWidget):
         self.tree.setItemsExpandable(False)
         self.tree.archivo_soltado.connect(self.archivo_soltado.emit)
         self.tree.itemDoubleClicked.connect(lambda item, columna: self._on_doble_click_item(item))
+        # Pedido explícito ("cuando selecciono el bloque horario,
+        # permita pintarse de rojo... dejando atento a reproducir el
+        # primer ítem" — antes hacía falta doble click sobre el
+        # título): un solo click sobre el TÍTULO de un bloque arma
+        # (rojo) o encola (verde) igual que el doble click, sin
+        # duplicar lógica (ver _on_click_item). Las tandas sueltas
+        # siguen necesitando doble click/Enter, sin cambios.
+        self.tree.itemClicked.connect(self._on_click_item)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._mostrar_menu_contextual)
         layout_grupo.addWidget(self.tree)
@@ -618,6 +626,21 @@ class VentanaPublicidad(QWidget):
         # que ya sabe saltear ítems inválidos dentro de un bloque
         # (_primer_item_valido_de), en vez de duplicarla acá.
         self.item_doble_click.emit(item)
+
+    def _on_click_item(self, item, columna):
+        """Pedido explícito ("cuando selecciono el bloque horario,
+        permita pintarse de rojo, lógicamente, dejando atento a
+        reproducir el primer ítem"): un solo click sobre el TÍTULO de
+        un bloque (nodo de nivel superior, `item.parent() is None`)
+        reutiliza EXACTAMENTE la misma lógica que ya usaba el doble
+        click sobre un bloque (`GestorPublicidad._on_doble_click()` ya
+        resuelve el primer ítem reproducible del bloque y solo lo ARMA
+        en rojo o lo ENCOLA en verde — nunca reproduce nada solo) — se
+        emite la misma señal, sin duplicar nada. Clickear una TANDA
+        suelta (no el título) NO pasa por acá — sigue necesitando
+        doble click/Enter como siempre."""
+        if item is not None and item.parent() is None:
+            self.item_doble_click.emit(item)
 
     # ------------------------------------------------------------------
     # Menú contextual (pedido explícito, estructura completa):

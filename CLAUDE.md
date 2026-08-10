@@ -9990,6 +9990,164 @@ todo el resto.
     lejos con su monitor real, y que 6-20pt es un rango suficiente para
     lo que necesita (si hace falta más grande, es un simple cambio de
     rango en el `QSpinBox`).
+101. ~~6 pedidos de operadores: sacar búsqueda de actualización al
+    abrir, tamaño de fuente en TODOS los niveles de categoría, arranque
+    siempre por Emisión (nunca un bloque vigente), click simple arma
+    un bloque, ítem sacado del Explorador ya no suena — falta punto C
+    (drag&drop, esperando aclaración de Santiago)~~ — seis pedidos en
+    un solo mensaje (a, b, d, e, f — sin "c", pendiente de aclarar cuál
+    ventana exactamente):
+
+    **a) Sacar la búsqueda de actualización automática al abrir**
+    (pedido explícito: "se actualizará solo por el menú
+    configuraciones como está, no cuando abre el programa"): se sacó
+    por completo el `QTimer.singleShot(2500, ...)` de
+    `MainWindow.__init__` y los 3 métodos que solo existían para esa
+    ruta (`_buscar_actualizacion_automatica`/
+    `_on_resultado_busqueda_actualizacion`/`_preguntar_actualizar_ahora`,
+    quedaban sin ningún otro llamador — código muerto, eliminado
+    entero en vez de dejarlo sin usar). El botón manual de
+    Configuración → Actualizaciones (`hay_actualizacion_disponible()`/
+    `_aplicar_actualizacion()`, siempre fue un camino SEPARADO, propio
+    de esa pestaña) queda exactamente igual, sin tocar nada. El
+    mensaje "Verificando actualizaciones..." del splash de arranque
+    (`main.py`) ya no tenía sentido (no cubre ninguna consulta de red
+    real) — cambiado a "Cargando Auto-Radio Tuyú...".
+
+    **b) Bug real corregido — el tamaño de fuente de Ventana 3 "solo
+    hasta 3 niveles"**: la causa de fondo, encontrada auditando
+    `_aplicar_estilo_por_nivel()` (la función que pinta negrita/
+    cursiva/color/tamaño por nivel de categoría, ronda 96): partía de
+    `fuente = item.font(0)` — el tamaño AMBIENTE del ítem en el
+    instante exacto en que se llama, que depende pura y simplemente
+    del ORDEN de ejecución. Como TODA la jerarquía de categorías se
+    arma EAGER, dentro de `VentanaExplorador.__init__()` (que corre
+    ANTES de que `MainWindow._aplicar_tamano_fuente_ventanas()` llegue
+    a aplicar el tamaño configurado), cada nodo quedaba con un `QFont`
+    YA EXPLÍCITO (tamaño ya resuelto contra el default de fábrica de
+    8pt) desde el momento de su creación — y un `QFont` explícito, una
+    vez asignado con `setFont()`, NUNCA vuelve a heredar del
+    stylesheet del widget aunque este cambie después (a diferencia de
+    un `QFont` "sin resolver", que sí cascadea). Corregido de raíz:
+    `_aplicar_estilo_por_nivel()` ya NO lee nada ambiente — el tamaño
+    de CADA nivel se calcula siempre desde un atributo propio,
+    `self._tamano_fuente_categorias` (la fuente de verdad, cargada ya
+    en `__init__` y actualizada por el método nuevo
+    `establecer_tamano_fuente_categorias()`, que también repinta TODO
+    el árbol). `MainWindow._aplicar_tamano_fuente_ventanas()` llama a
+    este método nuevo en vez de un `setStyleSheet()` genérico para
+    `tree_categorias` — el `setStyleSheet()` de `tree_archivos` (la
+    lista de archivos, sin jerarquía de niveles) no tenía este
+    problema y sigue igual, sin cambios.
+
+    **d) Bug real de diseño corregido — al abrir, el Automático
+    arrancaba un bloque de Publicidad "vigente" en vez de Emisión**
+    (pedido explícito: "que comience emitiendo la música que está en
+    la ventana 2, no la publicidad de la ventana 1... debe esperar SÍ
+    O SÍ al bloque horario y hora especificada"): `SchedulerAutomatico.
+    _arrancar_al_iniciar()` buscaba el "bloque vigente" (el de hora más
+    tardía que ya pasó) y lo reproducía DE UNA si existía — con
+    cualquier bloque horario ya pasado en el día (el caso más común),
+    el arranque SIEMPRE terminaba en Publicidad, nunca en Emisión.
+    Corregido sacando por completo esa búsqueda del arranque — ahora
+    `_arrancar_al_iniciar()`, con Automático activo, llama SIEMPRE
+    directo a `_reanudar_o_arrancar_emision()` — los bloques quedan
+    esperando su hora real, disparados solo por `_tick()` cuando el
+    reloj efectivamente la cruza, nunca de forma retroactiva. El
+    comportamiento de "disparar el bloque vigente" NO desapareció del
+    todo: sigue existiendo, sin cambios, para activar el Automático A
+    MANO en pleno uso (`_on_automatico_cambiado`, pedido explícito de
+    una ronda anterior con semántica distinta — una acción deliberada
+    del operador, no un reinicio desatendido). El aviso "No se
+    encontró Bloque Horario en este momento" (`_avisar_sin_bloque_horario`,
+    `MainWindow`) y el callback `al_no_encontrar_bloque` quedaron sin
+    ningún llamador — código muerto, eliminado entero (ya no tiene
+    sentido: con la búsqueda de "vigente" sacada del arranque, "no
+    encontrar un bloque vigente" pasó de ser el caso excepcional a ser
+    SIEMPRE el resultado, así que avisarlo en cada arranque sería
+    ruido, no una alerta real).
+
+    **e) Un solo click sobre el título de un bloque lo arma en rojo**
+    (pedido explícito: "cuando selecciono el bloque horario, permita
+    pintarse de rojo... dejando atento a reproducir el primer ítem" —
+    antes hacía falta doble click sobre el título): nuevo
+    `VentanaPublicidad._on_click_item()`, conectado a
+    `tree.itemClicked` — si el ítem clickeado es un nodo de bloque
+    (`item.parent() is None`), reemite la MISMA señal `item_doble_click`
+    que ya usa el doble click, reutilizando 100% la lógica ya existente
+    en `GestorPublicidad._on_doble_click()` (que ya resuelve el primer
+    ítem reproducible del bloque, saltando cualquiera marcado con
+    error, y solo lo ARMA en rojo o lo ENCOLA en verde — nunca
+    reproduce nada solo, ver ronda 68) — sin duplicar nada. Clickear
+    una TANDA suelta (no el título de un bloque) sigue sin hacer nada
+    por sí sola, sigue necesitando doble click/Enter como siempre —
+    el chequeo `item.parent() is None` acota el cambio exclusivamente
+    al título del bloque.
+
+    **f) Bug real corregido — un archivo sacado de la biblioteca
+    (Ventana 3) seguía reproduciéndose en Ventana 1/2 si el archivo
+    físico seguía en disco** (pedido explícito, con un caso real: "se
+    quitó del explorador un archivo que estaba programado... llegado
+    la hora, lo reprodujo. Eso no debe ser así"): `GestorPublicidad.
+    _item_valido()` / `GestorPlaylist._fila_valida()` (el chequeo
+    proactivo de archivo faltante, ronda 66/83) solo verificaban
+    `os.path.exists(ruta)` — pero ELIMINAR un registro del Explorador
+    NO borra necesariamente el archivo físico (son dos cosas
+    separadas, ver "Eliminar" vs. el "🗑" del diálogo de Vincular,
+    rondas anteriores) — así que un archivo cuyo REGISTRO ya no existe
+    en la biblioteca, pero cuyo archivo SÍ sigue en el disco, pasaba el
+    chequeo de siempre sin problema y sonaba igual. Nuevo
+    `VentanaExplorador.ruta_existe_en_biblioteca(ruta) -> bool` —
+    CACHEADO (con ~10-12mil archivos reales, recorrer TODA la
+    biblioteca en cada evaluación de cada ítem, en cada tick, hubiera
+    sido un problema de rendimiento real, mismo tipo de bug ya resuelto
+    en las rondas 76-78): la caché (`self._cache_rutas_biblioteca`, un
+    `set`) se invalida en el ÚNICO par de choke points por los que pasa
+    CUALQUIER alta/baja/movimiento de la biblioteca
+    (`_guardar_biblioteca()`/`_guardar_biblioteca_debounced()`, más
+    `recargar_biblioteca_desde_disco()`) — nunca en cada mutación
+    individual por separado, así que el recorrido completo (costoso)
+    solo se paga UNA vez tras un cambio real, nunca una vez por
+    consulta. `_item_valido()`/`_fila_valida()` ahora exigen
+    `os.path.exists(ruta)` Y `ruta_existe_en_biblioteca(ruta)` — un
+    archivo sacado del Explorador se saltea de inmediato (mismo ícono
+    de error X roja, mismo criterio "nunca romper la emisión" de
+    siempre), sin importar si el archivo sigue físicamente en el
+    disco. Aplicado por igual en Ventana 1 (`core/playlist_manager.py`)
+    Y Ventana 2/Auxiliar (`core/gestor_emision.py`) — mismo criterio ya
+    establecido en la ronda 83 de portar cada fix de robustez de V1 a
+    V2 y viceversa.
+
+    Probado con 2 scripts dedicados: **(a+b)** sin rastro de la
+    búsqueda automática en `MainWindow.__init__` ni de los 3 métodos
+    eliminados; los 5+ niveles de una jerarquía real de categorías
+    (1 a 6) respetan el tamaño configurado (antes: niveles 2-4 podían
+    quedar pegados al tamaño de fábrica sin importar la config),
+    cambiar el tamaño en vivo repinta TODO el árbol ya construido;
+    **(d+e+f)** con un bloque de hora YA PASADA (00:00:00) y Automático
+    activo, `_arrancar_al_iniciar()` nunca dispara el bloque y siempre
+    llama a `_reanudar_o_arrancar_emision()` exactamente una vez; un
+    click sobre el título de un bloque arma su primer ítem en rojo,
+    un click sobre una tanda suelta no hace nada; un ítem cuyo registro
+    se saca de la biblioteca deja de ser válido en V1 Y V2 aunque el
+    archivo real siga en disco, confirmado además que la caché de
+    rutas NO recorre la biblioteca completa en 20 consultas seguidas
+    sin cambios (solo la primera) — + `py_compile` de los 6 archivos
+    tocados + smoke test de arranque completo sin traceback. **No se
+    pudo correr la suite de regresión de scripts de rondas anteriores**
+    (ninguno está commiteado al repo, ver ronda 90). **Sigue sin poder
+    confirmarse con audio/hardware real ni con varios operadores a la
+    vez**: falta que Santiago confirme (1) que ya no aparece ningún
+    aviso de actualización al abrir, (2) que las categorías de nivel 4+
+    se ven del tamaño correcto en su pantalla real, (3) que la radio
+    arranca con música (Emisión) y no con publicidad al abrir el
+    programa, incluso con un bloque horario de esa hora ya cargado,
+    (4) que clickear un bloque horario lo arma en rojo de un vistazo, y
+    (5) que un archivo sacado del Explorador ya no vuelve a sonar en
+    ningún bloque programado. **Pendiente el punto C** (drag&drop al
+    cargar) — quedó sin implementar, esperando que Santiago aclare a
+    cuál ventana/flujo se refiere exactamente (ver la pregunta
+    pendiente en el chat).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

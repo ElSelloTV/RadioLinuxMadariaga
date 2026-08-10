@@ -170,6 +170,13 @@ class VentanaExplorador(QWidget):
         # con el color correcto, y se refresca en vivo con
         # repintar_estilo_categorias() (ver más abajo).
         self._tema_actual = cargar_configuracion()["general"]["tema"]
+        # Tamaño de fuente configurable de Ventana 3 (pedido explícito,
+        # bug real corregido: "solo hasta 3 niveles, no a todos" — ver
+        # nota completa en _aplicar_estilo_por_nivel más abajo). Se lee
+        # ya en la construcción, mismo criterio que _tema_actual.
+        self._tamano_fuente_categorias = (
+            cargar_configuracion()["apariencia"]["tamano_fuente_ventanas"]["explorador"]
+        )
         # Ordenar por columna (pedido explícito): click en el
         # encabezado ordena A-Z, un segundo click en la MISMA columna
         # invierte a Z-A.
@@ -180,6 +187,17 @@ class VentanaExplorador(QWidget):
         self._timer_guardado_biblioteca = QTimer(self)
         self._timer_guardado_biblioteca.setSingleShot(True)
         self._timer_guardado_biblioteca.timeout.connect(self._guardar_biblioteca)
+        # Caché de rutas de la biblioteca (pedido explícito: "si
+        # elimino ítem de la ventana 3, la ventana 1 no debe
+        # reproducir el audio" — ver ruta_existe_en_biblioteca()/
+        # core/playlist_manager.py:_item_valido()). `None` = inválida,
+        # se reconstruye recorriendo TODA la biblioteca una sola vez
+        # (costoso con ~10mil archivos) recién la próxima vez que
+        # alguien la consulta -- invalidada en el ÚNICO par de choke
+        # points por los que pasa CUALQUIER alta/baja/movimiento
+        # (_guardar_biblioteca()/_guardar_biblioteca_debounced()),
+        # nunca en cada mutación individual por separado.
+        self._cache_rutas_biblioteca = None
         # Qué categorías quedaron expandidas la última vez (ver
         # CLAVE_CATEGORIAS_EXPANDIDAS) -- se carga ANTES de construir/
         # poblar el árbol para que el primer llenado ya respete esto.
@@ -519,6 +537,7 @@ class VentanaExplorador(QWidget):
         biblioteca) hecha por fuera de esta ventana — sin esto, el
         operador tendría que cerrar y reabrir la app para ver los
         nuevos puntos de recorte."""
+        self._cache_rutas_biblioteca = None
         self._cargar_categorias_desde_datos(cargar_biblioteca())
 
     def _cargar_biblioteca_inicial(self):
@@ -533,7 +552,32 @@ class VentanaExplorador(QWidget):
         # reales. Una biblioteca.json YA EXISTENTE nunca se toca acá.
 
     def _guardar_biblioteca(self):
+        self._cache_rutas_biblioteca = None
         guardar_biblioteca(self._serializar_biblioteca())
+
+    def ruta_existe_en_biblioteca(self, ruta: str) -> bool:
+        """True si `ruta` corresponde a un registro que TODAVÍA está
+        en la biblioteca -- pedido explícito: un archivo que el
+        operador sacó del Explorador (Ventana 3) no debe seguir
+        sonando en Ventana 1/2 solo porque el archivo físico sigue
+        existiendo en disco (eliminar el REGISTRO no borra
+        necesariamente el archivo). Usa una caché con invalidación en
+        `_guardar_biblioteca()`/`_guardar_biblioteca_debounced()` (el
+        único par de choke points por los que pasa cualquier
+        mutación) -- nunca recorre la biblioteca entera en cada
+        llamado, solo la primera vez tras un cambio real."""
+        if self._cache_rutas_biblioteca is None:
+            rutas = set()
+
+            def visitar(item):
+                for registro in (item.data(0, ROL_ARCHIVOS) or []):
+                    r = registro.get("ruta")
+                    if r:
+                        rutas.add(r)
+
+            self._para_cada_categoria(visitar)
+            self._cache_rutas_biblioteca = rutas
+        return ruta in self._cache_rutas_biblioteca
 
     def _guardar_biblioteca_debounced(self):
         """Bug real de fondo con una biblioteca de ~10-12mil archivos
@@ -561,6 +605,7 @@ class VentanaExplorador(QWidget):
         última ráfaga de cambios si se cierra el programa antes de que
         el timer llegue a disparar solo) siguen usando el guardado
         INMEDIATO."""
+        self._cache_rutas_biblioteca = None
         self._timer_guardado_biblioteca.start(self._DEMORA_GUARDADO_MS)
 
     def flush_biblioteca_pendiente(self):
@@ -686,7 +731,21 @@ class VentanaExplorador(QWidget):
         El "MAYÚSCULAS" es solo de PINTADO (QFont.Capitalization.AllUppercase)
         — el texto real del ítem (item.text(0), lo que se guarda en
         biblioteca.json vía _serializar_categoria) nunca se toca, para
-        no pisar el nombre original guardado en disco."""
+        no pisar el nombre original guardado en disco.
+
+        Bug real corregido (pedido explícito: "el tamaño de letra
+        configurable... solo hasta 3 niveles, no a todos"): antes se
+        partía de `item.font(0)` -- el tamaño AMBIENTE del ítem en ese
+        instante, que depende del orden de llamadas (si este método
+        corre ANTES de que `establecer_tamano_fuente_categorias()`
+        aplique el tamaño configurado, el ítem queda con su tamaño
+        "resuelto" y explícito para siempre — cambiar el stylesheet
+        del árbol después ya no lo mueve, un QFont explícito no vuelve
+        a heredar del widget). Ahora el tamaño SIEMPRE se calcula desde
+        `self._tamano_fuente_categorias` (la fuente de verdad,
+        actualizada por `establecer_tamano_fuente_categorias()`), para
+        los 5 niveles por igual — nunca depende de cuándo se llamó ni
+        de qué tamaño tenía el ítem antes."""
         nivel = 1
         nodo = item_padre
         while nodo is not None:
@@ -696,16 +755,26 @@ class VentanaExplorador(QWidget):
         tabla = self._ESTILOS_POR_NIVEL_CLARO if self._tema_actual == "claro" else self._ESTILOS_POR_NIVEL_OSCURO
         negrita, cursiva, mayusculas, color, delta_pt = tabla[min(nivel, len(tabla)) - 1]
 
-        fuente = item.font(0)
+        fuente = QFont(item.font(0))
         fuente.setBold(negrita)
         fuente.setItalic(cursiva)
         fuente.setCapitalization(
             QFont.Capitalization.AllUppercase if mayusculas else QFont.Capitalization.MixedCase
         )
-        if delta_pt and fuente.pointSize() > 0:
-            fuente.setPointSize(max(6, fuente.pointSize() + delta_pt))
+        fuente.setPointSize(max(6, self._tamano_fuente_categorias + delta_pt))
         item.setFont(0, fuente)
         item.setForeground(0, QBrush(QColor(color)))
+
+    def establecer_tamano_fuente_categorias(self, tamano: int):
+        """Actualiza el tamaño de fuente BASE de Ventana 3 (el que
+        configura Configuración → Apariencia) y repinta TODO el árbol
+        de categorías con ese tamaño nuevo, en los 5 niveles por
+        igual — llamado desde `MainWindow._aplicar_tamano_fuente_ventanas()`
+        en vez de (o además de) el `setStyleSheet()` genérico, que por
+        sí solo no alcanza para las categorías (ver nota en
+        `_aplicar_estilo_por_nivel`)."""
+        self._tamano_fuente_categorias = tamano
+        self.repintar_estilo_categorias()
 
     def _categoria_actual(self):
         return self.tree_categorias.currentItem()

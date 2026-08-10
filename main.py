@@ -132,19 +132,19 @@ def main():
 
     if splash is not None:
         # Pedido explícito ("pantalla de inicio breve que oficie de
-        # Preload mientras carga todo y verifica actualizaciones"): en
-        # vez de cerrar el splash apenas la ventana está lista, se lo
-        # deja un instante más (BREVE, con tope fijo — nunca depende
-        # de que la verificación de actualización termine) cubriendo
-        # también esa consulta, que MainWindow ya dispara sola y de
-        # forma asíncrona (nunca bloqueante) unos milisegundos después
-        # de este punto. La reproducción — incluido el arranque
+        # Preload mientras carga todo"): en vez de cerrar el splash
+        # apenas la ventana está lista, se lo deja un instante más
+        # (BREVE, con tope fijo) — la búsqueda de actualización YA NO
+        # corre sola al arrancar (pedido explícito de otra ronda: "se
+        # actualizará solo por el menú Configuración"), así que este
+        # instante extra es puro margen visual, no cubre ninguna
+        # consulta de red. La reproducción — incluido el arranque
         # automático del bloque vigente — NUNCA espera a este cierre:
         # corre por su cuenta en los timers internos de MainWindow,
         # que ya están corriendo aunque el splash siga tapando la
         # pantalla un instante más.
         splash.showMessage(
-            "Verificando actualizaciones...",
+            "Cargando Auto-Radio Tuyú...",
             Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
             Qt.GlobalColor.white,
         )
