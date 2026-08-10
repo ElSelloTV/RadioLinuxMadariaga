@@ -351,6 +351,14 @@ class VentanaExplorador(QWidget):
 
         self.tree_archivos.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_archivos.customContextMenuRequested.connect(self._mostrar_menu_contextual)
+        # Pedido explícito ("arrastrando y soltando, sin importar el
+        # origen (pen drive, carpeta del escritorio, usb externo,
+        # etc)... luego sí, abrir el diálogo para clasificar"): la
+        # lista de archivos de la derecha ahora TAMBIÉN acepta que le
+        # suelten archivos encima, mismo destino que ya resolvía el
+        # botón "＋ Agregar" (la categoría actualmente seleccionada) —
+        # ver _on_archivos_soltados_en_lista.
+        self.tree_archivos.archivos_soltados.connect(self._on_archivos_soltados_en_lista)
 
         layout_archivos.addWidget(self.tree_archivos)
 
@@ -2203,9 +2211,25 @@ class VentanaExplorador(QWidget):
     # biblioteca (viene de afuera, ej. el explorador de archivos del
     # sistema), se interpreta como IMPORTACIÓN en vez de movimiento.
     # ------------------------------------------------------------------
+    def _on_archivos_soltados_en_lista(self, rutas: list):
+        """Pedido explícito ("arrastrando y soltando, sin importar el
+        origen... luego sí, abrir el diálogo para clasificar, uno solo
+        o masiva, eso lo detectará el programa"): soltar archivos
+        directo sobre la LISTA de la derecha (`tree_archivos`) — el
+        lugar donde un operador intuitivamente prueba primero, no la
+        columna angosta de categorías — reusa EXACTAMENTE el mismo
+        camino que ya usa el botón "＋ Agregar" (mismo destino: la
+        categoría actualmente seleccionada) y que ya usa soltar sobre
+        el árbol de categorías (mismo diálogo de clasificación,
+        individual o masivo según la cantidad, detectado solo)."""
+        self._on_archivos_soltados_en_categoria(rutas, self._categoria_actual())
+
     def _on_archivos_soltados_en_categoria(self, rutas: list, item_categoria_destino):
         if item_categoria_destino is None:
-            QMessageBox.information(self, "Mover", "Soltá los archivos sobre una categoría concreta.")
+            QMessageBox.information(
+                self, "Agregar archivos",
+                "Elegí primero una categoría a la izquierda, y volvé a soltar los archivos.",
+            )
             return
 
         rutas_conocidas = []

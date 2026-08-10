@@ -10144,10 +10144,65 @@ todo el resto.
     programa, incluso con un bloque horario de esa hora ya cargado,
     (4) que clickear un bloque horario lo arma en rojo de un vistazo, y
     (5) que un archivo sacado del Explorador ya no vuelve a sonar en
-    ningún bloque programado. **Pendiente el punto C** (drag&drop al
-    cargar) — quedó sin implementar, esperando que Santiago aclare a
-    cuál ventana/flujo se refiere exactamente (ver la pregunta
-    pendiente en el chat).
+    ningún bloque programado.
+
+**Punto C, aclarado y resuelto en la ronda siguiente — drag&drop
+directo sobre la LISTA de archivos de Ventana 3**: la pregunta que
+había quedado pendiente (a qué ventana/flujo se refería) se contestó
+con precisión: "AL CARGAR ARCHIVOS AL PROGRAMA, actualmente solo
+admite mediante el botón, no hay otra forma, deseo que se pueda cargar
+nuevos ítem al programa arrastrando y soltando, sin importar el
+origen (pen drive, carpeta del escritorio, usb externo, etc) luego sí,
+abrir el diálogo para clasificar, uno solo o masiva, eso lo detectará
+el programa". Investigado antes de tocar nada: el árbol de
+CATEGORÍAS (`ArbolCategoriasConDrop`, columna izquierda) YA aceptaba
+drops externos desde hacía muchas rondas — pero `tree_archivos` (la
+LISTA de archivos de la derecha, `ArbolOrigenArrastre`, lo primero que
+un operador intuitivamente prueba de arrastrar un archivo encima) era
+`DragOnly` puro — únicamente ORIGEN de arrastre hacia otras ventanas,
+nunca aceptaba nada soltado sobre ella. Ese hueco explica al pie de la
+letra "solo admite mediante el botón" — probar a soltar un archivo
+sobre la columna angosta de categorías nunca se le hubiera ocurrido al
+operador.
+
+Corregido en `gui/common_widgets.py`: `ArbolOrigenArrastre` pasó de
+`DragOnly` a `DragDrop`, con `dragEnterEvent`/`dragMoveEvent`/
+`dropEvent` propios (mismo patrón que el resto de los árboles de la
+app — `event.source() is self` distingue "esto es un archivo externo"
+de "esto soy yo mismo", aunque acá el segundo caso nunca debería
+pasar de verdad porque `tree_archivos` no reordena sus propios ítems)
+y una señal nueva, `archivos_soltados(lista_de_rutas)` — sin
+`item_destino` (a diferencia de `ArbolConDrop`, acá no hay "sobre qué
+ítem" cayó el drop; la interpretación siempre es "agregar a la
+categoría actualmente seleccionada", el mismo criterio que ya usaba el
+botón "＋ Agregar"). `VentanaExplorador` conecta esa señal a
+`_on_archivos_soltados_en_lista()` (nuevo), que resuelve el destino
+con `self._categoria_actual()` y delega en la MISMA
+`_on_archivos_soltados_en_categoria()` que ya usaba el árbol de
+categorías — sin duplicar nada de la lógica de detección "1 archivo ->
+diálogo individual / 2+ -> diálogo masivo" ni la de "archivo ya
+conocido de la biblioteca -> Mover/Copiar, archivo externo ->
+Importar". Sin ninguna categoría seleccionada, avisa con un mensaje
+claro ("Elegí primero una categoría a la izquierda...") en vez de
+fallar. El resto del comportamiento de `ArbolOrigenArrastre` (ser
+ORIGEN de arrastre hacia Ventana 1/2/Auxiliar, selección múltiple) no
+se tocó.
+
+Probado con `test_dnd_lista_archivos.py` (nuevo, dedicado): soltar 1
+archivo externo sobre `tree_archivos` con una categoría ya
+seleccionada dispara el alta individual sobre ESA categoría; soltar
+2+ dispara el import masivo; un drop con `source()` igual al propio
+árbol se ignora sin emitir nada; sin ninguna categoría seleccionada,
+avisa en vez de romper — + `py_compile` de los 2 archivos tocados +
+smoke test de arranque completo de la app sin traceback. **Sigue sin
+poder confirmarse con hardware real** (arrastrar desde un gestor de
+archivos real — Dolphin/Nautilus/PCManFM — mostrando un pendrive/USB
+externo montado, cosa que el sandbox no tiene forma de simular de
+punta a punta): falta que Santiago confirme que ahora puede arrastrar
+un archivo desde cualquier origen directo sobre la lista de la
+derecha (no solo sobre la columna de categorías) y que el diálogo de
+clasificación se abre solo, individual o masivo según cuántos archivos
+soltó de una vez.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
