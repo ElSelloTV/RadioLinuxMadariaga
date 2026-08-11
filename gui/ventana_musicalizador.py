@@ -19,9 +19,16 @@ avisan, nunca bloquean.
 
 La lista de ítems es una tabla de 4 columnas (pedido explícito, ronda
 posterior: "para saber cómo y qué voy programando, que yo sepa que voy
-musicalizando") — CLASE / TIPO / DETALLE / PISADOR, ver
-`_texto_clase`/`_texto_tipo`/`_texto_detalle`/`_texto_pisador` más
-abajo.
+musicalizando") — CLASE / TÍTULO / TIPO / PISADOR, ver
+`_texto_clase`/`_texto_titulo`/`_texto_tipo`/`_texto_pisador` más
+abajo. La columna TÍTULO reemplazó a la vieja "Detalle" (pedido
+explícito, ronda posterior: "para armar mejor, poné el nombre del
+título... sacá la columna de detalle") — para un ítem Específico
+mostraba la RUTA cruda del archivo, dificultando reconocer de un
+vistazo qué tema es; ahora muestra el título REAL, resuelto contra la
+biblioteca. Las 4 columnas son movibles y ajustables a mano (pedido
+explícito, "que puedan ajustarse manualmente" — para poder agrandar
+Título y ver el nombre completo).
 --------------------------------------------------------
 """
 
@@ -50,10 +57,25 @@ def _texto_tipo(item_config: dict) -> str:
     return "—"  # Subformato: pedido explícito, "no aplica"
 
 
-def _texto_detalle(item_config: dict) -> str:
+def _texto_titulo(ventana_explorador, item_config: dict) -> str:
+    """Columna "Título" (reemplaza a la vieja "Detalle" — pedido
+    explícito, "para armar mejor, poné el nombre del título"): para un
+    ítem Específico, el TÍTULO REAL del archivo (resuelto contra la
+    biblioteca, no la ruta cruda — es la mejora concreta que pidió
+    Santiago, poder reconocer el tema de un vistazo); para Aleatorio,
+    sin un archivo puntual, el camino de categoría (misma info que
+    antes vivía en "Detalle" para este caso); para Subformato, su
+    nombre + duración configurada (tampoco tiene un "título" propio,
+    es un contenedor)."""
     tipo = item_config.get("tipo")
     if tipo == TIPO_ESPECIFICO:
-        return item_config.get("ruta") or "(sin archivo)"
+        ruta = item_config.get("ruta") or ""
+        if ventana_explorador is None:
+            return ruta or "(sin archivo)"
+        registro = ventana_explorador.buscar_registro_por_ruta(ruta)
+        if registro is None:
+            return f"(no encontrado: {ruta})" if ruta else "(sin archivo)"
+        return registro.get("titulo") or "(sin título)"
     if tipo == TIPO_ALEATORIO:
         ruta = " > ".join(item_config.get("categoria") or []) or "(sin categoría)"
         return ruta if item_config.get("recursivo", True) else f"{ruta} (sin subcategorías)"
@@ -152,15 +174,21 @@ class VentanaMusicalizador(QDialog):
 
         self.lista_items = QTreeWidget()
         self.lista_items.setColumnCount(4)
-        self.lista_items.setHeaderLabels(["Clase", "Tipo", "Detalle", "Pisador"])
+        self.lista_items.setHeaderLabels(["Clase", "Título", "Tipo", "Pisador"])
         self.lista_items.setRootIsDecorated(False)
         self.lista_items.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.lista_items.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        self.lista_items.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        self.lista_items.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.lista_items.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        # Pedido explícito ("que esas columnas puedan moverse... que
+        # puedan ajustarse manualmente"): las 4 quedan en modo
+        # Interactive (nunca Stretch fijo) para poder agrandar/achicar
+        # cualquiera a mano, y el header admite arrastrar para
+        # reordenarlas — sobre todo pensado para poder ensanchar
+        # "Título" y leer el nombre completo sin que quede truncado.
+        for columna in range(4):
+            self.lista_items.header().setSectionResizeMode(columna, QHeaderView.ResizeMode.Interactive)
+        self.lista_items.header().setSectionsMovable(True)
         self.lista_items.setColumnWidth(0, 100)
-        self.lista_items.setColumnWidth(1, 90)
+        self.lista_items.setColumnWidth(1, 260)
+        self.lista_items.setColumnWidth(2, 90)
         self.lista_items.setColumnWidth(3, 160)
         self.lista_items.itemDoubleClicked.connect(lambda _item, _columna: self._editar_item())
         layout_items.addWidget(self.lista_items)
@@ -227,8 +255,8 @@ class VentanaMusicalizador(QDialog):
         for item_config in self._items_en_edicion:
             item_ui = QTreeWidgetItem([
                 _texto_clase(self._ventana_explorador, item_config),
+                _texto_titulo(self._ventana_explorador, item_config),
                 _texto_tipo(item_config),
-                _texto_detalle(item_config),
                 _texto_pisador(item_config),
             ])
             item_ui.setData(0, ROL_ITEM_CONFIG, item_config)
