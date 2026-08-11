@@ -10674,6 +10674,84 @@ soltó de una vez.
     elegido se parece lo suficiente a su Dinesat real, o si prefiere
     ajustar el tono exacto (más o menos negro, más o menos contraste
     entre las dos franjas alternadas).
+107. ~~Instancia única — bloquear que el programa se abra dos veces~~ —
+    pedido explícito, con un caso real reportado: "Sucedió que un
+    operador no comprendía y apretaba el ícono de abrir varias veces,
+    eso hizo abrir como 3 veces el programa... imaginate el problema
+    no sabiendo por donde le salía la música, mezclada con todo,
+    porque tenía 3 veces el programa abierto." — 3 instancias del
+    motor de audio sonando en simultáneo, sin forma de saber cuál era
+    cuál.
+
+    **`core/instancia_unica.py` (nuevo, sin Qt)**: lock de ARCHIVO vía
+    `fcntl.flock()` (exclusivo, no bloqueante) sobre
+    `config/data/instancia.lock` — deliberadamente NO un archivo de
+    PID comparado a mano. La ventaja real de `flock`: el sistema
+    operativo lo libera SOLO en cuanto el proceso termina, sin
+    importar CÓMO (cierre normal, `kill -9`, corte de luz) — un
+    archivo de PID puede quedar "stale" (apuntando a un proceso que ya
+    murió) y necesitaría lógica extra para detectar y limpiar ese
+    caso; con `flock`, si el lock se puede tomar es porque la
+    instancia anterior YA NO EXISTE de verdad, nunca hay un falso
+    "ocupado" que bloquee un arranque legítimo después de un cierre
+    anormal (exactamente el escenario real de "la PC se reinicia sola
+    a las 00hs", ya documentado en otras rondas). Dos funciones:
+    `adquirir_bloqueo_instancia_unica()` (abre+`flock()` un candidato
+    NUEVO, y solo si el lock se toma de verdad reemplaza la referencia
+    global — nunca pisa una referencia previa válida antes de
+    confirmar el éxito del nuevo intento, para no soltar por accidente
+    un lock legítimo) y `liberar_bloqueo_instancia_unica()` (para
+    testing — en producción nunca hace falta llamarla, el lock se
+    libera solo). El PID propio queda escrito adentro del archivo,
+    solo para diagnóstico manual, nunca usado para decidir nada — la
+    única fuente de verdad es el lock del sistema operativo.
+
+    **`main.py`**: el chequeo se hace INMEDIATAMENTE después de crear
+    `QApplication` (necesita una instancia de Qt para poder mostrar el
+    aviso) y ANTES de cualquier otra cosa — antes de resolver el tema
+    visual, antes del splash, antes de `MainWindow()` — si ya hay otra
+    instancia con el lock tomado, se registra el evento en el log, se
+    muestra un `QMessageBox.warning()` con texto explícito ("El
+    programa ya está abierto en otra ventana... buscá la ventana que
+    ya está abierta —puede estar minimizada—") y sale con
+    `sys.exit(0)` sin construir NINGUNA ventana ni tocar ninguna
+    playlist ni abrir ningún motor de audio — la segunda/tercera
+    apretada del ícono nunca llega a competir por el audio con la
+    primera instancia.
+
+    `.gitignore` ganó `config/data/*.lock` (mismo criterio que
+    `*.json`/`*.ini`/`*.txt` de esa carpeta — dato de cada instalación,
+    nunca se versiona).
+
+    Probado con `test_instancia_unica.py` (nuevo, dedicado — con
+    **procesos reales del sistema operativo separados vía
+    `subprocess`**, no solo objetos Python en el mismo proceso, para
+    probar de verdad lo que reportó Santiago): una segunda adquisición
+    mientras la primera sigue viva falla incluso DENTRO del mismo
+    proceso (`flock` es por "open file description", no por PID);
+    liberar + re-adquirir funciona; un proceso de SO real separado
+    toma el lock y lo mantiene vivo unos segundos — mientras tanto,
+    NI este proceso NI un tercer proceso de SO separado (simulando la
+    "3ra instancia" real del reporte) pueden tomarlo; al terminar el
+    proceso que tenía el lock, se libera SOLO (sin ninguna limpieza
+    manual) y se puede re-adquirir de inmediato; el archivo de lock
+    queda con el PID correcto adentro; y una verificación estática
+    confirma que `main.py` chequea la instancia única ANTES de
+    construir `MainWindow()`, saliendo si falla — + smoke test real de
+    punta a punta: `main.py` completo lanzado dos veces seguidas (la
+    primera en segundo plano, la segunda encima mientras la primera
+    seguía viva) confirma que la segunda NUNCA llega a inicializar
+    ningún `MotorAudio` ni tira ningún traceback — se queda esperando
+    en el diálogo de aviso hasta que el timeout del test la mata
+    (comportamiento correcto: en un escritorio real el operador ve el
+    diálogo y hace click en OK) — + suite de regresión completa de los
+    7 scripts de test de rondas anteriores en este mismo bloque de
+    trabajo sin fallos nuevos + `py_compile` completo. **Sigue sin
+    poder confirmarse en un escritorio real con varios clicks
+    rápidos del ícono**: falta que Santiago confirme que, si un
+    operador vuelve a apretar el ícono varias veces, ahora ve el
+    aviso "ya está abierto" en vez de terminar con 2-3 instancias
+    sonando a la vez.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
