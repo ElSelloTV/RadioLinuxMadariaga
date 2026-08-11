@@ -37,16 +37,16 @@ LOG="config/data/log_lanzador_satelite.txt"
 CODIGO=$?
 
 if [ $CODIGO -ne 0 ]; then
-    MENSAJE="La app satélite se cerró con un error.
+    MENSAJE="Remoto Radio se cerró con un error.
 Revisá el log para más detalles:
 $(pwd)/$LOG"
 
     if command -v zenity >/dev/null 2>&1; then
-        zenity --error --title="Auto-Radio Tuyú — Satélite" --text="$MENSAJE" 2>/dev/null
+        zenity --error --title="Remoto Radio" --text="$MENSAJE" 2>/dev/null
     elif command -v kdialog >/dev/null 2>&1; then
-        kdialog --title "Auto-Radio Tuyú — Satélite" --error "$MENSAJE" 2>/dev/null
+        kdialog --title "Remoto Radio" --error "$MENSAJE" 2>/dev/null
     elif command -v notify-send >/dev/null 2>&1; then
-        notify-send "Auto-Radio Tuyú — Satélite - Error" "$MENSAJE" 2>/dev/null
+        notify-send "Remoto Radio - Error" "$MENSAJE" 2>/dev/null
     fi
 fi
 

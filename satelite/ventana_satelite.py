@@ -22,7 +22,7 @@ import base64
 import os
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QLabel, QLineEdit,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QLabel, QLineEdit,
     QPushButton, QFileDialog, QMessageBox,
 )
 from PySide6.QtCore import QTimer, Qt
@@ -37,7 +37,7 @@ INTERVALO_POLLING_MS = 3000
 class VentanaSatelite(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Auto-Radio Tuyú — Satélite (control remoto)")
+        self.setWindowTitle("Remoto Radio — control remoto de Auto-Radio Tuyú")
         self.setMinimumWidth(480)
         self._cliente = None
         self._construir_ui()
@@ -100,14 +100,31 @@ class VentanaSatelite(QWidget):
 
         fila_botones = QHBoxLayout()
         btn_play = QPushButton("▶ Play")
-        btn_stop = QPushButton("■ Stop")
-        btn_cut = QPushButton("✂ Cut")
         btn_play.clicked.connect(lambda: self._accion_transporte(ventana, "play"))
+        fila_botones.addWidget(btn_play)
+
+        # Pedido explícito: "los demás botones (salvo el Play) se
+        # estiran, dejalos cuadrados, del mismo ancho" -- sin
+        # setFixedSize, un QPushButton dentro de un QHBoxLayout crece
+        # para llenar el espacio sobrante (política Minimum por
+        # defecto), dando anchos disparejos según cuánto lugar quede.
+        # Stop/Cut pasan a íconos SOLOS (sin texto, con tooltip) en un
+        # cuadrado fijo -- mismo criterio ya usado en los botones de
+        # transporte del programa principal (glifo + tooltip, sin
+        # etiqueta) -- así "cuadrado" es literal, no aproximado. Play
+        # queda afuera a propósito, con su texto y su tamaño natural.
+        lado_boton_cuadrado = 40
+        btn_stop = QPushButton("■")
+        btn_stop.setToolTip("Detener")
+        btn_cut = QPushButton("✂")
+        btn_cut.setToolTip("Cut (corte al siguiente)")
+        for boton in (btn_stop, btn_cut):
+            boton.setFixedSize(lado_boton_cuadrado, lado_boton_cuadrado)
         btn_stop.clicked.connect(lambda: self._accion_transporte(ventana, "stop"))
         btn_cut.clicked.connect(lambda: self._accion_transporte(ventana, "cut"))
-        fila_botones.addWidget(btn_play)
         fila_botones.addWidget(btn_stop)
         fila_botones.addWidget(btn_cut)
+        fila_botones.addStretch()
         layout.addLayout(fila_botones)
 
         layout_padre.addWidget(grupo)
@@ -242,7 +259,16 @@ class VentanaSatelite(QWidget):
             QMessageBox.warning(self, "Control remoto", f"No se pudo leer el archivo local: {error}")
             return
 
-        self.lbl_estado_subida.setText("Subiendo...")
+        # La radio analiza el archivo completo (recorte de silencio +
+        # nivelado) ANTES de responder -- para un tema real de varios
+        # minutos esto puede tardar bien más que un pedido normal
+        # (ver TIMEOUT_IMPORTAR_ARCHIVO_SEGUNDOS), así que se avisa
+        # explícitamente en vez de dejar la ventana "quieta" sin
+        # ninguna señal de que sigue trabajando.
+        self.lbl_estado_subida.setText("Subiendo y analizando en la radio (puede tardar unos segundos)...")
+        self.btn_elegir_archivo.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
         try:
             respuesta = self._cliente.importar_archivo(
                 os.path.basename(ruta_local), contenido_base64, datos["categoria_ruta"],
@@ -251,6 +277,9 @@ class VentanaSatelite(QWidget):
         except ErrorControlRemoto as error:
             self.lbl_estado_subida.setText(f"⚠ {error}")
             return
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.btn_elegir_archivo.setEnabled(True)
 
         if not respuesta.get("ok"):
             self.lbl_estado_subida.setText(f"⚠ {respuesta.get('error', 'Falló la subida.')}")
