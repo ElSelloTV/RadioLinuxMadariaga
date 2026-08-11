@@ -73,6 +73,7 @@ class VentanaConfiguracion(QDialog):
         self.tabs.addTab(self._crear_tab_apariencia(), "Apariencia")
         self.tabs.addTab(self._crear_tab_actualizaciones(), "Actualizaciones")
         self.tabs.addTab(self._crear_tab_diagnostico(), "Diagnóstico")
+        self.tabs.addTab(self._crear_tab_control_remoto(), "Control remoto")
         layout.addWidget(self.tabs)
 
         botones = QDialogButtonBox(
@@ -1067,6 +1068,62 @@ class VentanaConfiguracion(QDialog):
         if principal is not None and hasattr(principal, "preparar_cierre_por_actualizacion"):
             principal.preparar_cierre_por_actualizacion()
         actualizador.reiniciar_aplicacion(QApplication.instance())
+
+    # ------------------------------------------------------------------
+    # Tab: Control remoto (pedido explícito: "una app aparte satélite...
+    # pueda controlar el programa en ejecución"). Servidor embebido en
+    # el proceso principal, SIEMPRE desactivado por defecto — ver
+    # core/servidor_control_remoto.py para el protocolo y la regla de
+    # fondo (un solo escritor real de los JSON). Cambiar Activado o el
+    # puerto requiere reabrir la app, mismo criterio ya usado para el
+    # buffer de audio (`duracion_buffer_caching_ms`).
+    # ------------------------------------------------------------------
+    def _crear_tab_control_remoto(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        lbl_intro = QLabel(
+            "Permite controlar esta radio desde una app satélite aparte "
+            "(sin salida de audio) — pensado para operar por escritorio "
+            "remoto (Chrome Remote Desktop), que en Linux muestra la "
+            "sesión de OTRO usuario, no el escritorio real donde corre "
+            "esta app."
+        )
+        lbl_intro.setWordWrap(True)
+        layout.addWidget(lbl_intro)
+
+        grupo = QGroupBox("🛰 Servidor de control remoto")
+        form = QFormLayout(grupo)
+
+        self.chk_control_remoto_activado = QCheckBox("Activar (requiere reabrir la app)")
+        form.addRow(self.chk_control_remoto_activado)
+
+        self.spin_control_remoto_puerto = QSpinBox()
+        self.spin_control_remoto_puerto.setRange(1024, 65535)
+        form.addRow("Puerto (127.0.0.1):", self.spin_control_remoto_puerto)
+
+        fila_token = QHBoxLayout()
+        self.txt_control_remoto_token = QLineEdit()
+        self.txt_control_remoto_token.setReadOnly(True)
+        self.txt_control_remoto_token.setPlaceholderText("(se genera solo al activar por primera vez)")
+        btn_regenerar_token = QPushButton("🔄 Regenerar")
+        btn_regenerar_token.setToolTip(
+            "Genera un token nuevo -- cualquier app satélite con el token "
+            "viejo deja de poder conectarse."
+        )
+        btn_regenerar_token.clicked.connect(self._regenerar_token_control_remoto)
+        fila_token.addWidget(self.txt_control_remoto_token)
+        fila_token.addWidget(btn_regenerar_token)
+        form.addRow("Token (copiar a la satélite):", fila_token)
+
+        layout.addWidget(grupo)
+        layout.addStretch()
+        return widget
+
+    def _regenerar_token_control_remoto(self):
+        import secrets
+        self.txt_control_remoto_token.setText(secrets.token_hex(16))
+
     # ------------------------------------------------------------------
     def _cargar_valores_en_ui(self):
         audio = self._config["audio"]
@@ -1111,6 +1168,11 @@ class VentanaConfiguracion(QDialog):
         clima = self._config["clima"]
         self.spin_latitud.setValue(clima["latitud"])
         self.spin_longitud.setValue(clima["longitud"])
+
+        control_remoto = self._config.get("control_remoto", {})
+        self.chk_control_remoto_activado.setChecked(control_remoto.get("activado", False))
+        self.spin_control_remoto_puerto.setValue(control_remoto.get("puerto", 8765))
+        self.txt_control_remoto_token.setText(control_remoto.get("token", ""))
 
         colores_genero = self._config["apariencia"]["colores_genero"]
         for genero in LISTA_GENEROS:
@@ -1186,6 +1248,11 @@ class VentanaConfiguracion(QDialog):
 
         self._config["clima"]["latitud"] = self.spin_latitud.value()
         self._config["clima"]["longitud"] = self.spin_longitud.value()
+
+        self._config.setdefault("control_remoto", {})
+        self._config["control_remoto"]["activado"] = self.chk_control_remoto_activado.isChecked()
+        self._config["control_remoto"]["puerto"] = self.spin_control_remoto_puerto.value()
+        self._config["control_remoto"]["token"] = self.txt_control_remoto_token.text().strip()
 
         self._config["general"]["nombre_emisora"] = self.txt_nombre_emisora.text().strip()
         self._config["general"]["confirmar_antes_de_eliminar"] = self.chk_confirmar_eliminar.isChecked()

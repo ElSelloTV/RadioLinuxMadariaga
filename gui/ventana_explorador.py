@@ -1331,14 +1331,34 @@ class VentanaExplorador(QWidget):
         datos = dialogo.resultado()
         if not datos:
             return
+        self._completar_alta_archivo(
+            ruta, datos["item_categoria"], datos["titulo"], datos["artista"], datos["genero"],
+            datos.get("fecha_inicio"), datos.get("fecha_fin"),
+        )
 
-        ruta = self._copiar_a_biblioteca(ruta, datos["item_categoria"], datos["genero"])
+    def _completar_alta_archivo(self, ruta: str, item_categoria, titulo: str, artista: str, genero: str,
+                                 fecha_inicio: str = None, fecha_fin: str = None) -> dict:
+        """El "después del diálogo" de `_dar_de_alta_archivo()`, separado
+        para poder reusarlo desde OTRO punto de entrada que ya trae los
+        datos resueltos (nunca pasa por `DialogoAgregarArchivo`, que
+        necesita un `tree_categorias` VIVO en este mismo proceso) — el
+        caso real: `core/servidor_control_remoto.py`, la app satélite
+        que sube un archivo de audio desde otra sesión de usuario
+        (pedido explícito, "una app satélite... incluso subir algún
+        archivo de audio al explorador"). El código correlativo se
+        calcula acá con la MISMA fórmula que ya usaba el diálogo
+        (`GENERO_PREFIJOS_CODIGO` + cantidad de registros ya en esa
+        categoría) — un solo lugar con esa cuenta, no duplicada."""
+        registros_previos = item_categoria.data(0, ROL_ARCHIVOS) or []
+        codigo = f"{GENERO_PREFIJOS_CODIGO.get(genero, 'GEN')}{len(registros_previos) + 1:05d}"
+
+        ruta = self._copiar_a_biblioteca(ruta, item_categoria, genero)
 
         config = cargar_configuracion()
         # Pedido explícito ("corte de silencio estricto"): Publicidad
         # y Separadores usan una tolerancia sin margen — ver
         # config/settings.py:tolerancia_silencio_para_genero().
-        tolerancia = tolerancia_silencio_para_genero(config, datos["genero"])
+        tolerancia = tolerancia_silencio_para_genero(config, genero)
         umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
         objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
         analisis = analizar_audio(
@@ -1347,10 +1367,10 @@ class VentanaExplorador(QWidget):
         )
 
         registro = {
-            "titulo": datos["titulo"],
-            "artista": datos["artista"],
-            "genero": datos["genero"],
-            "codigo": datos["codigo"],
+            "titulo": titulo,
+            "artista": artista,
+            "genero": genero,
+            "codigo": codigo,
             "ruta": ruta,
             "duracion": obtener_duracion_formateada(ruta),
             "tamaño_bytes": self._tamano_bytes(ruta),
@@ -1361,11 +1381,10 @@ class VentanaExplorador(QWidget):
             # Vigencia de fecha (pedido explícito, opcional): None =
             # sin restricción. Editable después con el menú contextual
             # "Vigencia..." (ver _editar_vigencia).
-            "fecha_inicio": datos.get("fecha_inicio"),
-            "fecha_fin": datos.get("fecha_fin"),
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
         }
 
-        item_categoria = datos["item_categoria"]
         registros = item_categoria.data(0, ROL_ARCHIVOS) or []
         registros.append(registro)
         item_categoria.setData(0, ROL_ARCHIVOS, registros)
@@ -1376,6 +1395,7 @@ class VentanaExplorador(QWidget):
         self._guardar_biblioteca_debounced()
         self.archivo_agregado.emit(ruta)
         self._avisar_si_sin_marcas(registro)
+        return registro
 
     def _avisar_si_sin_marcas(self, registro: dict):
         """Pedido explícito ("veo que nunca funciona el recorte de
@@ -2984,6 +3004,25 @@ class VentanaExplorador(QWidget):
             ruta.insert(0, nodo.text(0))
             nodo = nodo.parent()
         return ruta
+
+    def listar_categorias_planas(self) -> list:
+        """Devuelve TODA la jerarquía de categorías como una lista
+        plana de `{"ruta": [...], "nivel": N}` — pedido explícito, app
+        satélite de control remoto (`core/servidor_control_remoto.py`):
+        esa app corre en OTRO proceso, sin un `tree_categorias` vivo
+        propio, así que arma su propio combo indentado a partir de
+        esto en vez de recibir referencias a `QTreeWidgetItem` (que no
+        sobreviven cruzar a otro proceso). Reusa el mismo recorrido
+        (`_para_cada_categoria`) y camino de nombres (`ruta_de_categoria`)
+        que ya usa el resto de la app, sin duplicar lógica."""
+        resultado = []
+
+        def visitar(item):
+            ruta = self.ruta_de_categoria(item)
+            resultado.append({"ruta": ruta, "nivel": len(ruta)})
+
+        self._para_cada_categoria(visitar)
+        return resultado
 
     def buscar_categoria_por_ruta(self, ruta_nombres: list):
         """Inverso de `ruta_de_categoria()`. Devuelve None si algún
