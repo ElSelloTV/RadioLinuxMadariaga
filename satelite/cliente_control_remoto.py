@@ -18,6 +18,20 @@ import json
 import socket
 
 TIMEOUT_SEGUNDOS = 6.0
+# Bug real reportado: "cuando quise cargar un archivo de música arrojó
+# error, como que no pudo conectarse" -- probado en la MISMA PC
+# (loopback, la conexión en sí nunca fue el problema). Causa real: el
+# lado del servidor, al recibir `importar_archivo`, corre
+# `analizar_audio()` (recorte de silencio + nivelado por LOUDNESS,
+# ronda 94) sobre el archivo COMPLETO antes de responder -- para un
+# tema real de varios minutos, en el hardware modesto de Santiago
+# (Celeron N2820), eso puede tardar bien más que los 6s genéricos del
+# resto de las acciones (todas casi instantáneas) -- el cliente corta
+# la espera por timeout y lo reporta como "no se pudo conectar",
+# aunque la conexión en sí haya andado perfecto y el archivo termine
+# importándose igual del otro lado. `importar_archivo()` usa un
+# timeout mucho más largo, acorde a ese trabajo real.
+TIMEOUT_IMPORTAR_ARCHIVO_SEGUNDOS = 120.0
 
 
 class ErrorControlRemoto(Exception):
@@ -32,12 +46,12 @@ class ClienteControlRemoto:
         self.puerto = puerto
         self.token = token
 
-    def _pedir(self, accion: str, params: dict = None) -> dict:
+    def _pedir(self, accion: str, params: dict = None, timeout_segundos: float = TIMEOUT_SEGUNDOS) -> dict:
         pedido = {"token": self.token, "accion": accion, "params": params or {}}
         linea = (json.dumps(pedido) + "\n").encode("utf-8")
         try:
-            with socket.create_connection((self.host, self.puerto), timeout=TIMEOUT_SEGUNDOS) as conexion:
-                conexion.settimeout(TIMEOUT_SEGUNDOS)
+            with socket.create_connection((self.host, self.puerto), timeout=timeout_segundos) as conexion:
+                conexion.settimeout(timeout_segundos)
                 conexion.sendall(linea)
                 conexion.shutdown(socket.SHUT_WR)
                 trozos = []
@@ -87,11 +101,14 @@ class ClienteControlRemoto:
 
     def importar_archivo(self, nombre_archivo: str, contenido_base64: str, categoria_ruta: list,
                           titulo: str, artista: str, genero: str) -> dict:
-        return self._pedir("importar_archivo", {
-            "nombre_archivo": nombre_archivo,
-            "contenido_base64": contenido_base64,
-            "categoria_ruta": categoria_ruta,
-            "titulo": titulo,
-            "artista": artista,
-            "genero": genero,
-        })
+        return self._pedir(
+            "importar_archivo", {
+                "nombre_archivo": nombre_archivo,
+                "contenido_base64": contenido_base64,
+                "categoria_ruta": categoria_ruta,
+                "titulo": titulo,
+                "artista": artista,
+                "genero": genero,
+            },
+            timeout_segundos=TIMEOUT_IMPORTAR_ARCHIVO_SEGUNDOS,
+        )

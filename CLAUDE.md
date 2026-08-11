@@ -11423,6 +11423,96 @@ soltó de una vez.
     extra) y confirme que esta vez sí aparece el ícono "Auto-Radio
     Tuyú — Satélite" en su Escritorio.
 
+117. ~~3 pedidos sobre la app satélite: ícono/nombre "Remoto Radio"
+    distinto, bug real de timeout en la subida de música, botones
+    cuadrados parejos~~ — tres pedidos en el mismo mensaje:
+
+    **a) Ícono y nombre distintos ("Remoto Radio")**: pedido explícito
+    — "que el icono del satelite cambie, que sea otro y ponele de
+    titulo 'Remoto Radio' con otro icono representativo". Nuevo
+    `assets/icono_satelite.png` generado con Pillow (mismo criterio ya
+    usado para el ícono principal en la ronda 64 — instalado en el
+    venv SOLO para esta generación puntual y desinstalado después,
+    nunca dependencia de la app): insignia cuadrada de esquinas
+    redondeadas con degradé AZUL/CELESTE (`#5dade2` a `#154360`,
+    deliberadamente distinta del naranja "D9" del ícono principal para
+    que se distingan de un vistazo en el Escritorio), con un glifo de
+    antena + 3 ondas de señal (concepto "control remoto/transmisión"),
+    mismo recurso de brillo glossy que el ícono principal. Aplicado en
+    los 3 lugares que lo referencian: `satelite_main.py`
+    (`app.setApplicationName`/`setWindowIcon`), `satelite/
+    ventana_satelite.py` (`setWindowTitle`), y
+    `assets/radiolinuxmadariaga_satelite.desktop` (`Name=`/`Icon=`,
+    reinstalado solo al abrir cualquiera de los dos programas gracias
+    a `asegurar_lanzadores_escritorio()` de la ronda anterior — no
+    hace falta correr nada a mano). `iniciar_satelite.sh` también
+    actualizado (título del aviso de error gráfico).
+
+    **b) Bug real — "cargar un archivo de música arrojó error, como
+    que no pudo conectarse" (probado en la MISMA PC)**: investigado a
+    fondo, la conexión en sí nunca fue el problema — causa real:
+    `core/servidor_control_remoto.py` resuelve `importar_archivo`
+    llamando a `_completar_alta_archivo()`, que corre
+    `analizar_audio()` (recorte de silencio + nivelado por LOUDNESS,
+    ronda 94) sobre el archivo COMPLETO antes de responder — para un
+    tema real de varios minutos, en el hardware modesto de Santiago
+    (Celeron N2820), eso puede tardar bien más que los
+    `TIMEOUT_SEGUNDOS = 6.0` genéricos que usaban TODOS los pedidos
+    por igual (pensados para acciones casi instantáneas como
+    ping/Play/Stop/Cut, nunca para un análisis de audio real) — el
+    cliente cortaba la espera por timeout y lo reportaba como "No se
+    pudo conectar a...", un mensaje engañoso (la conexión funcionó
+    perfecto, fue una lectura que se agotó esperando) — y, peor
+    todavía, el archivo probablemente terminaba importándose IGUAL del
+    lado de la radio (el proceso sigue corriendo aunque el cliente ya
+    se haya dado por vencido), dejando al operador sin saber si
+    funcionó o no. Corregido: `satelite/cliente_control_remoto.py`
+    ganó `TIMEOUT_IMPORTAR_ARCHIVO_SEGUNDOS = 120.0` — un timeout
+    propio, mucho más largo, exclusivo de `importar_archivo()`
+    (`_pedir()` ganó un parámetro `timeout_segundos` para que cada
+    acción pueda pedir el suyo, el resto sigue con los 6s de
+    siempre). De paso, `satelite/ventana_satelite.py` ahora avisa
+    explícitamente "Subiendo y analizando en la radio (puede tardar
+    unos segundos)..." + cursor de espera + deshabilita el botón
+    mientras dura, para que la espera más larga no se sienta como que
+    la ventana "se colgó".
+
+    **c) Botones de transporte cuadrados y parejos (salvo Play)**:
+    pedido explícito — "los demás botones (salvo el Play) se
+    estiran, dejalos cuadrados, del mismo ancho". Causa: un
+    `QPushButton` dentro de un `QHBoxLayout`, sin `addStretch()` ni
+    tamaño fijo, crece para llenar el espacio sobrante (política
+    `Minimum` por defecto) — con 3 botones de texto de distinto largo
+    ("▶ Play"/"■ Stop"/"✂ Cut"), el resultado eran anchos disparejos.
+    Corregido en `satelite/ventana_satelite.py:_fila_transporte()`:
+    Stop y Cut pasan a ser botones SOLO ícono (sin texto, con
+    tooltip — mismo criterio ya usado en los botones de transporte
+    del programa principal desde la ronda 105) con `setFixedSize(40,
+    40)` — cuadrado literal, idéntico entre los dos — más
+    `fila_botones.addStretch()` al final para que el espacio sobrante
+    lo absorba el stretch, no los botones. Play queda afuera a
+    propósito, con su texto y tamaño natural, sin ningún cambio.
+
+    Probado con `test_satelite_ronda3.py` (nuevo, dedicado): (b)
+    reproduce el escenario real con un manejador remoto que tarda
+    deliberadamente MÁS que `TIMEOUT_SEGUNDOS` (6s) pero MENOS que
+    `TIMEOUT_IMPORTAR_ARCHIVO_SEGUNDOS` (120s) — confirmado que ANTES
+    del fix esa espera hubiera cortado con error, y que con el fix la
+    subida se resuelve bien esperando lo que haga falta — + regresión
+    completa de `test_control_remoto.py`/`test_config_control_remoto.py`
+    de la ronda 112 sin fallos nuevos (la firma de `_fila_transporte()`
+    no cambió, solo su contenido interno) — + captura real (offscreen,
+    `QWidget.grab()`) confirmando visualmente que Play queda con su
+    texto y ancho natural mientras Stop/Cut quedan como cuadrados
+    idénticos — + `py_compile`/`bash -n` completos. **Sigue sin poder
+    confirmarse con la biblioteca/hardware real de Santiago**: falta
+    que confirme (1) que el ícono "Remoto Radio" (antena azul) ya
+    aparece distinto del ícono naranja del programa principal, (2) que
+    ahora SÍ puede subir un tema de música real sin el error de
+    timeout — incluso si tarda unos segundos de más, debería terminar
+    bien — y (3) que los botones Stop/Cut se ven cuadrados y parejos,
+    sin estirarse.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
