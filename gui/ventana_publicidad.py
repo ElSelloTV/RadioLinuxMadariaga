@@ -431,10 +431,13 @@ class VentanaPublicidad(QWidget):
         hijo.setData(0, ROL_ES_ALEATORIO, True)
         hijo.setData(0, ROL_CATEGORIA_ALEATORIO, categoria)
         hijo.setData(0, ROL_RECURSIVO_ALEATORIO, recursivo)
+        # Pedido explícito, ronda posterior ("letras negras sobre el
+        # turquesa de Aleatorio"): texto negro en vez de blanco, mejor
+        # contraste sobre este verde azulado en particular.
         fondo = QBrush(QColor(COLOR_ALEATORIO))
         for columna in range(3):
             hijo.setBackground(columna, fondo)
-            hijo.setForeground(columna, QBrush(QColor("white")))
+            hijo.setForeground(columna, QBrush(QColor("black")))
         nodo_bloque.addChild(hijo)
         return hijo
 

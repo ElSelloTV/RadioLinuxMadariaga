@@ -307,6 +307,20 @@ QTreeWidget#tree_categorias QHeaderView::section {{
     color: #e0e0e0;
 }}
 
+/* Barra de búsqueda de Ventana 3 (pedido explícito, ronda posterior:
+   "agregá fondo negro sobre la barra de búsqueda") — mismo criterio
+   que las listas de arriba: fondo casi negro FIJO en los dos temas
+   (reusa el mismo tono que tree_archivos), texto claro. Sin esto
+   quedaba con el fondo blanco por defecto del estilo Fusion, fuera de
+   lugar al lado de un Explorador ya oscurecido. */
+QLineEdit#txtBusqueda {{
+    background-color: {COLOR_LISTA_V3_ARCHIVOS_FONDO};
+    color: #e0e0e0;
+    border: 1px solid {p['borde']};
+    border-radius: 3px;
+    padding: 3px 6px;
+}}
+
 /* Ventana 3, árbol de categorías: NADA de QSS custom sobre ::branch a
    propósito (bug real de la ronda anterior, corregido acá) — las
    líneas de conexión que se habían agregado ahí ("hasta 5 niveles...

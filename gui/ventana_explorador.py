@@ -221,6 +221,7 @@ class VentanaExplorador(QWidget):
         # --- Barra de búsqueda (por título/artista) + Expandir/Restaurar ---
         barra_superior = QHBoxLayout()
         self.txt_busqueda = QLineEdit()
+        self.txt_busqueda.setObjectName("txtBusqueda")
         self.txt_busqueda.setPlaceholderText("Buscar por título o artista...")
         self.txt_busqueda.returnPressed.connect(self._buscar)
         self.btn_buscar = QPushButton("🔍")
@@ -362,6 +363,15 @@ class VentanaExplorador(QWidget):
         fila_archivos_1 = QHBoxLayout()
         fila_archivos_2 = QHBoxLayout()
         self.btn_agregar = QPushButton("＋ Agregar")
+        # Pedido explícito, ronda posterior ("negrita y mayúsculas al
+        # botón agregar"): QFont.Capitalization en vez de tocar el
+        # texto real del botón — Qt Style Sheets no soportan
+        # text-transform, esta es la forma real de mayusculizar solo
+        # el RENDER sin cambiar la cadena "＋ Agregar" en sí.
+        fuente_agregar = self.btn_agregar.font()
+        fuente_agregar.setBold(True)
+        fuente_agregar.setCapitalization(QFont.Capitalization.AllUppercase)
+        self.btn_agregar.setFont(fuente_agregar)
         self.btn_info = QPushButton("✏ Info")
         self.btn_info.setToolTip("Editar información (título, artista, género, categoría) sin tocar el audio")
         self.btn_reemplazar = QPushButton("⟲ Reemplazar")
