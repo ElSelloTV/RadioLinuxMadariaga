@@ -150,6 +150,27 @@ class GestorPublicidad:
         # actual y recién ahí detiene TODO — no avanza al siguiente.
         self._stop_diferido_armado = False
 
+        # Botón azul "HORA/TEMP" manual (pedido explícito, recreando el
+        # layout real de Dinesat: "reemplazamos el [Bajador] de Dinesat
+        # que no usamos por el de la Hora" -- mismo botón/mecanismo ya
+        # implementado en Ventana 2, ver core/gestor_emision.py:
+        # reproducir_hth_manual, misma explicación de diseño completa
+        # ahí). Corte LIMPIO e inmediato (detener(), nunca pausar) del
+        # motor principal, clips en un motor DEDICADO
+        # (self.motor_anuncio_manual) para no interferir con el estado
+        # de self.motor mientras suenan, y al agotarse la cola retoma
+        # la reproducción normal vía _reproducir_seleccion_o_actual()
+        # (mismo camino que el botón Play).
+        self.motor_anuncio_manual = MotorAudio(id_dispositivo)
+        self.motor_anuncio_manual.finalizo_item.connect(self._on_fin_clip_anuncio_manual)
+        self.motor_anuncio_manual.error_reproduccion.connect(
+            lambda mensaje: registrar_error(f"[HTH manual, Publicidad] {mensaje}")
+        )
+        self._cola_anuncio_manual = []
+        self._generacion_anuncio_manual = 0
+        self._generacion_clip_actual_anuncio_manual = 0
+        self.al_fallar_hth_manual = None
+
         # Callback general de "la reproducción terminó sola" (fin del
         # bloque, freno por hora de un bloque futuro, fin del árbol,
         # o cascada de errores agotada) — SchedulerAutomatico lo usa
@@ -202,6 +223,8 @@ class GestorPublicidad:
             self.ventana.solicitud_stop_diferido.connect(self._toggle_stop_diferido)
         self.ventana.item_doble_click.connect(self._on_doble_click)
         self.ventana.solicitud_buscar_posicion.connect(self._buscar_posicion)
+        if hasattr(self.ventana, "solicitud_hth_manual"):
+            self.ventana.solicitud_hth_manual.connect(self.reproducir_hth_manual)
 
         if self.persistir:
             self._timer_guardado = QTimer()
@@ -216,6 +239,7 @@ class GestorPublicidad:
         self.motor.set_volumen(volumen)
 
     def _pausar(self):
+        self._cancelar_anuncio_manual_en_curso()
         registrar_evento("Publicidad: Pausa")
         self.motor.pausar()
         self._actualizar_indicador()
@@ -258,6 +282,7 @@ class GestorPublicidad:
             self.motor.fade_volumen_a(0, self.duracion_fade_out_v1_ms / 1000.0)
 
     def _detener(self):
+        self._cancelar_anuncio_manual_en_curso()
         registrar_evento("Publicidad: Stop")
         self.motor.detener()
         self._fallos_consecutivos = 0
@@ -304,6 +329,104 @@ class GestorPublicidad:
         if hasattr(self.ventana, "set_stop_diferido_armado"):
             self.ventana.set_stop_diferido_armado(False)
         registrar_evento("Publicidad: Stop diferido desarmado")
+
+    # ------------------------------------------------------------------
+    # Botón azul "HORA/TEMP" (pedido explícito, recreando el layout
+    # real de Dinesat -- mismo mecanismo que Ventana 2, ver
+    # core/gestor_emision.py:reproducir_hth_manual para la explicación
+    # de diseño completa: por qué detener() y no pausar(), por qué un
+    # motor dedicado, y el bug real de generación evitado con
+    # `_generacion_clip_actual_anuncio_manual`).
+    # ------------------------------------------------------------------
+    def reproducir_hth_manual(self):
+        if self._ventana_explorador is None:
+            registrar_error("HTH manual (Publicidad): no hay acceso al Explorador, no se puede resolver la hora/temperatura.")
+            self._avisar_fallo_hth_manual("No se pudo acceder a la biblioteca del Explorador.")
+            return
+
+        clips = []
+        for parametro in ("HORA", "TEMPERATURA"):
+            resueltos = resolver_comando_hth(self._ventana_explorador, parametro)
+            if resueltos:
+                clips.extend(resueltos)
+
+        if not clips:
+            registrar_error(
+                "HTH manual (Publicidad): faltan los clips de voz de HORA/TEMPERATURA, o no "
+                "hay datos de clima disponibles -- no se reprodujo nada."
+            )
+            self._avisar_fallo_hth_manual(
+                "Faltan los clips de voz de HORA/TEMPERATURA, o no hay datos de clima "
+                "disponibles todavía -- no se reprodujo nada."
+            )
+            return
+
+        self._generacion_anuncio_manual += 1
+        generacion = self._generacion_anuncio_manual
+        registrar_evento(
+            f"Publicidad: HTH manual, reproduciendo {len(clips)} clip(s), cortando lo que "
+            "estuviera sonando"
+        )
+        # Corte limpio e INMEDIATO, sin fundido -- pedido explícito de
+        # la ronda que agregó este botón en Ventana 2 ("sin fade ni
+        # nada, PISANDO lo que haya sonando"), mismo criterio acá.
+        self.motor.detener()
+        self._cola_anuncio_manual = list(clips)
+        self._reproducir_siguiente_clip_anuncio_manual(generacion)
+
+    def _avisar_fallo_hth_manual(self, mensaje: str):
+        if self.al_fallar_hth_manual is not None:
+            self.al_fallar_hth_manual(mensaje)
+
+    def _cancelar_anuncio_manual_en_curso(self):
+        """Aborta la cola/motor del anuncio manual si había uno en
+        curso -- llamado desde cualquier otro punto que tome control
+        real de la reproducción mientras tanto (Stop, Pausa, Play,
+        Cut/avanzar) para que ni el audio del anuncio siga sonando de
+        fondo ni su "resume" diferido pise lo que se está por hacer."""
+        if self._cola_anuncio_manual:
+            self._cola_anuncio_manual = []
+            self._generacion_anuncio_manual += 1
+            self.motor_anuncio_manual.detener()
+
+    def _reproducir_siguiente_clip_anuncio_manual(self, generacion: int):
+        if generacion != self._generacion_anuncio_manual:
+            return  # se disparó otro anuncio manual más nuevo, o algo lo canceló
+        if not self._cola_anuncio_manual:
+            # Terminó el anuncio -- retoma la reproducción normal
+            # (mismo camino que el botón Play).
+            self._reproducir_seleccion_o_actual()
+            return
+        ruta = self._cola_anuncio_manual.pop(0)
+        # Mismo patrón que el Comando HTH real embebido en la lista
+        # (bug real corregido ahí, ronda 44 -- "no quiero silencios al
+        # final... deben ser enganchados"): se busca el registro
+        # completo por ruta para aplicar SU recorte de silencio/
+        # nivelado, así los clips de voz concatenados no dejan un
+        # hueco muerto entre uno y otro. Fail-open si el registro no
+        # aparece (nunca romper el anuncio por esto).
+        analisis = {}
+        registro = self._ventana_explorador.buscar_registro_por_ruta(ruta)
+        if registro:
+            analisis = registro
+        # Bug real evitado (mismo patrón que _generacion_pisador/lo ya
+        # corregido en Ventana 2 para este mismo botón): el slot de
+        # `motor_anuncio_manual.finalizo_item` no recibe argumentos --
+        # guardar la generación VIGENTE acá, antes de arrancar el
+        # clip, en vez de releerla "en vivo" dentro del callback
+        # async, es lo único que hace que la protección contra
+        # interrupciones (Stop/Play/Cut mientras el anuncio suena)
+        # sirva de algo.
+        self._generacion_clip_actual_anuncio_manual = generacion
+        self.motor_anuncio_manual.reproducir(
+            ruta,
+            punto_inicio_ms=analisis.get("punto_inicio_ms") or 0,
+            punto_fin_ms=analisis.get("punto_fin_ms"),
+            ganancia_db=analisis.get("ganancia_db") or 0.0,
+        )
+
+    def _on_fin_clip_anuncio_manual(self):
+        self._reproducir_siguiente_clip_anuncio_manual(self._generacion_clip_actual_anuncio_manual)
 
     def _item_valido(self, item) -> bool:
         """Pedido explícito (Dinesat): un ítem con vigencia de fecha
@@ -676,6 +799,13 @@ class GestorPublicidad:
         self._avanzar()
 
     def _reproducir_seleccion_o_actual(self):
+        # Si el operador aprieta Play mientras el anuncio manual de
+        # HORA/TEMPERATURA todavía está sonando, cancela ESE anuncio
+        # antes de arrancar nada acá (si no, el ítem armado sonaría
+        # ENCIMA de los clips todavía en curso). Si la cola ya estaba
+        # vacía (este mismo llamado puede venir del propio anuncio, al
+        # terminar), esto es un no-op.
+        self._cancelar_anuncio_manual_en_curso()
         # Pedido explícito: el Play manual de Ventana 1 SIEMPRE corta
         # Emisión con fundido, aunque esté sonando y aunque el
         # Automático esté activo — "pasar de la ventana 2 a la 1
@@ -977,6 +1107,10 @@ class GestorPublicidad:
         self.ventana.marcar_siguiente_item(candidato)
 
     def _avanzar(self):
+        # Cut (o cualquier otro disparador de avance) mientras el
+        # anuncio manual de HORA/TEMPERATURA está sonando: cancelarlo
+        # antes de tocar nada más -- mismo criterio que Ventana 2.
+        self._cancelar_anuncio_manual_en_curso()
         if self._stop_diferido_armado:
             # Pedido explícito (Dinesat, "Stop diferido"): dejar
             # terminar el ítem en reproducción y detener TODO en vez

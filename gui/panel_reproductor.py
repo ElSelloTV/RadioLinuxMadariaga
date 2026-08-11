@@ -192,10 +192,13 @@ class PanelReproductor(QWidget):
         layout_grupo.addLayout(fila_info)
 
         # 2) Controles de reproducción — grilla estilo Dinesat (pedido
-        # explícito): un botón VERDE grande a la izquierda que hace de
-        # Play (en silencio) o "Siguiente con fundido" (con algo
-        # sonando), y a la derecha una grilla de 2 filas: arriba
-        # Stop/Fade-Stop, abajo Pausa/Cut/Stop diferido.
+        # explícito, ronda de recreación fiel del layout real de
+        # Dinesat: "en la ventana 2 es exactamente igual [que Ventana
+        # 1] pero sin el botón automático" — arriba Stop/Fade/HORA-TEMP
+        # (el "Bajador" de Dinesat, sin usar, reemplazado por el botón
+        # azul de HORA/TEMP), abajo Pausa/Cut/Stop diferido). Un botón
+        # VERDE grande a la izquierda que hace de Play (en silencio) o
+        # "Siguiente con fundido" (con algo sonando).
         barra_botones = QHBoxLayout()
         barra_botones.setSpacing(4)
 
@@ -227,6 +230,25 @@ class PanelReproductor(QWidget):
         self.btn_fade_stop.clicked.connect(self._on_click_fade_stop)
         fila_superior.addWidget(self.btn_stop)
         fila_superior.addWidget(self.btn_fade_stop)
+        # Pedido explícito ("un botón color azul en los comandos de la
+        # ventana 2... reproducirse la hora y la temperatura de manera
+        # manual. Debe salir limpia, sin fade ni nada. PISANDO lo que
+        # haya sonando"; ronda posterior, recreación fiel de Dinesat:
+        # ocupa el lugar del "Bajador" de Dinesat, sin usar, en la fila
+        # de ARRIBA, no la de abajo): exclusivo de Ventana 2 (mismo
+        # criterio que permitir_ciclo_fmt) — la lógica real de resolver
+        # los clips y cortar/reanudar vive en
+        # core/gestor_emision.py:reproducir_hth_manual.
+        if self._permitir_hth_manual:
+            self.btn_hth_manual = QPushButton("🕐 HORA/TEMP")
+            self.btn_hth_manual.setObjectName("btnHthManual")
+            self.btn_hth_manual.setProperty("class", "btnTransporte")
+            self.btn_hth_manual.setToolTip(
+                "Reproduce HORA y TEMPERATURA ahora mismo, cortando de "
+                "inmediato lo que esté sonando (sin fundido)."
+            )
+            self.btn_hth_manual.clicked.connect(self.solicitud_hth_manual.emit)
+            fila_superior.addWidget(self.btn_hth_manual)
         grilla.addLayout(fila_superior)
 
         fila_inferior = QHBoxLayout()
@@ -251,23 +273,6 @@ class PanelReproductor(QWidget):
         fila_inferior.addWidget(self.btn_pausa)
         fila_inferior.addWidget(self.btn_cut)
         fila_inferior.addWidget(self.btn_stop_diferido)
-        # Pedido explícito ("un botón color azul en los comandos de la
-        # ventana 2... reproducirse la hora y la temperatura de manera
-        # manual. Debe salir limpia, sin fade ni nada. PISANDO lo que
-        # haya sonando"): 4to botón de esta fila, exclusivo de Ventana
-        # 2 (mismo criterio que permitir_ciclo_fmt) — la lógica real
-        # de resolver los clips y cortar/reanudar vive en
-        # core/gestor_emision.py:reproducir_hth_manual.
-        if self._permitir_hth_manual:
-            self.btn_hth_manual = QPushButton("🕐 HORA/TEMP")
-            self.btn_hth_manual.setObjectName("btnHthManual")
-            self.btn_hth_manual.setProperty("class", "btnTransporte")
-            self.btn_hth_manual.setToolTip(
-                "Reproduce HORA y TEMPERATURA ahora mismo, cortando de "
-                "inmediato lo que esté sonando (sin fundido)."
-            )
-            self.btn_hth_manual.clicked.connect(self.solicitud_hth_manual.emit)
-            fila_inferior.addWidget(self.btn_hth_manual)
         grilla.addLayout(fila_inferior)
 
         barra_botones.addLayout(grilla)
