@@ -336,14 +336,17 @@ QPushButton#btnPlay:hover {{ background-color: #229954; }}
    real. Solo 3 botones conservan color propio, IGUAL en los dos
    temas por ser significado y no superficie (mismo criterio que
    rojo/verde/celeste de las listas): Play (verde), HORA/TEMP
-   (celeste) y AUTOMÁTICO (rojo cuando está activo). Fuente bien
-   grande porque el glifo es ahora el ÚNICO contenido del botón (antes
-   compartía espacio con el texto). */
+   (celeste) y AUTOMÁTICO (rojo cuando está activo).
+   Pedido explícito, tras ver la app real en pantalla ("no te parecen
+   un poco grandes?"): bajado de 16pt/34x30 a 11pt/24x22 — el glifo
+   sigue siendo el único contenido del botón, pero sin ocupar tanto
+   espacio de la grilla como cuando compartía tamaño con el texto que
+   tenía antes. */
 QPushButton[class="btnTransporte"] {{
-    padding: 4px 8px;
-    font-size: 16pt;
-    min-width: 34px;
-    min-height: 30px;
+    padding: 2px 5px;
+    font-size: 11pt;
+    min-width: 24px;
+    min-height: 22px;
 }}
 
 /* Botones de acción de la Ventana 3 (Explorador) — pedido explícito
@@ -370,7 +373,7 @@ QPushButton#btnPlayPrincipal {{
     border: 2px solid #2ecc71;
     color: white;
     font-weight: bold;
-    font-size: 22pt;
+    font-size: 16pt;
 }}
 QPushButton#btnPlayPrincipal:hover {{ background-color: #229954; }}
 QPushButton#btnPlayPrincipal:pressed {{ background-color: #145a32; }}
