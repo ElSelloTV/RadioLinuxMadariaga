@@ -42,8 +42,9 @@ from core.playlist_manager import GestorPublicidad, GestorExplorador, SchedulerA
 from core.gestor_emision import GestorPlaylist
 from core.audio_engine import obtener_duracion_formateada
 from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
+from core.servidor_control_remoto import ServidorControlRemoto
 from config.settings import (
-    cargar_configuracion, registrar_evento,
+    cargar_configuracion, registrar_evento, registrar_error, guardar_configuracion,
     guardar_lista_auxiliar, listar_listas_auxiliares,
     obtener_lista_auxiliar, eliminar_lista_auxiliar,
     rutas_recientes_en_historial,
@@ -84,6 +85,7 @@ class MainWindow(QMainWindow):
         self._tamaños_splitter_previos = None
         self._cerrando_por_actualizacion = False
         self._preload_activo = False
+        self._servidor_control_remoto = None
 
         self._config = cargar_configuracion()
 
@@ -94,6 +96,7 @@ class MainWindow(QMainWindow):
         self._construir_status_bar()
         self._conectar_señales()
         self._inicializar_motores_audio()
+        self._inicializar_control_remoto()
 
         self._timer_reloj = QTimer(self)
         self._timer_reloj.timeout.connect(self._actualizar_reloj)
@@ -410,6 +413,9 @@ class MainWindow(QMainWindow):
         # la última ráfaga de cambios al cerrar el programa antes de
         # que el timer del debounce llegara a disparar solo.
         self.ventana_explorador.flush_biblioteca_pendiente()
+
+        if self._servidor_control_remoto is not None:
+            self._servidor_control_remoto.detener()
 
         self._guardar_disposicion_actual()
         if self._ventana_auxiliar is not None:
@@ -882,6 +888,140 @@ class MainWindow(QMainWindow):
                 "(sudo apt install vlc libvlc-dev). La interfaz funciona igual.",
                 8000,
             )
+
+    # ------------------------------------------------------------------
+    # Control remoto (app satélite) — pedido explícito: "una app aparte
+    # satélite... pueda controlar el programa en ejecución por el
+    # usuario Radio... incluso subir algún archivo de audio al
+    # explorador". Ver core/servidor_control_remoto.py para el
+    # servidor en sí y la regla de fondo (un solo escritor real de los
+    # JSON: este proceso, nunca la satélite directo).
+    # ------------------------------------------------------------------
+    def _inicializar_control_remoto(self):
+        cr = self._config.get("control_remoto", {})
+        if not cr.get("activado"):
+            return
+        token = cr.get("token") or ""
+        if not token:
+            import secrets
+            token = secrets.token_hex(16)
+            self._config["control_remoto"]["token"] = token
+            guardar_configuracion(self._config)
+        self._servidor_control_remoto = ServidorControlRemoto(cr.get("puerto", 8765), token, parent=self)
+        self._servidor_control_remoto.manejador = self._manejar_comando_remoto
+        ok, error = self._servidor_control_remoto.iniciar()
+        if ok:
+            registrar_evento(f"Control remoto: servidor escuchando en 127.0.0.1:{self._servidor_control_remoto.puerto()}")
+        else:
+            registrar_error(f"Control remoto: no se pudo iniciar el servidor — {error}")
+            self.statusBar().showMessage(f"Control remoto: no se pudo iniciar ({error})", 8000)
+
+    def _manejar_comando_remoto(self, accion: str, params: dict) -> dict:
+        """Resuelve un pedido de la app satélite. Reusa SIEMPRE los
+        mismos métodos que ya usa la GUI principal (nunca escribe JSON
+        por su cuenta) — ver la nota de diseño en
+        core/servidor_control_remoto.py."""
+        if accion == "ping":
+            return {"ok": True, "datos": {"app": "Auto-Radio Tuyú"}}
+        if accion == "listar_categorias":
+            return {"ok": True, "datos": {"categorias": self.ventana_explorador.listar_categorias_planas()}}
+        if accion == "listar_generos":
+            from gui.styles import LISTA_GENEROS
+            return {"ok": True, "datos": {"generos": LISTA_GENEROS}}
+        if accion == "estado_transporte":
+            return {"ok": True, "datos": self._estado_transporte_remoto()}
+        if accion == "accion_transporte":
+            return self._accion_transporte_remota(params.get("ventana", ""), params.get("accion", ""))
+        if accion == "importar_archivo":
+            return self._importar_archivo_remoto(params)
+        return {"ok": False, "error": f"Acción desconocida: {accion}"}
+
+    def _estado_transporte_remoto(self) -> dict:
+        v1 = self.ventana_publicidad
+        v2 = self.ventana_emision.panel
+        return {
+            "v1": {
+                "ahora": v1.lbl_titulo_actual.text(),
+                "luego": v1.lbl_titulo_siguiente.text(),
+                "automatico_activo": v1.esta_en_automatico(),
+            },
+            "v2": {
+                "ahora": v2.lbl_titulo_actual.text(),
+                "luego": v2.lbl_titulo_siguiente.text(),
+                "stop_bloqueado": v2._stop_bloqueado_por_automatico,
+            },
+        }
+
+    def _accion_transporte_remota(self, ventana: str, accion: str) -> dict:
+        """Dispara el MISMO botón que apretaría el operador en persona
+        (`boton.click()`, no un atajo por señal aparte) — así respeta
+        cualquier guard/confirmación que ya tenga ese botón, sin
+        duplicar esa lógica acá. Único caso especial: el Stop de
+        Ventana 2 puede quedar bloqueado por el Automático de Ventana 1
+        y mostrar un QMessageBox MODAL — clickearlo a ciegas congelaría
+        el proceso principal esperando un click que nadie puede dar
+        del otro lado del socket, así que ACÁ se chequea el mismo flag
+        que usa ese botón y se devuelve un error en vez de clickear."""
+        if ventana == "v1":
+            objetivo = self.ventana_publicidad
+        elif ventana == "v2":
+            objetivo = self.ventana_emision.panel
+        else:
+            return {"ok": False, "error": f"Ventana desconocida: {ventana!r} (usar 'v1' o 'v2')"}
+
+        if ventana == "v2" and accion == "stop" and objetivo._stop_bloqueado_por_automatico:
+            return {"ok": False, "error": "Stop bloqueado: el modo AUTOMÁTICO de Ventana 1 está activo."}
+
+        boton = {"play": "btn_play", "stop": "btn_stop", "cut": "btn_cut"}.get(accion)
+        if boton is None or not hasattr(objetivo, boton):
+            return {"ok": False, "error": f"Acción desconocida: {accion!r} (usar 'play', 'stop' o 'cut')"}
+        getattr(objetivo, boton).click()
+        return {"ok": True}
+
+    def _importar_archivo_remoto(self, params: dict) -> dict:
+        import base64
+        import os
+        import tempfile
+
+        nombre_archivo = (params.get("nombre_archivo") or "").strip()
+        contenido_base64 = params.get("contenido_base64") or ""
+        categoria_ruta = params.get("categoria_ruta") or []
+        titulo = (params.get("titulo") or "").strip()
+        artista = (params.get("artista") or "").strip()
+        genero = params.get("genero") or ""
+
+        if not nombre_archivo or not contenido_base64:
+            return {"ok": False, "error": "Falta el archivo (nombre_archivo/contenido_base64)."}
+        if not titulo:
+            return {"ok": False, "error": "Falta el título."}
+
+        from gui.styles import LISTA_GENEROS
+        if genero not in LISTA_GENEROS:
+            return {"ok": False, "error": f"Género inválido: {genero!r} (opciones: {', '.join(LISTA_GENEROS)})"}
+
+        item_categoria = self.ventana_explorador.buscar_categoria_por_ruta(categoria_ruta)
+        if item_categoria is None:
+            return {"ok": False, "error": f"No se encontró la categoría {categoria_ruta!r}."}
+
+        try:
+            contenido = base64.b64decode(contenido_base64)
+        except (ValueError, TypeError) as error:
+            return {"ok": False, "error": f"El archivo llegó corrupto (base64 inválido): {error}"}
+
+        _, extension = os.path.splitext(nombre_archivo)
+        descriptor, ruta_temporal = tempfile.mkstemp(suffix=extension or ".mp3", prefix="subida_remota_")
+        try:
+            with os.fdopen(descriptor, "wb") as f:
+                f.write(contenido)
+            registro = self.ventana_explorador._completar_alta_archivo(
+                ruta_temporal, item_categoria, titulo, artista, genero,
+            )
+        finally:
+            if os.path.exists(ruta_temporal):
+                os.remove(ruta_temporal)
+
+        registrar_evento(f"Control remoto: archivo subido e importado — \"{titulo}\" ({registro['codigo']})")
+        return {"ok": True, "datos": {"codigo": registro["codigo"], "ruta": registro["ruta"]}}
 
     def _aplicar_configuracion_en_vivo(self):
         """Aplica la configuración recién guardada SIN recrear ni

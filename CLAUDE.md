@@ -10982,6 +10982,206 @@ soltó de una vez.
     barra de búsqueda ya no desentona, y que el botón Agregar se nota
     más con negrita+mayúsculas.
 
+112. ~~App satélite de control remoto — botonera auxiliar para
+    Chrome Remote Desktop, sin salida de audio: subir archivos al
+    Explorador + control básico de transporte V1/V2~~ — Santiago
+    planteó primero una consulta exploratoria: "Si yo habilitó el
+    manejo de la PC desde el escritorio remoto de Chrome, lo logro
+    hacer pero veo un escritorio limpio ya que es otro usuario. Como
+    se te ocurre que podríamos implementar... que pueda controlar el
+    programa en ejecución por el usuario Radio... incluso subir algun
+    archivo de audio al explorador?" — un problema real y conocido de
+    Linux: el modo desatendido de Chrome Remote Desktop crea una
+    sesión X VIRTUAL nueva en vez de conectarse a la sesión física ya
+    corriendo, así que el operador nunca ve la radio real. Tras
+    explicar la alternativa (una app satélite que controle la app
+    principal por RPC, en vez de intentar "ver" su pantalla), Santiago
+    confirmó el diseño concreto:
+
+    > "Se me ocurre una botonera (una app auxiliar) con la información
+    > y accion de las 3 ventanas 1, 2 y 3... el operador se conecta
+    > remotamente usando el escritorio remoto de Chrome ingresa abre
+    > el correo en la PC de la radio, descarga y sube el archivo...
+    > Claro que todo debe tener impacto en el JSON. Sería un programa
+    > aparte satélite sin salida de audio, es lo único que quedaría
+    > afuera."
+
+    Confirmado el alcance de esta primera ronda con `AskUserQuestion`:
+    **"Subir archivos + control básico de transporte"** — Programador/
+    Musicalizador remotos quedan explícitamente para una ronda futura.
+
+    **Decisión de arquitectura de fondo, explicada a Santiago ANTES de
+    programar (el riesgo real que había que evitar)**: un segundo
+    proceso escribiendo DIRECTO los mismos JSON que la app principal
+    ya tiene en memoria y persiste con debounce (`biblioteca.json`,
+    `playlist_emision.json`, etc.) es una carrera de escritura
+    condenada a corromper datos o perder cambios — exactamente la
+    misma clase de bug ya sufrida y corregida en la ronda 91 (nombre
+    de archivo temporal fijo compartido entre dos procesos). La
+    solución adoptada: la app satélite **nunca toca ningún archivo de
+    la radio** — habla por RPC con la app principal, que sigue siendo
+    la ÚNICA que lee/escribe el estado real; toda acción remota se
+    ejecuta DENTRO del proceso principal, con las mismas garantías
+    (validaciones, persistencia debounced, señales) que una acción
+    local.
+
+    **Servidor embebido** (`core/servidor_control_remoto.py`, nuevo):
+    `ServidorControlRemoto(QObject)` sobre `QTcpServer` — atado
+    EXCLUSIVAMENTE a `QHostAddress.LocalHost` (127.0.0.1, nunca la red
+    real; la app satélite corre en OTRA sesión de usuario de la MISMA
+    PC física, loopback alcanza siempre — Chrome Remote Desktop de
+    Santiago ya se conecta a esa misma máquina). Protocolo JSON
+    delimitado por salto de línea, una conexión por pedido. Cada
+    mensaje lleva un `token` — si no coincide con el configurado, el
+    servidor corta la conexión SIN responder nada (ni un error
+    explícito que confirme que el puerto está vivo). `mw.manejador`
+    es un callback puro (`(accion, params) -> dict`) que
+    `MainWindow` conecta — el servidor en sí no sabe nada de radio,
+    solo enruta.
+
+    **Config nueva** (`config/settings.py`, sección `control_remoto`
+    en `CONFIG_POR_DEFECTO`: `activado: False`, `puerto: 8765`,
+    `token: ""`) — **desactivado por defecto**, una instalación
+    existente nunca empieza a escuchar en un puerto sin que Santiago
+    lo prenda a mano. `MainWindow._inicializar_control_remoto()`
+    (llamada después de `_inicializar_motores_audio()`): si está
+    activado y no hay token guardado, genera uno nuevo
+    (`secrets.token_hex(16)`, 32 caracteres hex) y lo persiste — así
+    activar el servidor por primera vez nunca deja un token vacío/
+    predecible. Requiere reabrir la app para tomar efecto (mismo
+    criterio ya usado para el buffer de audio/otros argumentos de
+    instancia fijos al arrancar). Nueva pestaña **"Control remoto"**
+    en Configuración (`gui/ventana_configuracion.py`): checkbox
+    Activar + puerto + campo de token de solo lectura con botón
+    "🔄 Regenerar".
+
+    **Acciones remotas implementadas** (`MainWindow._manejar_comando_remoto()`):
+    - `ping` — comprobación de vida.
+    - `listar_categorias` / `listar_generos` — para poblar el combo
+      de categoría (indentado por nivel, vía
+      `VentanaExplorador.listar_categorias_planas()`, nuevo) y de
+      género del diálogo de subida, sin duplicar ninguna lista fija.
+    - `estado_transporte` — título "Ahora"/"Luego" y estado de
+      Automático/bloqueo de Stop de V1 y V2, para que la botonera
+      muestre algo útil sin tener que adivinar.
+    - `accion_transporte(ventana, accion)` — Play/Stop/Cut de V1 o
+      V2. **Decisión de diseño clave**: en vez de un atajo paralelo
+      que emita una señal, se hace `getattr(objetivo,
+      boton).click()` sobre el botón REAL (`btn_play`/`btn_stop`/
+      `btn_cut`) — así CUALQUIER guard que ya exista sobre ese botón
+      (ej. el de la ronda 108, que en V1 apaga el Automático solo al
+      apretar Stop) se aplica automáticamente, sin duplicar ni una
+      línea de esa lógica ni arriesgar que se desincronice con el
+      botón real más adelante.
+    - `importar_archivo(...)` — sube un archivo de audio (bytes en
+      base64) a una categoría del Explorador, exactamente como si se
+      hubiera usado "＋ Agregar" a mano.
+
+    **Riesgo real detectado y evitado ANTES de escribir el código
+    (no un bug encontrado después)**: el botón Stop de Ventana 2, con
+    el Automático de Ventana 1 activo, muestra un `QMessageBox.
+    information()` BLOQUEANTE ("primero desactivá el Automático") —
+    si `accion_transporte` lo hubiera clickeado a ciegas, ese diálogo
+    modal habría congelado el proceso PRINCIPAL entero esperando un
+    click que nadie puede dar desde el otro lado de un socket (mismo
+    tipo de problema ya documentado para diálogos modales bloqueando
+    drag&drop, ronda 103, pero acá aplicado a un handler remoto).
+    Corregido chequeando `objetivo._stop_bloqueado_por_automatico`
+    ANTES de clickear — si está bloqueado, se devuelve un error
+    explícito por el socket en vez de tocar el botón. Confirmado con
+    un test que mockea `QMessageBox.information` y verifica que NUNCA
+    se llama para ese caso puntual. V1 no necesitó el mismo guard —
+    desde la ronda 108, Stop de V1 ya no muestra ningún diálogo (apaga
+    el Automático en silencio); Play y Cut de las dos ventanas se
+    confirmaron (por lectura de código) sin ningún diálogo bloqueante
+    en su camino.
+
+    **Refactor para compartir código real con el alta local** — nuevo
+    `VentanaExplorador._completar_alta_archivo(ruta, item_categoria,
+    titulo, artista, genero, fecha_inicio=None, fecha_fin=None) -> dict`,
+    extraído de `_dar_de_alta_archivo()` (que ahora solo arma el
+    diálogo y le pasa el resultado a este método): calcula el código
+    correlativo, copia el archivo a la biblioteca administrada
+    (`_copiar_a_biblioteca()`, ya existente desde la ronda 100),
+    analiza el silencio/nivelado, arma el registro, lo persiste
+    (`_guardar_biblioteca_debounced()`) y emite `archivo_agregado`.
+    `_importar_archivo_remoto()` (`MainWindow`) decodifica el base64
+    a un archivo temporal (`tempfile.mkstemp()`, prefijo
+    `subida_remota_`, borrado siempre en un `finally`), valida género
+    contra `LISTA_GENEROS` y categoría contra
+    `buscar_categoria_por_ruta()`, y llama a este MISMO método — el
+    alta remota pasa por el camino YA probado de análisis/persistencia,
+    sin ningún atajo paralelo.
+
+    **App satélite** (`satelite/`, paquete nuevo, + `satelite_main.py`
+    en la raíz — pensada para correr en la OTRA sesión de usuario de
+    la misma PC física, sin ninguna salida de audio):
+    - `cliente_control_remoto.py`: `ClienteControlRemoto` — sockets
+      bloqueantes estándar (`socket.create_connection()`, timeout
+      6s), `ErrorControlRemoto` si la conexión falla o el token es
+      incorrecto (el servidor corta sin responder, ver arriba).
+    - `config_satelite.py`: persiste host/puerto/token en
+      `~/.auto_radio_tuyu_satelite.json` — así el operador no tiene
+      que volver a tipear la conexión cada vez que abre la botonera.
+    - `dialogo_subir_archivo.py`: `DialogoSubirArchivo` — combo de
+      categoría indentado por nivel (a partir de la lista plana que
+      manda el servidor), título/artista, combo de género — mismo
+      flujo mental que el diálogo local de "＋ Agregar".
+    - `ventana_satelite.py`: `VentanaSatelite` — panel de Conexión
+      (host/puerto/token + "🔌 Conectar"), panel de Transporte (dos
+      grupos, Ventana 1 y Ventana 2, cada uno con Ahora/Luego + Play/
+      Stop/Cut), refrescado por un `QTimer` de polling cada 3s
+      (`INTERVALO_POLLING_MS`), y panel de Subida ("📂 Elegir archivo
+      y subir...", que arma el diálogo de arriba y sube en base64).
+
+    Probado con `test_control_remoto.py` (nuevo, dedicado, 18+
+    verificaciones de punta a punta): arranque del servidor embebido
+    en una `MainWindow` real (puerto `0`, el SO elige uno libre, para
+    nunca chocar con nada en la máquina de test); patrón de testing
+    nuevo para esta combinación (Qt event loop + cliente de socket
+    bloqueante en el MISMO proceso) — el cliente corre en un
+    `threading.Thread` mientras el hilo principal bombea
+    `app.processEvents()` en un loop con timeout, evitando el
+    deadlock que resultaría de llamar al socket bloqueante directo
+    sobre el hilo que tiene que estar corriendo el event loop del
+    servidor; ping y token incorrecto (sin respuesta); listar
+    categorías/géneros contra un árbol real; estado de transporte;
+    Cut de V1 clickeando el botón REAL (confirmado conectando un
+    contador al `clicked` del propio botón); ventana/acción
+    desconocida con error prolijo; el caso crítico del Stop de V2
+    bloqueado por Automático (confirmado que el diálogo NUNCA se
+    muestra); rechazo de género inválido y de categoría inexistente;
+    importación de un WAV real de punta a punta (código con el
+    prefijo correcto, el registro queda en la categoría real EN
+    MEMORIA del proceso principal, persistido de verdad en
+    `biblioteca.json`, y el temporal de subida se limpia sin dejar
+    huérfanos) — + `test_config_control_remoto.py` (pestaña nueva de
+    Configuración: valores por defecto, activar+cambiar puerto+
+    regenerar token persiste, reabrir refleja lo guardado) + módulos
+    del satélite en aislado (round-trip de `config_satelite`,
+    `DialogoSubirArchivo` arma el combo indentado y expone el
+    resultado) — + `py_compile` completo de los 8 archivos tocados/
+    nuevos + smoke test de arranque de `main.py` Y `satelite_main.py`
+    sin traceback (offscreen, corrido hasta timeout sin errores). Se
+    generó y envió a Santiago una captura real del layout de la app
+    satélite (`satelite_app.png`, con datos de ejemplo — conexión
+    activa, Ahora/Luego de V1 y V2, botones de transporte, panel de
+    subida). **Sigue sin poder confirmarse con Chrome Remote Desktop
+    real, dos sesiones de usuario Linux reales, ni condiciones de red
+    reales** (el sandbox solo pudo ejercitar loopback dentro de un
+    mismo proceso): falta que Santiago (1) active el servidor en
+    Configuración → Control remoto y reabra la app, (2) copie host/
+    puerto/token a la app satélite corriendo en la otra sesión de
+    usuario (`python3 satelite_main.py` desde el mismo checkout del
+    repo, con el venv activado), (3) confirme que puede subir un
+    archivo de audio real al Explorador con el mismo flujo de
+    categoría/género de siempre, y (4) confirme que Play/Stop/Cut de
+    V1 y V2 desde la botonera realmente actúan sobre la radio en vivo
+    y que el estado Ahora/Luego se refresca solo. Queda pendiente,
+    para una ronda futura y ya avisado a Santiago, extender la
+    botonera a Programador/Musicalizador — fuera del alcance elegido
+    para esta ronda.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que

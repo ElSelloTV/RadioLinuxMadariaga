@@ -185,6 +185,18 @@ CONFIG_POR_DEFECTO = {
         "latitud": -37.0167,
         "longitud": -57.1167,
     },
+    # Control remoto (pedido explícito: "una app aparte satélite...
+    # pueda controlar el programa en ejecución" desde otra sesión de
+    # usuario, ej. conectada por escritorio remoto de Chrome). Servidor
+    # embebido en el proceso principal (ver core/servidor_control_remoto.py),
+    # SIEMPRE desactivado por defecto — nunca escucha un puerto sin que
+    # el operador lo prenda a mano en Configuración. El token se genera
+    # solo (aleatorio) la primera vez que se activa.
+    "control_remoto": {
+        "activado": False,
+        "puerto": 8765,
+        "token": "",
+    },
 }
 
 
