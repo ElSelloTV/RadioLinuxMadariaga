@@ -10752,6 +10752,55 @@ soltó de una vez.
     operador vuelve a apretar el ícono varias veces, ahora ve el
     aviso "ya está abierto" en vez de terminar con 2-3 instancias
     sonando a la vez.
+108. ~~Stop de Ventana 1 apaga el Automático de una, sin aviso~~ —
+    pedido explícito, acotado a propósito: "en la ventana 1, SOLO EN
+    LA 1, al apretar el botón stop, también saque el automático, es
+    decir, detenga la reproducción de la ventana 1 y al mismo tiempo
+    saque el automático sin aviso." Reemplaza, SOLO para el botón
+    Stop, el comportamiento de bloqueo con aviso que ya tenían Stop/
+    Fade-Stop/Stop diferido desde una ronda mucho anterior ("con el
+    Automático activo, no se puede detener... primero desactivá el
+    Automático").
+
+    `VentanaPublicidad._on_click_stop()` (`gui/ventana_publicidad.py`):
+    con el Automático activo, en vez de llamar a
+    `_avisar_bloqueado_por_automatico()` y salir sin hacer nada, ahora
+    apaga el botón (`btn_automatico.setChecked(False)`) y llama
+    DIRECTO a `_toggle_automatico()` — nunca a
+    `_on_click_automatico()` (el handler real del click del botón,
+    que desde la ronda 54 pide confirmación Sí/No) — mismo criterio ya
+    usado por el arranque de la app para poner el Automático en un
+    estado sin pasar por ningún diálogo. `setChecked()` no dispara la
+    señal `clicked` (solo la dispara una interacción real del
+    operador), así que este camino nunca termina disparando el
+    diálogo de confirmación por su cuenta — exactamente el "sin
+    aviso" pedido. Recién después de eso, `solicitud_stop.emit()` de
+    siempre, deteniendo la reproducción en el mismo gesto. **Fade-Stop
+    y Stop diferido NO se tocaron** (pedido puntual: "solo en la 1...
+    al apretar el botón stop") — siguen bloqueados con el mismo aviso
+    de siempre si el Automático está activo. **Ventana 2 tampoco se
+    tocó** (nunca tuvo botón AUTOMÁTICO — su Stop usa un mecanismo
+    completamente distinto, `set_stop_habilitado()`, sin relación con
+    este cambio).
+
+    Probado con `test_stop_apaga_automatico_v1.py` (nuevo, dedicado):
+    con `QMessageBox.question`/`QMessageBox.information` mockeados
+    para poder detectar si SE LLEGAN A DISPARAR (no deben, ninguno de
+    los dos), Stop con el Automático activo lo apaga de una
+    (`esta_en_automatico()` pasa a `False`, `lbl_estado` a "Modo
+    Manual", `automatico_cambiado` emite `False` una sola vez) Y
+    dispara `solicitud_stop` en el mismo click; con el Automático ya
+    apagado, Stop se comporta exactamente igual que siempre (sin
+    emitir `automatico_cambiado` de nuevo); Fade-Stop y Stop diferido
+    confirmados SIN CAMBIOS — siguen mostrando el aviso de bloqueo y
+    NUNCA apagan el Automático por su cuenta; Ventana 2 confirmada sin
+    el botón — + suite de regresión completa de los 8 scripts de test
+    de rondas anteriores en este mismo bloque de trabajo sin fallos
+    nuevos + `py_compile` completo + smoke test de arranque sin
+    traceback. **Sigue sin poder confirmarse con audio/hardware
+    real**: falta que Santiago confirme que, con el Automático activo,
+    apretar Stop en Ventana 1 corta la reproducción y apaga el
+    Automático de una sola vez, sin ningún diálogo de por medio.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
