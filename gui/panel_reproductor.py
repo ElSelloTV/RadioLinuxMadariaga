@@ -202,9 +202,13 @@ class PanelReproductor(QWidget):
         barra_botones = QHBoxLayout()
         barra_botones.setSpacing(4)
 
-        self.btn_play = QPushButton("▶\nPLAY /\nSIG.")
+        # Pedido explícito ("sin texto, recrear el mismo diseño de
+        # botones... botón play verde"): solo el glifo, sin la palabra
+        # "PLAY/SIG." — la explicación completa vive en el tooltip.
+        self.btn_play = QPushButton("▶")
         self.btn_play.setObjectName("btnPlayPrincipal")
         self.btn_play.setToolTip(
+            "Play / Siguiente con fundido\n\n"
             "En silencio: reproduce el ítem elegido.\n"
             "Con algo sonando: pasa al ítem en cola (verde) con fundido."
         )
@@ -216,16 +220,21 @@ class PanelReproductor(QWidget):
         grilla = QVBoxLayout()
         grilla.setSpacing(3)
 
+        # Pedido explícito ("sin texto... el resto grises"): Stop/Fade/
+        # Pausa/Cut/Stop-diferido quedan solo con su glifo, sin
+        # palabra, y sin color de identidad propio (gris genérico,
+        # ver gui/styles.py) — la función se distingue por el ÍCONO,
+        # como en Dinesat real, y por el tooltip al pasar el mouse.
         fila_superior = QHBoxLayout()
         fila_superior.setSpacing(3)
-        self.btn_stop = QPushButton("■ STOP")
+        self.btn_stop = QPushButton("■")
         self.btn_stop.setObjectName("btnStop")
         self.btn_stop.setProperty("class", "btnTransporte")
-        self.btn_stop.setToolTip("Corte seco e inmediato.")
-        self.btn_fade_stop = QPushButton("◢ FADE")
+        self.btn_stop.setToolTip("Stop: corte seco e inmediato.")
+        self.btn_fade_stop = QPushButton("◢")
         self.btn_fade_stop.setObjectName("btnFadeStop")
         self.btn_fade_stop.setProperty("class", "btnTransporte")
-        self.btn_fade_stop.setToolTip("Fundido hasta apagar el ítem en reproducción.")
+        self.btn_fade_stop.setToolTip("Fade: fundido hasta apagar el ítem en reproducción.")
         self.btn_stop.clicked.connect(self._on_click_stop)
         self.btn_fade_stop.clicked.connect(self._on_click_fade_stop)
         fila_superior.addWidget(self.btn_stop)
@@ -235,17 +244,17 @@ class PanelReproductor(QWidget):
         # manual. Debe salir limpia, sin fade ni nada. PISANDO lo que
         # haya sonando"; ronda posterior, recreación fiel de Dinesat:
         # ocupa el lugar del "Bajador" de Dinesat, sin usar, en la fila
-        # de ARRIBA, no la de abajo): exclusivo de Ventana 2 (mismo
-        # criterio que permitir_ciclo_fmt) — la lógica real de resolver
-        # los clips y cortar/reanudar vive en
+        # de ARRIBA, no la de abajo, y pasó de azul a celeste): exclusivo
+        # de Ventana 2 (mismo criterio que permitir_ciclo_fmt) — la
+        # lógica real de resolver los clips y cortar/reanudar vive en
         # core/gestor_emision.py:reproducir_hth_manual.
         if self._permitir_hth_manual:
-            self.btn_hth_manual = QPushButton("🕐 HORA/TEMP")
+            self.btn_hth_manual = QPushButton("🕐")
             self.btn_hth_manual.setObjectName("btnHthManual")
             self.btn_hth_manual.setProperty("class", "btnTransporte")
             self.btn_hth_manual.setToolTip(
-                "Reproduce HORA y TEMPERATURA ahora mismo, cortando de "
-                "inmediato lo que esté sonando (sin fundido)."
+                "Hora/Temperatura: reproduce HORA y TEMPERATURA ahora mismo, "
+                "cortando de inmediato lo que esté sonando (sin fundido)."
             )
             self.btn_hth_manual.clicked.connect(self.solicitud_hth_manual.emit)
             fila_superior.addWidget(self.btn_hth_manual)
@@ -253,13 +262,14 @@ class PanelReproductor(QWidget):
 
         fila_inferior = QHBoxLayout()
         fila_inferior.setSpacing(3)
-        self.btn_pausa = QPushButton("❚❚ PAUSA")
+        self.btn_pausa = QPushButton("❚❚")
         self.btn_pausa.setProperty("class", "btnTransporte")
-        self.btn_cut = QPushButton("✂ CUT")
+        self.btn_pausa.setToolTip("Pausa.")
+        self.btn_cut = QPushButton("✂")
         self.btn_cut.setObjectName("btnCut")
         self.btn_cut.setProperty("class", "btnTransporte")
-        self.btn_cut.setToolTip("Corte seco e inmediato al ítem en cola (antes \"Siguiente\").")
-        self.btn_stop_diferido = QPushButton("◷ STOP…")
+        self.btn_cut.setToolTip("Cut: corte seco e inmediato al ítem en cola (antes \"Siguiente\").")
+        self.btn_stop_diferido = QPushButton("◷")
         self.btn_stop_diferido.setObjectName("btnStopDiferido")
         self.btn_stop_diferido.setProperty("class", "btnTransporte")
         self.btn_stop_diferido.setProperty("armado", "false")

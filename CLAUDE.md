@@ -10495,6 +10495,98 @@ soltó de una vez.
     si la disposición ahora se siente "en el lugar de siempre" para
     los operadores, y que el HORA/TEMP de Ventana 1 corte y reanude
     igual de bien que el de Ventana 2.
+105. ~~Botones de transporte SIN TEXTO (solo ícono) + recoloreo
+    completo estilo Dinesat real (Play verde, HORA/TEMP celeste,
+    AUTOMÁTICO rojo, el resto gris neutro en los 2 temas)~~ — pedido
+    explícito, con las etiquetas de texto todavía puestas de la ronda
+    anterior: "Los textos son piolas, se podrá poner sin texto y
+    recrear exactamente el mismo diseño de botones? con esos
+    graficos? o lo más parecido, color, etc... (boton play verde, el
+    de la hora celeste, el automatico en rojo. El resto grises como
+    la imagen en tema claro y oscuro." Contradecía directamente un
+    cambio de 2 rondas atrás (recolorear AUTOMÁTICO de rojo a dorado
+    "para no confundirse con Stop, también rojo") — confirmado con
+    `AskUserQuestion` antes de tocar nada: Santiago eligió "Rojo, como
+    Dinesat real", aceptando explícitamente que la diferencia con Stop
+    pasa a ser la FORMA del glifo (🔁 vs ■), no el color — ya que Stop
+    también pasa a ser gris neutro en esta misma ronda.
+
+    **Texto fuera, ícono como único contenido** (`gui/panel_reproductor.py`
+    Ventana 2/Auxiliar, `gui/ventana_publicidad.py` Ventana 1 — misma
+    edición espejada en los dos, cada uno con su propio código de UI,
+    ver "Cosas ya resueltas" sobre por qué no comparten): los 7
+    botones de transporte (Play/Stop/Fade-Stop/HORA-TEMP/Pausa/Cut/
+    Stop-diferido) perdieron el texto (`"■ STOP"` → `"■"`,
+    `"▶\nPLAY /\nSIG."` → `"▶"`, etc.) — el detalle que antes vivía en
+    la etiqueta ahora vive en el `setToolTip()` de cada uno (varios ya
+    tenían tooltip, se completaron los que no). El botón AUTOMÁTICO
+    (`gui/ventana_publicidad.py`) pasó de `QPushButton("AUTO")` con
+    `.setText("AUTO"/"MANUAL")` en `_toggle_automatico()` a
+    `QPushButton("🔁")` fijo — el glifo ya NO cambia entre estados,
+    solo el color (ver abajo) y `lbl_estado`/el tooltip siguen dando
+    el estado completo en texto en otro lugar. `gui/styles.py`:
+    `QPushButton[class="btnTransporte"]` subió su `font-size` de 8pt a
+    16pt (más `min-width`/`min-height`) para que el glifo, ahora único
+    contenido del botón, se vea bien de tamaño sin la etiqueta
+    ocupando espacio; `#btnPlayPrincipal` subió de 9pt a 22pt por el
+    mismo motivo.
+
+    **Recoloreo — "el resto grises" es el cambio de fondo, no solo
+    quitar 2 colores puntuales**: antes de esta ronda, CUATRO botones
+    tenían relleno de "identidad" propio — Stop (rojo `#922b21`),
+    Fade-Stop (violeta), Cut (gris azulado), y AUTOMÁTICO (dorado en
+    ON, con borde dorado en OFF, de la ronda anterior). Pedido
+    explícito: solo Play (verde), HORA/TEMP (celeste) y AUTOMÁTICO
+    (rojo, ahora deliberado) conservan color propio — TODO el resto
+    (Stop, Fade-Stop, Cut, Pausa, Stop diferido en su estado
+    "desarmado") cae al gris genérico de `QPushButton`
+    (`p['boton_fondo']`/`p['borde']`, theme-aware). Se ELIMINARON por
+    completo los bloques QSS `#btnStop`/`#btnFadeStop`/`#btnCut` (ya
+    no hay ningún selector con su nombre en la hoja generada, en
+    ninguno de los 2 temas — confirmado por test). `#btnAutomatico
+    [activo="true"]` volvió a `COLOR_AUTOMATICO_ON = COLOR_REPRODUCIENDO`
+    (el mismo rojo semántico de "reproduciendo" en las listas — un
+    reuso deliberado, no una coincidencia: es el mismo criterio ya
+    usado para el Pisador en una ronda mucho anterior, "el pisador
+    toma el color de arriba"); `[activo="false"]` pasó de un borde
+    dorado permanente a `p['boton_fondo']`/`p['borde']` genérico —
+    gris igual que Stop/Fade/Cut cuando está OFF, rojo SOLO cuando el
+    modo está realmente activo, la señal más fuerte posible. Se
+    eliminaron las constantes `COLOR_AUTOMATICO_OFF`/
+    `COLOR_AUTOMATICO_OFF_BORDE` (sin usar en ningún otro lado,
+    confirmado por grep antes de borrar). El botón HORA/TEMP
+    (`#btnHthManual`) pasó de azul oscuro (`#2980b9`, texto blanco) a
+    celeste (`#5dade2`, texto NEGRO — el celeste es un color claro,
+    blanco sobre él da bajo contraste) — mismo tono que
+    `COLOR_SELECCION`, hardcodeado en el bloque QSS por la misma razón
+    ya documentada para `COLOR_COMANDO` en una ronda anterior (ese
+    bloque se genera antes de que la constante esté definida más abajo
+    en el archivo).
+
+    Probado extendiendo `test_boton_hth_manual_y_automatico.py`
+    (import roto arreglado — las 2 constantes eliminadas ya no se
+    importan): el glifo del AUTOMÁTICO es IDÉNTICO en ON y OFF (sin
+    rastro de "AUTO"/"MANUAL"/"MAN"), `COLOR_AUTOMATICO_ON` es
+    exactamente `COLOR_REPRODUCIENDO` (rojo deliberado, no un
+    accidente), los 7 botones de transporte de V1 Y de V2 muestran
+    únicamente su glifo esperado con tooltip no vacío, y la hoja QSS
+    generada (los 2 temas) confirma que Stop/Fade-Stop/Cut ya no
+    tienen ningún selector de color propio — + regresión completa de
+    los 6 scripts de test de rondas anteriores en este mismo bloque de
+    trabajo (drag&drop no-modal, HTH manual V1, layout Dinesat,
+    tamaño de fuente por categoría, arranque por Emisión/click en
+    bloque/archivo sacado de biblioteca) sin fallos nuevos — +
+    `py_compile` de los 3 archivos tocados (`gui/styles.py`,
+    `gui/panel_reproductor.py`, `gui/ventana_publicidad.py`) + smoke
+    test de arranque completo sin traceback. Se generaron y enviaron a
+    Santiago 2 capturas reales (offscreen, `QWidget.grab()`) — Ventana
+    1 y 2 lado a lado, tema oscuro y tema claro — para comparar contra
+    lo pedido antes de dar la ronda por terminada. **Sigue sin poder
+    confirmarse con audio/VLC real ni con fidelidad visual 100% exacta
+    a una foto real de Dinesat**: falta que Santiago confirme que el
+    look ícono-solo + la nueva paleta (verde/celeste/rojo/gris) se
+    sienten como pidió, en su pantalla real y en los dos temas, antes
+    de considerar cerrado el rediseño de esta grilla de botones.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
