@@ -10394,6 +10394,108 @@ soltó de una vez.
     agrega con normalidad (abriendo el diálogo de clasificación de
     siempre, individual o masivo según cuántos arrastró).
 
+104. ~~Recreación fiel del layout de botones de Dinesat 9 (Stop/Fade/
+    HORA-TEMP arriba, Pausa/Cut/Stop-diferido[/AUTOMÁTICO] abajo) —
+    HORA/TEMP ahora también en Ventana 1~~ — pedido explícito, con la
+    descripción textual del layout real de Dinesat (los operadores
+    "trabajaron muchos años con Dinesat, y se les ha complicado ubicar
+    los botones"): "ARRIBA: Stop, Fade, y Bajador (que no lo usamos...
+    ese podría ser para anunciar la HORA). ABAJO: Pausa, CUE, el
+    siguiente hace que al finalizar el tema finalice la reproducción,
+    y por último el famoso AUTOMÁTICO. En la ventana 2 es exactamente
+    igual pero sin el botón automático." Confirmado con
+    `AskUserQuestion` (única ambigüedad real: si el botón HORA debía
+    ir en las dos ventanas o solo en Ventana 2) que el botón "Hora"
+    (que reemplaza al "Bajador" de Dinesat, un control de ducking para
+    micrófono que esta app nunca implementó) va en LAS DOS ventanas,
+    recreando el layout de Dinesat con la mayor fidelidad posible.
+
+    **Mapeo de conceptos Dinesat -> esta app** (todos ya existían
+    salvo el reposicionamiento y la extensión a V1): "Stop" = Stop
+    (corte seco); "Fade" = Fade-Stop (fundido hasta apagar); "Bajador"
+    → reemplazado por el botón azul "HORA/TEMP" (ronda anterior,
+    ahora también en V1); "Pausa" = Pausa; "CUE" = Cut (corte seco al
+    ítem en cola); "el siguiente hace que al finalizar el tema
+    finalice la reproducción" = Stop diferido (ya implementado,
+    "deja terminar el ítem actual y recién ahí detiene todo"); "el
+    famoso AUTOMÁTICO" = el botón AUTOMÁTICO, exclusivo de V1 (V2
+    nunca lo tuvo, tal como describe Dinesat real).
+
+    **Reposicionamiento de grilla** (`gui/ventana_publicidad.py` y
+    `gui/panel_reproductor.py`, sin tocar ninguna lógica de los
+    botones que ya funcionaban, solo su ubicación en el `QHBoxLayout`):
+    - **Fila de ARRIBA, en las DOS ventanas**: Stop | Fade | HORA/TEMP
+      (antes V1 tenía Stop | AUTOMÁTICO arriba y Fade abajo; V2 tenía
+      Stop | Fade arriba y HORA/TEMP abajo — ninguna de las dos
+      coincidía con la disposición real de Dinesat).
+    - **Fila de ABAJO, Ventana 1**: Pausa | Cut | Stop diferido |
+      AUTOMÁTICO (AUTOMÁTICO bajó de la fila de arriba a esta,
+      último lugar — mismo botón, mismo color dorado/texto "AUTO"/
+      "MANUAL" de la ronda anterior, sin cambios ahí).
+    - **Fila de ABAJO, Ventana 2**: Pausa | Cut | Stop diferido — SIN
+      HORA/TEMP (subió a la fila de arriba) y SIN AUTOMÁTICO (Ventana
+      2 nunca lo tuvo, tal como describe Dinesat real: "exactamente
+      igual pero sin el botón automático").
+
+    **HORA/TEMP en Ventana 1 — mecanismo NUEVO, mismo diseño que
+    Ventana 2** (`core/playlist_manager.py:GestorPublicidad.
+    reproducir_hth_manual()`, ver la nota de diseño completa en
+    `core/gestor_emision.py` de la ronda anterior — mismo criterio
+    punto por punto, ahora portado a `GestorPublicidad`): corte
+    LIMPIO e inmediato del motor principal (`self.motor.detener()`,
+    nunca `pausar()`), clips de HORA+TEMPERATURA reproducidos en un
+    motor DEDICADO nuevo (`self.motor_anuncio_manual`, independiente
+    del único motor que ya tenía Ventana 1 — a diferencia de Ventana
+    2, Publicidad nunca tuvo Pisador, así que este es su primer motor
+    secundario) sin interferir con el estado del motor principal
+    mientras suenan, y al agotarse la cola retoma con
+    `_reproducir_seleccion_o_actual()` (mismo camino que el botón
+    Play — el ítem interrumpido arranca de nuevo desde el principio,
+    no reanuda a mitad, misma decisión de diseño ya explicada para
+    Ventana 2). El guard `_cancelar_anuncio_manual_en_curso()` se
+    llama al inicio de `_detener()`, `_pausar()`,
+    `_reproducir_seleccion_o_actual()` y `_avanzar()` (cubre Cut, fin
+    natural, cascada de error, y el fundido manual de Ventana 1 —
+    `_avanzar_con_fundido()`/`_completar_avance_con_fundido()`
+    terminan llamando a `_avanzar()`, así que quedan cubiertos
+    transitivamente sin necesitar su propio guard, a diferencia del
+    crossfade real de Ventana 2 que sí lo necesitaba aparte). Mismo
+    guard de generación con captura en el momento del despacho
+    (`_generacion_clip_actual_anuncio_manual`) que evitó el bug real
+    ya documentado en "Cosas ya resueltas" para el mecanismo de
+    Ventana 2. Señal nueva `solicitud_hth_manual` en
+    `VentanaPublicidad`, callback `al_fallar_hth_manual` conectado en
+    `MainWindow` al mismo patrón de aviso por la barra de estado que
+    ya tiene Ventana 2.
+
+    Se generó y envió a Santiago una captura real (offscreen,
+    `QWidget.grab()`) de Ventana 1 y Ventana 2 lado a lado con el
+    layout nuevo, para comparar contra Dinesat antes de dar la ronda
+    por terminada.
+
+    Probado con `test_dinesat_layout_y_hth_v1.py` (nuevo, dedicado):
+    geometría real tras `show()` confirma que Stop/Fade/HORA-TEMP
+    quedan en la MISMA fila (arriba) y en ese orden exacto, en las DOS
+    ventanas; Pausa/Cut/StopDiferido/AUTOMÁTICO en la misma fila
+    (abajo) en Ventana 1, en ese orden; Ventana 2 nunca tiene
+    `btn_automatico`; el HORA/TEMP de Ventana 1 corta el motor
+    principal de inmediato, encadena HORA→MINUTOS→TEMPERATURA por el
+    motor dedicado, retoma con `_reproducir_seleccion_o_actual()` al
+    terminar, un Cut a mitad del anuncio invalida la cola vieja (no
+    sigue sonando ni reanuda de más), y sin clips resolubles no toca
+    nada y avisa por el callback — + regresión del test de la ronda
+    anterior (`test_boton_hth_manual_y_automatico.py`, sin fallos
+    nuevos pese al reposicionamiento de V2) + `py_compile` de los 4
+    archivos tocados + smoke test de arranque completo sin traceback.
+    **Sigue sin poder confirmarse con audio/VLC real ni con fidelidad
+    visual 100% exacta a una foto real de Dinesat** (la captura
+    generada acá es de la app misma, no una comparación pixel a pixel
+    contra una imagen de Dinesat): falta que Santiago compare la
+    captura enviada contra su experiencia real con Dinesat y confirme
+    si la disposición ahora se siente "en el lugar de siempre" para
+    los operadores, y que el HORA/TEMP de Ventana 1 corte y reanude
+    igual de bien que el de Ventana 2.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que

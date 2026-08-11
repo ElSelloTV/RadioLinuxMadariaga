@@ -834,6 +834,10 @@ class MainWindow(QMainWindow):
         # un bloque de Publicidad, dispara la generación continua de
         # música en Emisión.
         self.gestor_publicidad.al_comando_fmt = self.gestor_emision.iniciar_musicalizador
+        # Pedido explícito (botón azul "HORA/TEMP", ahora también en
+        # Ventana 1): mismo aviso por la barra de estado que ya tiene
+        # Ventana 2 si no hay nada para reproducir.
+        self.gestor_publicidad.al_fallar_hth_manual = lambda mensaje: self.statusBar().showMessage(mensaje, 6000)
 
         self.gestor_emision.set_volumen_base(audio["volumen_master"])
         self.gestor_publicidad.set_volumen_base(audio["volumen_master"])

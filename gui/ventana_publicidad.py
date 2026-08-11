@@ -72,6 +72,7 @@ class VentanaPublicidad(QWidget):
     solicitud_cargar_programacion_hoy = Signal()
     item_doble_click = Signal(object)   # emite el QTreeWidgetItem clickeado
     programacion_cargada = Signal()     # cada vez que cargar_bloques() reemplaza el árbol (preload)
+    solicitud_hth_manual = Signal()     # botón azul "HORA/TEMP" (recrea el "Bajador" de Dinesat)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -185,13 +186,15 @@ class VentanaPublicidad(QWidget):
         layout_grupo.addLayout(fila_info)
 
         # --- 2) Controles de reproducción — grilla estilo Dinesat
-        # (pedido explícito): botón VERDE grande a la izquierda
-        # (Play/"Siguiente con fundido" según haya algo sonando o no),
-        # y a la derecha 2 filas: arriba Stop/AUTOMÁTICO (4to botón,
-        # exclusivo de esta ventana — pedido explícito: más a la vista
-        # que en el lugar donde antes estaba Fade), abajo Pausa/Cut/
-        # Stop diferido/Fade-Stop (Fade pasó al lugar que dejó libre
-        # AUTOMÁTICO). ---
+        # (pedido explícito, ronda de recreación fiel del layout real
+        # de Dinesat, con foto/descripción de referencia de Santiago:
+        # "arriba Stop/Fade/Bajador, abajo Pausa/Cue/Stop-diferido/
+        # Automático" -- el "Bajador" de Dinesat, sin usar, se
+        # reemplaza acá por el botón azul "HORA/TEMP"). Botón VERDE
+        # grande a la izquierda (Play/"Siguiente con fundido"), y a la
+        # derecha 2 filas: ARRIBA Stop / Fade / HORA-TEMP, ABAJO
+        # Pausa / Cut / Stop diferido / AUTOMÁTICO (el único botón que
+        # Ventana 2 no tiene). ---
         barra_botones = QHBoxLayout()
         barra_botones.setSpacing(4)
 
@@ -221,12 +224,22 @@ class VentanaPublicidad(QWidget):
         self.btn_fade_stop.setToolTip("Fundido hasta apagar el ítem en reproducción.")
         self.btn_stop.clicked.connect(self._on_click_stop)
         self.btn_fade_stop.clicked.connect(self._on_click_fade_stop)
+        # Botón azul "HORA/TEMP" (pedido explícito, en el lugar del
+        # "Bajador" de Dinesat, que acá no se usa): reproduce HORA +
+        # TEMPERATURA cortando limpio lo que esté sonando -- misma
+        # lógica ya implementada en Ventana 2, ver
+        # core/playlist_manager.py:GestorPublicidad.reproducir_hth_manual.
+        self.btn_hth_manual = QPushButton("🕐 HORA/TEMP")
+        self.btn_hth_manual.setObjectName("btnHthManual")
+        self.btn_hth_manual.setProperty("class", "btnTransporte")
+        self.btn_hth_manual.setToolTip(
+            "Reproduce HORA y TEMPERATURA ahora mismo, cortando de "
+            "inmediato lo que esté sonando (sin fundido)."
+        )
+        self.btn_hth_manual.clicked.connect(self.solicitud_hth_manual.emit)
         fila_superior.addWidget(self.btn_stop)
-        # AUTOMÁTICO pasa a la fila de arriba, en el lugar donde
-        # estaba FADE (pedido explícito: "más intuitivo y a la vista,
-        # que es más importante") — FADE se va al lugar que dejó
-        # libre AUTOMÁTICO en la fila de abajo (ver más abajo).
-        fila_superior.addWidget(self.btn_automatico)
+        fila_superior.addWidget(self.btn_fade_stop)
+        fila_superior.addWidget(self.btn_hth_manual)
         grilla.addLayout(fila_superior)
 
         fila_inferior = QHBoxLayout()
@@ -251,8 +264,10 @@ class VentanaPublicidad(QWidget):
         fila_inferior.addWidget(self.btn_pausa)
         fila_inferior.addWidget(self.btn_cut)
         fila_inferior.addWidget(self.btn_stop_diferido)
-        # FADE ocupa el 4to lugar que dejó AUTOMÁTICO (pedido explícito).
-        fila_inferior.addWidget(self.btn_fade_stop)
+        # AUTOMÁTICO ocupa el 4to lugar de la fila de abajo (pedido
+        # explícito, recreando Dinesat: "el famoso AUTOMÁTICO" es el
+        # último botón de la fila inferior, exclusivo de Ventana 1).
+        fila_inferior.addWidget(self.btn_automatico)
         grilla.addLayout(fila_inferior)
 
         barra_botones.addLayout(grilla)
