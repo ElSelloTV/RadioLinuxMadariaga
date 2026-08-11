@@ -94,14 +94,11 @@ echo "Dependencias del sistema necesarias (instalar aparte si falta alguna):"
 echo "  sudo apt install vlc libvlc-dev ffmpeg"
 echo ""
 
-echo "Instalando lanzador de escritorio..."
+echo "Instalando lanzadores de escritorio..."
 chmod +x "$CARPETA_DESTINO/iniciar.sh"
+chmod +x "$CARPETA_DESTINO/iniciar_satelite.sh"
 
 mkdir -p "$HOME/.local/share/applications"
-sed "s#/home/santiago/RadioLinuxMadariaga#$CARPETA_DESTINO#g" \
-    "$CARPETA_DESTINO/assets/radiolinuxmadariaga.desktop" \
-    > "$HOME/.local/share/applications/radiolinuxmadariaga.desktop"
-chmod +x "$HOME/.local/share/applications/radiolinuxmadariaga.desktop"
 
 # Carpeta de escritorio real: xdg-user-dir respeta el idioma del
 # sistema (en Q4OS en español es "Escritorio", no "Desktop").
@@ -114,16 +111,35 @@ if [ -z "$CARPETA_ESCRITORIO" ]; then
     fi
 fi
 
+# Instala UN .desktop (el programa principal o la app satélite) tanto
+# en el menú de aplicaciones como, si existe, en el escritorio real —
+# pedido explícito para la satélite: "necesito un ícono de escritorio,
+# nada de comando por consola", mismo tratamiento que ya tenía el
+# programa principal.
+instalar_lanzador() {
+    NOMBRE_ARCHIVO="$1"
+    sed "s#/home/santiago/RadioLinuxMadariaga#$CARPETA_DESTINO#g" \
+        "$CARPETA_DESTINO/assets/$NOMBRE_ARCHIVO" \
+        > "$HOME/.local/share/applications/$NOMBRE_ARCHIVO"
+    chmod +x "$HOME/.local/share/applications/$NOMBRE_ARCHIVO"
+
+    if [ -n "$CARPETA_ESCRITORIO" ] && [ -d "$CARPETA_ESCRITORIO" ]; then
+        cp "$HOME/.local/share/applications/$NOMBRE_ARCHIVO" "$CARPETA_ESCRITORIO/"
+        chmod +x "$CARPETA_ESCRITORIO/$NOMBRE_ARCHIVO"
+        # Algunos entornos (GNOME/Nautilus) no muestran el ícono como
+        # ejecutable hasta que se marca "confiable".
+        command -v gio >/dev/null 2>&1 && gio set "$CARPETA_ESCRITORIO/$NOMBRE_ARCHIVO" "metadata::trusted" true 2>/dev/null
+    fi
+}
+
+instalar_lanzador "radiolinuxmadariaga.desktop"
+instalar_lanzador "radiolinuxmadariaga_satelite.desktop"
+
 if [ -n "$CARPETA_ESCRITORIO" ] && [ -d "$CARPETA_ESCRITORIO" ]; then
-    cp "$HOME/.local/share/applications/radiolinuxmadariaga.desktop" "$CARPETA_ESCRITORIO/"
-    chmod +x "$CARPETA_ESCRITORIO/radiolinuxmadariaga.desktop"
-    # Algunos entornos (GNOME/Nautilus) no muestran el ícono como
-    # ejecutable hasta que se marca "confiable".
-    command -v gio >/dev/null 2>&1 && gio set "$CARPETA_ESCRITORIO/radiolinuxmadariaga.desktop" "metadata::trusted" true 2>/dev/null
-    echo "Ícono copiado a: $CARPETA_ESCRITORIO"
+    echo "Íconos copiados a: $CARPETA_ESCRITORIO"
 else
-    echo "Aviso: no se encontró una carpeta de Escritorio — el ícono quedó"
-    echo "instalado en el menú de aplicaciones igual."
+    echo "Aviso: no se encontró una carpeta de Escritorio — los íconos"
+    echo "quedaron instalados en el menú de aplicaciones igual."
 fi
 
 echo ""
