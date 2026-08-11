@@ -44,6 +44,22 @@ COLOR_AUTOMATICO_ON_BORDE = "#e74c3c"
 COLOR_SELECCION = "#5dade2"       # Celeste: cursor de selección (Dinesat), nunca reemplaza rojo/verde
 COLOR_ARMADO = "#e67e22"          # Naranja: acción diferida armada (Stop diferido)
 
+# Fondo de las LISTAS de Ventana 1 y 2 (`tree_publicidad`/`tree_reproductor`
+# — este último también lo usa la Auxiliar) — pedido explícito, con
+# captura real de Dinesat: "el tema claro de Dinesat... tiene fondo
+# negro... copiá exactamente... la diferencia del negro y gris
+# oscuro... aplicá esto en tema oscuro COMO claro". A diferencia del
+# resto de la superficie (paneles/chrome, que sí cambian entre
+# PALETA_OSCURA/PALETA_CLARA), el fondo de ESTAS DOS listas puntuales
+# es casi negro en LOS DOS temas de esta app — igual que en Dinesat,
+# donde ni su tema "claro" aclara la lista de reproducción (el rojo/
+# verde/celeste de estado necesitan un fondo bien oscuro para
+# resaltar). No toca Ventana 3 (tree_archivos/tree_categorias), fuera
+# del pedido ("el contenido de las ventanas 1 y 2").
+COLOR_LISTA_V1V2_FONDO = "#141414"
+COLOR_LISTA_V1V2_ALTERNO = "#1e1e1e"
+COLOR_LISTA_V1V2_HEADER_FONDO = "#2a2a2a"
+
 # Paleta de SUPERFICIE del tema OSCURO (default, sin cambios respecto
 # de siempre — mismos valores que antes vivían como constantes
 # sueltas COLOR_FONDO_PRINCIPAL/COLOR_FONDO_PANEL/etc.). `chrome_fondo`/
@@ -277,9 +293,22 @@ QTreeWidget#tree_archivos::item, QTreeWidget#tree_categorias::item {{
    impedía). ---------- */
 QTreeWidget#tree_publicidad, QTreeWidget#tree_reproductor {{
     font-size: 8pt;
+    background-color: {COLOR_LISTA_V1V2_FONDO};
+    alternate-background-color: {COLOR_LISTA_V1V2_ALTERNO};
 }}
+/* Texto claro FIJO (no {{p['texto']}}) — con el fondo casi negro de
+   arriba, el texto oscuro del tema Claro (pensado para fondos
+   caqui/plata del resto de la app) quedaría ilegible acá. Un ítem
+   rojo/verde ya trae su propio blanco explícito por Python
+   (_color_para_estado), esto solo cubre el estado NORMAL. */
 QTreeWidget#tree_publicidad::item, QTreeWidget#tree_reproductor::item {{
     padding: 1px;
+    color: #e0e0e0;
+}}
+QTreeWidget#tree_publicidad QHeaderView::section,
+QTreeWidget#tree_reproductor QHeaderView::section {{
+    background-color: {COLOR_LISTA_V1V2_HEADER_FONDO};
+    color: #e0e0e0;
 }}
 
 /* Ventana 1 (Publicidad) y Ventana 2 (Emisión): selección con
