@@ -10935,6 +10935,52 @@ soltó de una vez.
     real, que la diferencia entre los dos paneles se nota lo
     suficiente, y que el tamaño/proporción del botón Play cuadrado se
     siente como en Dinesat.
+111. ~~Texto negro sobre el turquesa de "Aleatorio" (V1) + fondo negro
+    en la barra de búsqueda (V3) + negrita/mayúsculas en "＋ Agregar"
+    (V3)~~ — pedido explícito, tres retoques puntuales tras ver la
+    app real en pantalla: "agrega en la ventana 1, las letras negras
+    sobre el turquesa de Aleatorio. agrega también fondo negro sobre
+    la barra de búsqueda... agrega negrita y mayúsculas al botón
+    agregar de la ventana 3 (explorador)".
+
+    **a) Letras negras sobre el turquesa de "Aleatorio" (Ventana 1)**:
+    `agregar_item_aleatorio()` (`gui/ventana_publicidad.py`) pintaba
+    el texto blanco sobre `COLOR_ALEATORIO` (verde azulado `#16a085`)
+    — pedido explícito: cambiado a negro, mejor contraste sobre ese
+    tono en particular. Acotado a propósito a Ventana 1 (el mismo
+    patrón existe también en el Programador,
+    `gui/ventana_programador.py`, sin tocar — el pedido fue puntual
+    "en la ventana 1").
+
+    **b) Fondo negro en la barra de búsqueda (Ventana 3)**: `txt_busqueda`
+    (`QLineEdit`, sin `objectName` hasta ahora) quedaba con el fondo
+    blanco por defecto del estilo Fusion — desentonaba al lado del
+    Explorador ya oscurecido (ronda 110). Nuevo objectName
+    `txtBusqueda` + regla QSS en `gui/styles.py`, mismo criterio ya
+    establecido (fondo casi negro FIJO en los dos temas, reusando
+    `COLOR_LISTA_V3_ARCHIVOS_FONDO`, texto claro).
+
+    **c) Negrita + mayúsculas en "＋ Agregar" (Ventana 3)**: Qt Style
+    Sheets NO soportan `text-transform` — mayusculizado vía
+    `QFont.setCapitalization(QFont.Capitalization.AllUppercase)`
+    (mismo mecanismo ya usado para la jerarquía de categorías,
+    `_aplicar_estilo_por_nivel`), combinado con `setBold(True)` — el
+    texto REAL del botón (`"＋ Agregar"`) no cambia, solo cómo se
+    dibuja.
+
+    Probado con `test_aleatorio_negro_busqueda_agregar.py` (nuevo,
+    dedicado): texto negro confirmado en el ítem Aleatorio real; la
+    regla `QLineEdit#txtBusqueda` con fondo negro presente en los DOS
+    temas; `txt_busqueda` tiene el objectName correcto; el botón
+    Agregar es bold + AllUppercase mientras su `.text()` real sigue
+    siendo `"＋ Agregar"` sin tocar — + suite de regresión completa de
+    los 11 scripts de test de rondas anteriores en este mismo bloque
+    de trabajo sin fallos nuevos + `py_compile` completo + smoke test
+    de arranque sin traceback. Se generaron y enviaron capturas reales
+    confirmando los 3 cambios visualmente. Falta que Santiago confirme
+    en su pantalla real que el contraste de "Aleatorio" mejoró, que la
+    barra de búsqueda ya no desentona, y que el botón Agregar se nota
+    más con negrita+mayúsculas.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
