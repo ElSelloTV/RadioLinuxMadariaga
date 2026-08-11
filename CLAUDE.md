@@ -11182,6 +11182,72 @@ soltó de una vez.
     botonera a Programador/Musicalizador — fuera del alcance elegido
     para esta ronda.
 
+113. ~~Bug real, urgente — "＋ Agregar" (Ventana 3) solo funcionaba
+    UNA VEZ, después había que cerrar y reabrir la app~~ — pedido
+    explícito, prioridad alta: "si sucede algo cuando se agrega un
+    ítem. Se presiona Agregar, abre y deja cargar. luego. No deja
+    hacer otra vez más. solo si cierro y vuelvo a abrir el programa
+    deja volver a cargar." — regresión directa del cambio de la ronda
+    103 (el diálogo de "＋ Agregar" pasó de `QFileDialog.
+    getOpenFileNames()` bloqueante a una instancia propia NO modal,
+    para permitir arrastrar desde ahí — ver esa ronda).
+
+    **Causa real, confirmada reproduciendo el traceback exacto contra
+    el código viejo (`git stash`)**: `_agregar_archivos()`
+    (`gui/ventana_explorador.py`) crea el `QFileDialog` con
+    `setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)` — el objeto
+    C++ se DESTRUYE de verdad en cuanto el diálogo se cierra (al
+    elegir un archivo y confirmar "Open", al Cancelar, o al cerrarlo
+    con la X) — pero la referencia de Python (`self.
+    _dialogo_agregar_archivos`, guardada como guard contra abrir dos
+    diálogos a la vez) sobrevivía esa destrucción sin limpiarse nunca.
+    El SEGUNDO click en "＋ Agregar" ejecutaba
+    `dialogo_existente.isVisible()` sobre ese objeto ya borrado —
+    PySide6/Shiboken tira `RuntimeError: Internal C++ object (...)
+    already deleted.` DENTRO del slot conectado a `clicked` — el
+    `sys.excepthook` global de la app (instalado para capturar
+    excepciones silenciosas en slots, ver el sistema de log) atrapa
+    esa excepción y la loguea, pero el botón queda "sin responder" sin
+    ningún aviso visible — indistinguible para el operador de que el
+    botón "no hace nada", exactamente el síntoma reportado. Como el
+    proceso nunca vuelve a intentar CREAR un diálogo nuevo (se corta
+    en el chequeo del guard, antes de llegar a esa línea), el bug se
+    repite en TODOS los clicks siguientes hasta reiniciar la app (que
+    resetea el atributo a `None` de nuevo).
+
+    **Corregido en dos capas** (mismo criterio de siempre: nunca
+    confiar en una sola protección): (1) `dialogo.finished.connect(
+    self._on_dialogo_agregar_cerrado)` — `finished` se emite SIEMPRE
+    que el diálogo termina (Open, Cancelar, o la X, a diferencia de
+    `filesSelected`, que solo cubre Open) y limpia `self.
+    _dialogo_agregar_archivos = None` — la vía normal y esperada. (2)
+    guard defensivo en `_agregar_archivos()`: el chequeo de `.
+    isVisible()` sobre la referencia existente ahora está envuelto en
+    `try/except RuntimeError` — si el objeto ya fue destruido por
+    cualquier motivo no cubierto por (1), se lo trata como "no hay
+    diálogo abierto" en vez de dejar que la excepción se cuele hacia
+    el slot y quede tragada en silencio.
+
+    Probado reproduciendo la CONDICIÓN REAL (no un mock): se crea el
+    diálogo, se lo cierra con `.close()` (dispara `WA_DeleteOnClose` de
+    verdad, igual que Qt lo haría al confirmar "Open"), se confirma que
+    el objeto C++ efectivamente quedó destruido (`.isVisible()` tira
+    `RuntimeError` — así se confirma que el test reproduce la condición
+    real, no una simulación aproximada), y recién ahí se prueba que un
+    segundo click en "＋ Agregar" abre un diálogo NUEVO sin ninguna
+    excepción; un tercer click con el diálogo ya abierto lo trae al
+    frente en vez de duplicarlo; Cancelar (reject) también limpia la
+    referencia; y un cuarto ciclo completo confirma que funciona de
+    forma repetida, no solo la segunda vez — **confirmado además que
+    el mismo test, corrido contra el código VIEJO (`git stash`), tira
+    EXACTAMENTE el traceback real** (`RuntimeError: libshiboken:
+    Internal C++ object (PySide6.QtWidgets.QFileDialog) already
+    deleted.`) en la línea del segundo `_agregar_archivos()` — + suite
+    de regresión completa de los scripts de este mismo bloque de
+    trabajo sin fallos nuevos + `py_compile` completo. Falta que
+    Santiago confirme que ahora puede agregar archivos varias veces
+    seguidas sin tener que reiniciar el programa entre uno y otro.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
@@ -11225,6 +11291,25 @@ soltó de una vez.
   suele ser volver ese diálogo puntual `Qt.WindowModality.NonModal`
   (`.show()` + señal `filesSelected`, en vez de `.exec()`/la llamada
   estática bloqueante), no tocar nada del lado que recibe el drop.
+- **Consecuencia directa del punto anterior: un diálogo NO modal con
+  `WA_DeleteOnClose` guardado como referencia "guard" (para no abrir
+  dos a la vez) deja esa referencia COLGADA apuntando a un objeto C++
+  ya destruido en cuanto el diálogo se cierra** (bug real, ronda 113,
+  "＋ Agregar solo funciona una vez") — cualquier método llamado
+  después sobre esa referencia (`.isVisible()`, etc.) tira
+  `RuntimeError: Internal C++ object already deleted` DENTRO de un
+  slot, que el `sys.excepthook` global de la app traga en silencio —
+  el botón queda "sin responder" indefinidamente, hasta reiniciar la
+  app (que resetea el atributo). **Regla**: todo diálogo no-modal con
+  `WA_DeleteOnClose` guardado como referencia tiene que limpiar esa
+  referencia (`self._dialogo = None`) conectado a la señal `finished`
+  (se emite siempre — Open/Cancelar/X — a diferencia de una señal
+  puntual como `filesSelected`, que solo cubre un camino) — y, como
+  segunda capa, envolver en `try/except RuntimeError` cualquier
+  chequeo posterior sobre esa referencia, por si algo se cerró por un
+  camino no cubierto. Si un operador reporta "funciona una vez y
+  después no responde, hay que reiniciar" sobre un botón que abre un
+  diálogo no-modal, sospechar primero de esto.
 - **`MotorAudio.finalizo_item` podía emitirse DOS VECES para el mismo
   fin de reproducción** (bug real, ronda 96, "en punto en punto" del
   HTH): dos orígenes independientes detectan "esta reproducción

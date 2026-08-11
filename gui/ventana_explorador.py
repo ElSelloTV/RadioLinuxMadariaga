@@ -1287,10 +1287,29 @@ class VentanaExplorador(QWidget):
         hacia la categoría ya elegida a la izquierda, o hacia la lista
         de archivos de la derecha (mismo destino: la categoría actual)."""
         dialogo_existente = getattr(self, "_dialogo_agregar_archivos", None)
-        if dialogo_existente is not None and dialogo_existente.isVisible():
-            dialogo_existente.raise_()
-            dialogo_existente.activateWindow()
-            return
+        if dialogo_existente is not None:
+            # Bug real corregido (pedido explícito: "deja 1 sola vez y
+            # ya después no"): `WA_DeleteOnClose` destruye el objeto
+            # C++ en cuanto el diálogo se cierra (Open, Cancelar, o la
+            # X) -- pero esta referencia de Python sobrevivía esa
+            # destrucción. Cualquier llamada a un método sobre un
+            # QObject ya borrado (`.isVisible()` acá) tira
+            # `RuntimeError: Internal C++ object already deleted`
+            # DENTRO del slot del click -- el sys.excepthook global la
+            # traga en silencio, y el botón queda "sin responder" hasta
+            # reiniciar la app. Guard defensivo (además del reset
+            # explícito en `_on_dialogo_agregar_cerrado`, que cubre el
+            # caso normal): si el objeto ya fue destruido, tratarlo
+            # como si no hubiera diálogo abierto.
+            try:
+                visible = dialogo_existente.isVisible()
+            except RuntimeError:
+                visible = False
+                self._dialogo_agregar_archivos = None
+            if visible:
+                dialogo_existente.raise_()
+                dialogo_existente.activateWindow()
+                return
 
         dialogo = QFileDialog(
             self, "Agregar archivos de audio", os.path.expanduser("~"),
@@ -1300,12 +1319,19 @@ class VentanaExplorador(QWidget):
         dialogo.setWindowModality(Qt.WindowModality.NonModal)
         dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialogo.filesSelected.connect(self._on_archivos_elegidos_para_agregar)
+        # Se limpia la referencia SIEMPRE que el diálogo termine (Open,
+        # Cancelar, o cerrar con la X) -- `finished` se emite en los 3
+        # casos, a diferencia de `filesSelected` (solo Open).
+        dialogo.finished.connect(self._on_dialogo_agregar_cerrado)
         # Referencia guardada para que Python no lo recolecte mientras
         # está abierto (ya no es un .exec() bloqueante que lo mantenga
         # vivo por sí solo) y para el guard de arriba (no abrir dos a
         # la vez).
         self._dialogo_agregar_archivos = dialogo
         dialogo.show()
+
+    def _on_dialogo_agregar_cerrado(self, resultado=None):
+        self._dialogo_agregar_archivos = None
 
     def _on_archivos_elegidos_para_agregar(self, rutas):
         """Se dispara al confirmar el diálogo NO modal de "＋ Agregar"
