@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Auto-Radio Tuyú — Satélite
+Comment=Control remoto de Auto-Radio Tuyú (subir archivos + transporte V1/V2)
+Exec=/home/santiago/RadioLinuxMadariaga/iniciar_satelite.sh
+Icon=/home/santiago/RadioLinuxMadariaga/assets/icono.png
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+StartupNotify=true

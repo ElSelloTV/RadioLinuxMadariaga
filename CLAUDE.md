@@ -11285,6 +11285,63 @@ soltó de una vez.
     leyéndose distinto del resto de los botones grises (Stop/Fade/
     Pausa/Cut).
 
+115. ~~Ícono de escritorio para la app satélite (nada de comando por
+    consola)~~ — pedido explícito, corto: "necesito un icono de
+    escritorio. Nada de comando por consola" — la app satélite de la
+    ronda 112 (`satelite_main.py`) solo se podía arrancar con
+    `python3 satelite_main.py` desde una terminal, mismo problema que
+    ya tenía el programa principal antes de que existiera `iniciar.sh`
+    (ronda del lanzador de escritorio, muy anterior).
+
+    Mismo patrón EXACTO ya establecido para el programa principal, sin
+    inventar nada nuevo:
+    - `iniciar_satelite.sh` (nuevo): mismo mecanismo que `iniciar.sh`
+      — no llama a `satelite_main.py` directo desde el `.desktop`
+      porque al arrancar desde un ícono no hay terminal visible (un
+      venv roto o una dependencia faltante sería un doble click que
+      "no hace nada", sin forma de diagnosticarlo); redirige toda la
+      salida a un log propio (`config/data/log_lanzador_satelite.txt`,
+      separado del log del programa principal) y, si el proceso
+      termina con error, muestra un aviso gráfico
+      (zenity/kdialog/notify-send, lo que haya disponible). Reusa el
+      MISMO `venv/` del programa principal — la satélite vive en el
+      mismo checkout del repo, no necesita un entorno aparte.
+    - `assets/radiolinuxmadariaga_satelite.desktop` (nuevo): mismo
+      formato que `assets/radiolinuxmadariaga.desktop`, apuntando a
+      `iniciar_satelite.sh`, con el mismo ícono
+      (`assets/icono.png` — no se pidió uno distinto, así que se
+      reusa el de siempre) y nombre "Auto-Radio Tuyú — Satélite" para
+      distinguirlo del ícono del programa principal a simple vista en
+      el escritorio.
+    - `satelite_main.py` ganó `app.setWindowIcon(QIcon(RUTA_ICONO))`
+      (mismo patrón que `main.py`) — de paso, para que la ventana
+      también tenga el ícono correcto en la barra de tareas, no solo
+      el lanzador del escritorio.
+    - `instalar.sh`: la instalación de lanzadores se generalizó a una
+      función `instalar_lanzador()` (antes tenía el bloque de sed +
+      copiar a `~/.local/share/applications` + copiar al Escritorio +
+      marcar confiable con `gio` escrito UNA sola vez, para el
+      programa principal) — ahora se llama dos veces, una por cada
+      `.desktop`, sin duplicar esa lógica. Correr `instalar.sh` de
+      nuevo (el mismo comando que ya usan para actualizar) deja el
+      ícono de la satélite instalado solo, junto al de siempre —
+      tanto en el menú de aplicaciones como en el Escritorio real
+      (`xdg-user-dir DESKTOP`, ya resuelto para Q4OS en español desde
+      la ronda original del lanzador).
+
+    Probado: sintaxis de los 2 scripts de shell (`bash -n`), `py_compile`
+    de `satelite_main.py`, un smoke test funcional de la lógica de
+    `instalar_lanzador()` en un `$HOME` temporal aislado (confirmando
+    que los DOS `.desktop` quedan copiados al "Escritorio" simulado,
+    ejecutables, con el placeholder de ruta correctamente sustituido
+    por la ruta real de instalación), y un smoke test real de
+    `iniciar_satelite.sh` (arranca, escribe el log, sale limpio al
+    timeout — sin ningún traceback). **Sigue sin poder confirmarse en
+    un escritorio real**: falta que Santiago corra `./instalar.sh` de
+    nuevo (o lo pase a la sesión del operador remoto) y confirme que
+    el ícono "Auto-Radio Tuyú — Satélite" aparece en el Escritorio y
+    abre la botonera con un solo doble click, sin tocar la terminal.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que

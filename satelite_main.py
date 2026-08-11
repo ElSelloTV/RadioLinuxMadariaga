@@ -20,17 +20,22 @@ remoto → activar el servidor (desactivado por defecto) y copiar el
 puerto/token acá.
 --------------------------------------------------------
 """
+import os
 import sys
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from satelite.ventana_satelite import VentanaSatelite
+
+RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
 
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Auto-Radio Tuyú — Satélite")
     app.setApplicationDisplayName("Auto-Radio Tuyú — Satélite")
+    app.setWindowIcon(QIcon(RUTA_ICONO))
 
     ventana = VentanaSatelite()
     ventana.show()
