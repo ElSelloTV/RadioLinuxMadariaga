@@ -8,6 +8,7 @@ __pycache__/
 config/data/*.json
 config/data/*.ini
 config/data/*.txt
+config/data/*.lock
 
 .vscode/
 .idea/

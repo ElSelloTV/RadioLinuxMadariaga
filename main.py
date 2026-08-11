@@ -17,7 +17,7 @@ import os
 import sys
 import traceback
 
-from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtWidgets import QApplication, QSplashScreen, QMessageBox
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtCore import Qt, QTimer
 
@@ -25,6 +25,7 @@ from gui.main_window import MainWindow
 from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 from gui.styles import qss_para_tema
 from config.settings import cargar_configuracion, registrar_error, registrar_evento
+from core.instancia_unica import adquirir_bloqueo_instancia_unica
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
 
@@ -51,6 +52,23 @@ def main():
     app.setApplicationDisplayName("Auto-Radio Tuyú")
     if os.path.exists(RUTA_ICONO):
         app.setWindowIcon(QIcon(RUTA_ICONO))
+
+    # Instancia única (pedido explícito, caso real: un operador clickeó
+    # el ícono de escritorio varias veces y terminó con 3 instancias
+    # sonando encima una de la otra, sin poder identificar de dónde
+    # salía cada audio) — si ya hay otra instancia corriendo, avisa y
+    # se cierra ACÁ MISMO, antes de tocar ninguna playlist ni abrir
+    # ningún motor de audio nuevo.
+    if not adquirir_bloqueo_instancia_unica():
+        registrar_evento("Arranque bloqueado: ya había otra instancia de la aplicación abierta")
+        QMessageBox.warning(
+            None, "Auto-Radio Tuyú ya está abierto",
+            "El programa ya está abierto en otra ventana.\n\n"
+            "No se puede abrir dos veces a la vez (mezclaría el audio de las\n"
+            "dos instancias). Buscá la ventana que ya está abierta —puede\n"
+            "estar minimizada— antes de volver a intentar.",
+        )
+        sys.exit(0)
 
     # Tema visual (Configuración → General, pedido explícito "Diseñá
     # el tema Claro") — se resuelve ACÁ, antes de armar cualquier
