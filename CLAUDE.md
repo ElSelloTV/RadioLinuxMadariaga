@@ -11248,6 +11248,43 @@ soltó de una vez.
     Santiago confirme que ahora puede agregar archivos varias veces
     seguidas sin tener que reiniciar el programa entre uno y otro.
 
+114. ~~Botón AUTOMÁTICO: OFF pasa de gris genérico a "rojo
+    desactivado" (mismo tono apagado, borde rojo-negro)~~ — pedido
+    explícito: "Al botón del automático... deja rojo cuando está
+    activo y un rojo 'desactivado' con borde rojo negro pero un rojo
+    más opaco" (el único botón AUTOMÁTICO de la app vive en Ventana 1/
+    Publicidad, no "Ventana 3" — el pedido apunta sin ambigüedad al
+    mismo botón de siempre, corregido sin comentarios). Revierte
+    parcialmente el criterio de la ronda 105 ("todo el resto, gris
+    neutro como Stop/Fade/Cut, salvo Play/HORA-TEMP/AUTOMÁTICO") —
+    ahora el estado OFF de este botón puntual deja de compartir el
+    gris genérico y pasa a tener su PROPIA identidad roja apagada,
+    para que el botón se lea siempre como "el del Automático" de un
+    vistazo, prendido o apagado.
+
+    `gui/styles.py`: dos constantes nuevas, `COLOR_AUTOMATICO_OFF =
+    "#5c2b2b"` (rojo opaco/apagado, misma familia que
+    `COLOR_AUTOMATICO_ON = "#c0392b"` pero mucho menos saturado) y
+    `COLOR_AUTOMATICO_OFF_BORDE = "#2b0f0f"` (rojo-negro bien oscuro,
+    literal al pedido). `QPushButton#btnAutomatico[activo="false"]`
+    reemplaza `background-color: {p['boton_fondo']}` / `border: 1px
+    solid {p['borde']}` (gris theme-aware) por estos dos colores fijos
+    (mismo criterio ya establecido para el ON: es un color SEMÁNTICO
+    de este botón puntual, igual en los dos temas, no de superficie) +
+    texto `#d8b8b8` (gris rosado legible sobre el fondo rojo oscuro).
+    El ON no se tocó — sigue siendo el mismo rojo saturado de siempre.
+
+    Probado con un script dedicado que sampléa PÍXELES REALES del
+    botón renderizado (esquina y borde, lejos del glifo 🔁 —
+    muestrear el centro daba el color del propio emoji, no del fondo)
+    en los dos estados: ON confirma `#c0392b`/borde `#e74c3c` (sin
+    cambios), OFF confirma `#5c2b2b`/borde `#2b0f0f` (los nuevos) —
+    + `py_compile` completo + smoke test de arranque sin traceback.
+    Falta que Santiago confirme en su pantalla real que el rojo
+    apagado se distingue bien del rojo saturado del ON, y que sigue
+    leyéndose distinto del resto de los botones grises (Stop/Fade/
+    Pausa/Cut).
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que

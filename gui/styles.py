@@ -41,6 +41,13 @@ COLOR_SIGUIENTE = "#27ae60"       # Verde: próximo evento
 # distinguiéndose de Stop por el ÍCONO (glifo), no por el color.
 COLOR_AUTOMATICO_ON = COLOR_REPRODUCIENDO
 COLOR_AUTOMATICO_ON_BORDE = "#e74c3c"
+# Pedido explícito (ronda posterior): "deja rojo cuando está activo y
+# un rojo 'desactivado' con borde rojo negro pero un rojo más opaco" —
+# ya no gris genérico como el resto de los botones cuando está OFF,
+# sino un rojo apagado/opaco (mismo tono en los dos estados, distinta
+# intensidad) con un borde rojo-negro bien oscuro.
+COLOR_AUTOMATICO_OFF = "#5c2b2b"
+COLOR_AUTOMATICO_OFF_BORDE = "#2b0f0f"
 COLOR_SELECCION = "#5dade2"       # Celeste: cursor de selección (Dinesat), nunca reemplaza rojo/verde
 COLOR_ARMADO = "#e67e22"          # Naranja: acción diferida armada (Stop diferido)
 
@@ -515,14 +522,15 @@ QLabel#lblNombreEstacion {{
 /* AUTOMÁTICO (pedido explícito, "el automático en rojo, como
    Dinesat real"): ON = rojo sólido (mismo color que "reproduciendo"
    en las listas, reutilizado a propósito — es un color semántico, no
-   de superficie, igual en los dos temas). OFF = el MISMO gris
-   genérico que Stop/Fade/Pausa/Cut (`p['boton_fondo']`/`p['borde']`,
-   theme-aware) — "el resto grises como la imagen en tema claro y
-   oscuro" aplica también acá cuando está inactivo; el rojo aparece
-   SOLO cuando el modo está realmente activo, la señal más fuerte
-   posible de "cuidado, estás en automático". Sin texto (antes "AUTO"/
-   "MANUAL") — el glifo (🔁) es el mismo en los dos estados, distinto
-   en FORMA de Stop (■), la diferencia de color hace el resto. */
+   de superficie, igual en los dos temas). OFF = rojo "desactivado"
+   (pedido explícito, ronda posterior: "un rojo desactivado con borde
+   rojo negro pero un rojo más opaco") — mismo tono de familia, más
+   apagado/opaco que el ON, con un borde rojo-negro bien oscuro; ya no
+   comparte el gris genérico de Stop/Fade/Pausa/Cut, este botón
+   siempre se lee como AUTOMÁTICO de un vistazo, prendido o apagado.
+   Sin texto (antes "AUTO"/"MANUAL") — el glifo (🔁) es el mismo en
+   los dos estados, distinto en FORMA de Stop (■), la diferencia de
+   color hace el resto. */
 QPushButton#btnAutomatico[activo="true"] {{
     background-color: {COLOR_AUTOMATICO_ON};
     border: 2px solid {COLOR_AUTOMATICO_ON_BORDE};
@@ -530,9 +538,9 @@ QPushButton#btnAutomatico[activo="true"] {{
     color: white;
 }}
 QPushButton#btnAutomatico[activo="false"] {{
-    background-color: {p['boton_fondo']};
-    border: 1px solid {p['borde']};
-    color: {p['texto']};
+    background-color: {COLOR_AUTOMATICO_OFF};
+    border: 2px solid {COLOR_AUTOMATICO_OFF_BORDE};
+    color: #d8b8b8;
 }}
 
 /* ---------- Contadores de tiempo (estilo display) ----------
