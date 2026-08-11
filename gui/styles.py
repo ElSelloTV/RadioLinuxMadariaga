@@ -30,18 +30,17 @@ PALETA_CLARA y aplicados vía _generar_qss(paleta).
 # filas rojo/verde).
 COLOR_REPRODUCIENDO = "#c0392b"   # Rojo: evento en emisión
 COLOR_SIGUIENTE = "#27ae60"       # Verde: próximo evento
-# Pedido explícito ("que sea más distinguible en color que el botón de
-# Stop, que se ubique mejor a simple vista"): el botón AUTOMÁTICO
-# antes era rojo (ON) o gris con borde ROJO (OFF) — al lado del botón
-# Stop (también rojo, #922b21), desde lejos las dos lecturas se
-# confundían fácil ("dos botones rojos"). Recoloreado a una familia de
-# dorado/ámbar exclusiva de este botón, que no se usa en NINGÚN otro
-# botón/estado de la app — se distingue de un vistazo tanto de Stop
-# (rojo) como de "reproduciendo" (rojo) y "en cola" (verde).
-COLOR_AUTOMATICO_ON = "#f1c40f"
-COLOR_AUTOMATICO_ON_BORDE = "#b7950b"
-COLOR_AUTOMATICO_OFF = "#4a4a4a"
-COLOR_AUTOMATICO_OFF_BORDE = "#8d6608"
+# Pedido explícito ("el automático en rojo, como Dinesat real"): una
+# ronda anterior lo había pasado a dorado porque, con TEXTO ("AUTO"/
+# "MANUAL") al lado del botón Stop (también rojo en ese momento), las
+# dos lecturas se confundían fácil. Ahora que TODOS los botones de
+# transporte quedaron sin texto ni color propio salvo 3 (Play verde,
+# HORA/TEMP celeste, AUTOMÁTICO rojo — pedido explícito), Stop volvió
+# al gris genérico de cualquier botón — la confusión de origen ya no
+# existe, así que AUTOMÁTICO puede volver a ser rojo como en Dinesat,
+# distinguiéndose de Stop por el ÍCONO (glifo), no por el color.
+COLOR_AUTOMATICO_ON = COLOR_REPRODUCIENDO
+COLOR_AUTOMATICO_ON_BORDE = "#e74c3c"
 COLOR_SELECCION = "#5dade2"       # Celeste: cursor de selección (Dinesat), nunca reemplaza rojo/verde
 COLOR_ARMADO = "#e67e22"          # Naranja: acción diferida armada (Stop diferido)
 
@@ -316,11 +315,10 @@ QPushButton:pressed {{
     background-color: {p['boton_pressed']};
 }}
 
-/* Botones con relleno de "identidad" saturado (Play/Stop/Fade-Stop/
-   Cut/Play principal, más abajo) llevan `color: white` EXPLÍCITO —
-   sin esto heredarían el `color` genérico de QWidget (que en el tema
-   claro es un marrón oscuro, ilegible sobre estos rellenos también
-   oscuros/saturados). */
+/* Botones con relleno de "identidad" saturado (Play/Play principal,
+   más abajo) llevan `color: white` EXPLÍCITO — sin esto heredarían el
+   `color` genérico de QWidget (que en el tema claro es un marrón
+   oscuro, ilegible sobre estos rellenos también oscuros/saturados). */
 QPushButton#btnPlay {{
     background-color: #1e8449;
     color: white;
@@ -328,22 +326,24 @@ QPushButton#btnPlay {{
 }}
 QPushButton#btnPlay:hover {{ background-color: #229954; }}
 
-QPushButton#btnStop {{
-    background-color: #922b21;
-    color: white;
-    font-weight: bold;
-}}
-QPushButton#btnStop:hover {{ background-color: #c0392b; }}
-
-/* Play/Pausa/Stop/Siguiente en 1 SOLA fila (Ventana 1 y 2/Auxiliar,
-   antes en grilla de 2 filas) — pedido explícito, para ahorrar
-   visibilidad de la lista. Padding/fuente más chicos para que las
-   4-5 entren cómodas en una línea sin volver a fijar un ancho
-   mínimo grande (el motivo por el que antes se habían puesto en
-   grilla de 2x2). */
+/* Grilla de transporte estilo Dinesat SIN TEXTO (pedido explícito:
+   "se podrá poner sin texto y recrear el mismo diseño de botones...
+   el resto grises como la imagen en tema claro y oscuro"): Stop/Fade/
+   Pausa/Cut/Stop-diferido (en reposo) ya NO tienen un color de
+   "identidad" propio — vuelven al gris genérico de cualquier botón
+   de la app (`p['boton_fondo']`, mismo en los dos temas por diseño),
+   la diferencia entre ellos es solo el ÍCONO/glifo, como en Dinesat
+   real. Solo 3 botones conservan color propio, IGUAL en los dos
+   temas por ser significado y no superficie (mismo criterio que
+   rojo/verde/celeste de las listas): Play (verde), HORA/TEMP
+   (celeste) y AUTOMÁTICO (rojo cuando está activo). Fuente bien
+   grande porque el glifo es ahora el ÚNICO contenido del botón (antes
+   compartía espacio con el texto). */
 QPushButton[class="btnTransporte"] {{
-    padding: 4px 6px;
-    font-size: 8pt;
+    padding: 4px 8px;
+    font-size: 16pt;
+    min-width: 34px;
+    min-height: 30px;
 }}
 
 /* Botones de acción de la Ventana 3 (Explorador) — pedido explícito
@@ -358,51 +358,42 @@ QPushButton[class="btnCompacto"] {{
 }}
 
 /* ---------- Grilla de transporte estilo Dinesat (pedido explícito,
-   "igualá lo más que pueda... la distribución de las ventanas 1 y 2")
-   ----------
+   "igualá lo más que pueda... la distribución de las ventanas 1 y 2";
+   ronda posterior, sin texto: "recrear el mismo diseño de botones...
+   botón play verde, el de la hora celeste, el automático en rojo, el
+   resto grises") ----------
    Botón grande verde: Play SI está en silencio, "Siguiente con
-   fundido" si ya hay algo sonando — las dos funciones en un botón. */
+   fundido" si ya hay algo sonando — las dos funciones en un botón,
+   ahora solo el glifo "▶", sin texto. */
 QPushButton#btnPlayPrincipal {{
     background-color: #1e8449;
     border: 2px solid #2ecc71;
     color: white;
     font-weight: bold;
-    font-size: 9pt;
+    font-size: 22pt;
 }}
 QPushButton#btnPlayPrincipal:hover {{ background-color: #229954; }}
 QPushButton#btnPlayPrincipal:pressed {{ background-color: #145a32; }}
 
-/* Fade-Stop: fundido hasta apagar — distinto color de Stop (corte
-   seco) para no confundirlos de un vistazo. */
-QPushButton#btnFadeStop {{
-    background-color: #6c3483;
-    color: white;
-    font-weight: bold;
-}}
-QPushButton#btnFadeStop:hover {{ background-color: #8e44ad; }}
+/* Fade-Stop y Cut ya NO tienen relleno de "identidad" propio (pedido
+   explícito "el resto grises") -- heredan el gris genérico de
+   QPushButton de arriba, la diferencia con Stop/Pausa/Stop-diferido
+   es solo el glifo/ícono, igual que en Dinesat real. */
 
-/* Cut (antes "Siguiente"): corte seco e inmediato al ítem en cola. */
-QPushButton#btnCut {{
-    background-color: #34495e;
-    color: white;
-    font-weight: bold;
-}}
-QPushButton#btnCut:hover {{ background-color: #46617a; }}
-
-/* Botón "HORA/TEMP" manual (pedido explícito, exclusivo de Ventana 2:
-   "un botón color azul en los comandos... reproducirse la hora y la
-   temperatura de manera manual... sin fade ni nada, pisando lo que
-   haya sonando"): mismo azul (#2980b9) que ya usa COLOR_COMANDO para
-   los Comandos FMT/HTH en el árbol de Ventana 1 -- hardcodeado acá en
-   vez de referenciar la constante porque este bloque QSS se genera
-   ANTES de que COLOR_COMANDO se defina más abajo en el archivo (ver
-   core/gestor_emision.py:reproducir_hth_manual para la lógica real). */
+/* Botón "HORA/TEMP" manual (pedido explícito: "un botón color azul...
+   reproducirse la hora y la temperatura de manera manual"; ronda
+   posterior: "el de la hora celeste"): mismo celeste que ya usa
+   COLOR_SELECCION para el cursor de selección de las listas
+   (#5dade2) -- hardcodeado acá (no como referencia a la constante)
+   porque este bloque QSS se genera ANTES de que COLOR_SELECCION se
+   defina más abajo en el archivo. Texto NEGRO (no blanco): el celeste
+   es un color claro, el contraste con blanco queda pobre. */
 QPushButton#btnHthManual {{
-    background-color: #2980b9;
-    color: white;
+    background-color: #5dade2;
+    color: black;
     font-weight: bold;
 }}
-QPushButton#btnHthManual:hover {{ background-color: #3498db; }}
+QPushButton#btnHthManual:hover {{ background-color: #7fc1ea; }}
 
 /* Stop diferido: deja terminar el ítem actual y recién ahí frena
    todo — queda "armado" (naranja) hasta que se ejecute o se
@@ -430,30 +421,27 @@ QLabel#lblNombreEstacion {{
     letter-spacing: 1px;
 }}
 
-/* Contorno PERMANENTE (esté ON u OFF) para ubicarlo mejor de un
-   vistazo — pedido explícito. Pedido explícito posterior ("que sea
-   más distinguible en color que el botón de Stop, que se ubique
-   mejor a simple vista"): antes era rojo en los dos estados (relleno
-   rojo cuando ON, borde rojo cuando OFF) — al lado del Stop (también
-   rojo), leído desde lejos las dos lecturas se confundían. Ahora
-   dorado/ámbar en los DOS estados (nunca rojo), fuente un poco más
-   grande que el resto de `btnTransporte` para que pese más a simple
-   vista sin tener que mover el botón de lugar — el relleno sólido
-   ON/gris OFF sigue siendo la única señal de estado real, el color
-   dorado del contorno es solo para ubicarlo. */
+/* AUTOMÁTICO (pedido explícito, "el automático en rojo, como
+   Dinesat real"): ON = rojo sólido (mismo color que "reproduciendo"
+   en las listas, reutilizado a propósito — es un color semántico, no
+   de superficie, igual en los dos temas). OFF = el MISMO gris
+   genérico que Stop/Fade/Pausa/Cut (`p['boton_fondo']`/`p['borde']`,
+   theme-aware) — "el resto grises como la imagen en tema claro y
+   oscuro" aplica también acá cuando está inactivo; el rojo aparece
+   SOLO cuando el modo está realmente activo, la señal más fuerte
+   posible de "cuidado, estás en automático". Sin texto (antes "AUTO"/
+   "MANUAL") — el glifo (🔁) es el mismo en los dos estados, distinto
+   en FORMA de Stop (■), la diferencia de color hace el resto. */
 QPushButton#btnAutomatico[activo="true"] {{
     background-color: {COLOR_AUTOMATICO_ON};
     border: 2px solid {COLOR_AUTOMATICO_ON_BORDE};
     font-weight: bold;
-    font-size: 9pt;
-    color: black;
+    color: white;
 }}
 QPushButton#btnAutomatico[activo="false"] {{
-    background-color: {COLOR_AUTOMATICO_OFF};
-    border: 2px solid {COLOR_AUTOMATICO_OFF_BORDE};
-    font-weight: bold;
-    font-size: 9pt;
-    color: #dddddd;
+    background-color: {p['boton_fondo']};
+    border: 1px solid {p['borde']};
+    color: {p['texto']};
 }}
 
 /* ---------- Contadores de tiempo (estilo display) ----------

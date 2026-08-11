@@ -115,7 +115,11 @@ class VentanaPublicidad(QWidget):
         self.lbl_estado = QLabel("Modo Manual")
         self.lbl_estado.setObjectName("lblEstadoAutomatico")
         self.lbl_estado.setProperty("activo", "false")
-        self.btn_automatico = QPushButton("AUTO")
+        # Pedido explícito ("sin texto... el automático en rojo"): el
+        # glifo es el MISMO en los dos estados (no más "AUTO"/"MANUAL"
+        # como texto) — el color (gris/rojo, ver gui/styles.py) y el
+        # tooltip llevan toda la señal de estado.
+        self.btn_automatico = QPushButton("🔁")
         self.btn_automatico.setObjectName("btnAutomatico")
         self.btn_automatico.setProperty("class", "btnTransporte")
         self.btn_automatico.setCheckable(True)
@@ -198,9 +202,12 @@ class VentanaPublicidad(QWidget):
         barra_botones = QHBoxLayout()
         barra_botones.setSpacing(4)
 
-        self.btn_play = QPushButton("▶\nPLAY /\nSIG.")
+        # Pedido explícito ("sin texto, recrear el mismo diseño de
+        # botones... botón play verde"): solo el glifo.
+        self.btn_play = QPushButton("▶")
         self.btn_play.setObjectName("btnPlayPrincipal")
         self.btn_play.setToolTip(
+            "Play / Siguiente con fundido\n\n"
             "En silencio: reproduce el ítem elegido.\n"
             "Con algo sonando: pasa al ítem en cola (verde) con fundido."
         )
@@ -212,29 +219,34 @@ class VentanaPublicidad(QWidget):
         grilla = QVBoxLayout()
         grilla.setSpacing(3)
 
+        # Pedido explícito ("sin texto... el resto grises"): Stop/Fade/
+        # Pausa/Cut/Stop-diferido quedan solo con su glifo, sin
+        # palabra, y sin color de identidad propio (gris genérico, ver
+        # gui/styles.py) — la función se distingue por el ícono, como
+        # en Dinesat real, y por el tooltip al pasar el mouse.
         fila_superior = QHBoxLayout()
         fila_superior.setSpacing(3)
-        self.btn_stop = QPushButton("■ STOP")
+        self.btn_stop = QPushButton("■")
         self.btn_stop.setObjectName("btnStop")
         self.btn_stop.setProperty("class", "btnTransporte")
-        self.btn_stop.setToolTip("Corte seco e inmediato.")
-        self.btn_fade_stop = QPushButton("◢ FADE")
+        self.btn_stop.setToolTip("Stop: corte seco e inmediato.")
+        self.btn_fade_stop = QPushButton("◢")
         self.btn_fade_stop.setObjectName("btnFadeStop")
         self.btn_fade_stop.setProperty("class", "btnTransporte")
-        self.btn_fade_stop.setToolTip("Fundido hasta apagar el ítem en reproducción.")
+        self.btn_fade_stop.setToolTip("Fade: fundido hasta apagar el ítem en reproducción.")
         self.btn_stop.clicked.connect(self._on_click_stop)
         self.btn_fade_stop.clicked.connect(self._on_click_fade_stop)
-        # Botón azul "HORA/TEMP" (pedido explícito, en el lugar del
-        # "Bajador" de Dinesat, que acá no se usa): reproduce HORA +
-        # TEMPERATURA cortando limpio lo que esté sonando -- misma
-        # lógica ya implementada en Ventana 2, ver
+        # Botón "HORA/TEMP" (pedido explícito, en el lugar del
+        # "Bajador" de Dinesat, que acá no se usa, ahora celeste):
+        # reproduce HORA + TEMPERATURA cortando limpio lo que esté
+        # sonando -- misma lógica ya implementada en Ventana 2, ver
         # core/playlist_manager.py:GestorPublicidad.reproducir_hth_manual.
-        self.btn_hth_manual = QPushButton("🕐 HORA/TEMP")
+        self.btn_hth_manual = QPushButton("🕐")
         self.btn_hth_manual.setObjectName("btnHthManual")
         self.btn_hth_manual.setProperty("class", "btnTransporte")
         self.btn_hth_manual.setToolTip(
-            "Reproduce HORA y TEMPERATURA ahora mismo, cortando de "
-            "inmediato lo que esté sonando (sin fundido)."
+            "Hora/Temperatura: reproduce HORA y TEMPERATURA ahora mismo, "
+            "cortando de inmediato lo que esté sonando (sin fundido)."
         )
         self.btn_hth_manual.clicked.connect(self.solicitud_hth_manual.emit)
         fila_superior.addWidget(self.btn_stop)
@@ -244,13 +256,14 @@ class VentanaPublicidad(QWidget):
 
         fila_inferior = QHBoxLayout()
         fila_inferior.setSpacing(3)
-        self.btn_pausa = QPushButton("❚❚ PAUSA")
+        self.btn_pausa = QPushButton("❚❚")
         self.btn_pausa.setProperty("class", "btnTransporte")
-        self.btn_cut = QPushButton("✂ CUT")
+        self.btn_pausa.setToolTip("Pausa.")
+        self.btn_cut = QPushButton("✂")
         self.btn_cut.setObjectName("btnCut")
         self.btn_cut.setProperty("class", "btnTransporte")
-        self.btn_cut.setToolTip("Corte seco e inmediato al ítem en cola (antes \"Siguiente\").")
-        self.btn_stop_diferido = QPushButton("◷ STOP…")
+        self.btn_cut.setToolTip("Cut: corte seco e inmediato al ítem en cola (antes \"Siguiente\").")
+        self.btn_stop_diferido = QPushButton("◷")
         self.btn_stop_diferido.setObjectName("btnStopDiferido")
         self.btn_stop_diferido.setProperty("class", "btnTransporte")
         self.btn_stop_diferido.setProperty("armado", "false")
@@ -527,20 +540,15 @@ class VentanaPublicidad(QWidget):
     def _toggle_automatico(self):
         self._modo_automatico = self.btn_automatico.isChecked()
         if self._modo_automatico:
-            # Texto corto (AUTO/MAN) — el botón ahora vive en la
-            # grilla compacta de transporte (pedido explícito, mismo
-            # lugar que en Dinesat); el estado completo sigue
-            # explícito en lbl_estado ("Automático Activo"/"Modo
+            # Pedido explícito ("sin texto"): el botón ya no cambia de
+            # texto (antes "AUTO"/"MANUAL") — el glifo queda fijo, el
+            # color (gris/rojo) es la señal real. El estado completo
+            # sigue explícito en lbl_estado ("Automático Activo"/"Modo
             # Manual") y en el tooltip del botón.
-            self.btn_automatico.setText("AUTO")
             self.btn_automatico.setProperty("activo", "true")
             self.lbl_estado.setText("Automático Activo")
             self.lbl_estado.setProperty("activo", "true")
         else:
-            # Pedido explícito ("que diga expresamente MANUAL, no MAN"):
-            # el botón es lo bastante ancho para el texto completo con
-            # la fuente 9pt nueva de gui/styles.py.
-            self.btn_automatico.setText("MANUAL")
             self.btn_automatico.setProperty("activo", "false")
             self.lbl_estado.setText("Modo Manual")
             self.lbl_estado.setProperty("activo", "false")
