@@ -10588,6 +10588,23 @@ soltó de una vez.
     sienten como pidió, en su pantalla real y en los dos temas, antes
     de considerar cerrado el rediseño de esta grilla de botones.
 
+    **Ajuste inmediato, confirmado con una foto real de la app en su
+    notebook**: Santiago mandó una foto de la app corriendo de verdad
+    y preguntó "no te parecen un poco grandes?" — los botones de
+    transporte, sin texto y con fuente 16pt/mínimo 34x30, quedaban
+    ocupando mucho más espacio del necesario para un solo glifo.
+    Bajado en `gui/styles.py` (`QPushButton[class="btnTransporte"]`):
+    `font-size` de 16pt a 11pt, `min-width`/`min-height` de 34x30 a
+    24x22, padding de `4px 8px` a `2px 5px`. El botón grande verde
+    (`#btnPlayPrincipal`) bajó de 22pt a 16pt en conjunto (mismo
+    criterio de proporción). `btn_play.setMinimumHeight()`/
+    `setMinimumWidth()` (puestos a mano en Python, en
+    `gui/panel_reproductor.py` Y `gui/ventana_publicidad.py`, fuera
+    del QSS) bajaron de 42x50 a 34x40 en las dos ventanas. Confirmado
+    con la misma batería de tests de la ronda (sin fallos) + capturas
+    nuevas (oscuro/claro) reenviadas a Santiago para comparar el
+    tamaño contra la foto real que mandó.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que

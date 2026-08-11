@@ -212,8 +212,8 @@ class PanelReproductor(QWidget):
             "En silencio: reproduce el ítem elegido.\n"
             "Con algo sonando: pasa al ítem en cola (verde) con fundido."
         )
-        self.btn_play.setMinimumHeight(42)
-        self.btn_play.setMinimumWidth(50)
+        self.btn_play.setMinimumHeight(34)
+        self.btn_play.setMinimumWidth(40)
         self.btn_play.clicked.connect(self.solicitud_play.emit)
         barra_botones.addWidget(self.btn_play)
 
