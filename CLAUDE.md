@@ -11342,6 +11342,87 @@ soltó de una vez.
     el ícono "Auto-Radio Tuyú — Satélite" aparece en el Escritorio y
     abre la botonera con un solo doble click, sin tocar la terminal.
 
+116. ~~Bug real de fondo, encontrado tras el reporte de la ronda
+    anterior — el botón "Actualizar" NUNCA instala/refresca los
+    íconos de escritorio~~ — Santiago probó la ronda 115 con "no
+    aparece el ícono. no lo veo en el escritorio. actualicé por el
+    programa como siempre" — la instrucción que se le había dado
+    ("corré `./instalar.sh` de nuevo") asumía que iba a abrir una
+    terminal, pero Santiago usa el camino que YA tiene incorporado:
+    el botón "Actualizar" de Configuración → Actualizaciones.
+
+    **Causa real, confirmada leyendo `core/actualizador.py`**:
+    `aplicar_actualizacion()` (lo que corre ese botón) SOLO hace `git
+    pull --ff-only` — nunca llama a `instalar.sh`. El `git pull` sí
+    trae los archivos nuevos al checkout (`iniciar_satelite.sh`,
+    `assets/radiolinuxmadariaga_satelite.desktop`), pero nadie los
+    copia nunca a `~/.local/share/applications/` ni al Escritorio real
+    — ESE paso (con el reemplazo de la ruta placeholder y la carpeta
+    de Escritorio real vía `xdg-user-dir`) solo vive dentro de
+    `instalar.sh`, un script que Santiago nunca vuelve a correr una
+    vez que ya tiene la app instalada — para él, "actualizar" siempre
+    fue ese botón, nunca una terminal. Mismo patrón exacto al que ya
+    apuntaba el propio pedido original ("nada de comando por
+    consola") — la ronda anterior resolvió el PRIMER instalado pero
+    dejó el mismo problema para cualquier actualización futura.
+
+    **Corregido de raíz, no con una instrucción nueva para la
+    terminal**: nueva `core/actualizador.py:asegurar_lanzadores_
+    escritorio()` — reimplementa en Python el mismo mecanismo que ya
+    tenía `instalar_lanzador()` en `instalar.sh` (mismo par de
+    `.desktop`, mismo reemplazo del placeholder de ruta, misma
+    resolución de la carpeta de Escritorio real vía `xdg-user-dir`
+    con fallback a `~/Escritorio`/`~/Desktop`, mismo `gio set
+    ... trusted` best-effort) — pero llamable DESDE PYTHON, en
+    cualquier punto de entrada, sin depender de que alguien abra una
+    terminal. Idempotente (correrla de nuevo no rompe nada, solo
+    sobreescribe) y silenciosa (nunca puede frenar el arranque de la
+    radio — cualquier fallo de permisos/IO queda atrapado y logueado,
+    nunca propagado). Se llama SOLA, envuelta en `try/except`, al
+    arrancar `main.py` (justo después de `cargar_configuracion()`,
+    antes de `registrar_evento("Aplicación iniciada")`) Y al arrancar
+    `satelite_main.py` — así CUALQUIERA de los dos puntos de entrada
+    que Santiago ya usa con normalidad (abrir la radio, o la propia
+    satélite si alguna vez se la arranca a mano por primera vez en
+    otra sesión) deja los DOS íconos instalados/al día, sin que haga
+    falta ni instalar.sh ni ninguna terminal nunca más — cada
+    actualización futura vía el botón de siempre los mantiene
+    frescos automáticamente, de ahí en más.
+
+    **Bug propio de esta misma ronda, encontrado y corregido antes de
+    terminar**: al escribir el primer intento de esta función, una
+    lectura parcial de `core/actualizador.py` (pedí solo 18 líneas
+    desde donde empezaba `reiniciar_aplicacion()`) cortó esa función
+    ANTES de su última línea real (`app.quit()`, después de
+    `app.closeAllWindows()`) — el código nuevo quedó insertado en el
+    medio, dejando un `app.quit()` huérfano y mal indentado al final
+    del archivo. Atrapado de inmediato por el propio smoke test (`
+    NameError: name 'app' is not defined`) antes de llegar a
+    Santiago — corregido devolviendo esa línea a donde siempre
+    perteneció, dentro de `reiniciar_aplicacion()`. **Regla para el
+    futuro**: al leer el "final" de una función para insertar código
+    después, confirmar contra `wc -l`/el diff real que el `Read` cubrió
+    hasta la ÚLTIMA línea del archivo — un `limit` calculado a ojo
+    puede cortar la función un renglón antes de su cierre real.
+
+    Probado con un script dedicado que simula EXACTAMENTE el reporte
+    de Santiago (un `$HOME` nuevo, con una carpeta "Escritorio" real,
+    sin haber corrido nunca `instalar.sh`): confirma que arranca sin
+    nada instalado, que `asegurar_lanzadores_escritorio()` deja los 2
+    `.desktop` en el menú DE APLICACIONES Y en el Escritorio real,
+    con el placeholder de ruta sustituido por la instalación real,
+    ejecutables, y que los 2 scripts lanzadores quedan marcados
+    ejecutables — más que correrla una segunda vez (arranques
+    repetidos) no rompe nada — + un smoke test de punta a punta
+    lanzando `main.py` Y `satelite_main.py` completos contra un `$HOME`
+    temporal con una carpeta "Escritorio" real: los DOS procesos, sin
+    ninguna intervención manual, dejan los DOS `.desktop` instalados
+    ahí solos, sin ningún traceback — + `py_compile` completo. **Sigue
+    sin poder confirmarse en su escritorio real**: falta que Santiago
+    simplemente ABRA la radio como ya hace siempre (sin ningún paso
+    extra) y confirme que esta vez sí aparece el ícono "Auto-Radio
+    Tuyú — Satélite" en su Escritorio.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
@@ -11404,6 +11485,29 @@ soltó de una vez.
   camino no cubierto. Si un operador reporta "funciona una vez y
   después no responde, hay que reiniciar" sobre un botón que abre un
   diálogo no-modal, sospechar primero de esto.
+- **El botón "Actualizar" de Configuración SOLO hace `git pull` —
+  nunca corre `instalar.sh`** (ronda 116): cualquier paso que solo
+  viva dentro de `instalar.sh` (instalar/refrescar íconos de
+  escritorio, marcar ejecutables, etc.) nunca se aplica solo para
+  alguien que actualiza con ese botón — que es el camino que Santiago
+  usa SIEMPRE ("actualicé por el programa como siempre"), nunca una
+  terminal. **Regla**: cualquier cosa nueva que dependa de
+  `instalar.sh` para instalarse tiene que tener también un camino en
+  Python, llamado solo desde el arranque de la app (`main.py`) — no
+  alcanza con documentar "correlo desde la terminal", porque en la
+  práctica eso nunca se ejecuta.
+- **Al leer el "final" de una función en un archivo grande para
+  insertar código después, un `limit` calculado a ojo puede cortar la
+  función un renglón antes de su cierre real** (bug propio evitado
+  antes de llegar a Santiago, ronda 116): `wc -l` decía 273 líneas,
+  pero un `Read` con `offset=255, limit=18` solo mostraba hasta la
+  línea 272 — un renglón antes del verdadero final del archivo
+  (`app.quit()`, línea 273). El código nuevo terminó insertado ANTES
+  de esa última línea, dejándola huérfana y mal indentada al final
+  del archivo — atrapado recién al correr el test (`NameError`).
+  **Regla**: antes de insertar código "después de la última línea de
+  una función", confirmar el límite real contra `wc -l`/`tail`, no
+  contra un `limit` de `Read` elegido a ojo.
 - **`MotorAudio.finalizo_item` podía emitirse DOS VECES para el mismo
   fin de reproducción** (bug real, ronda 96, "en punto en punto" del
   HTH): dos orígenes independientes detectan "esta reproducción
