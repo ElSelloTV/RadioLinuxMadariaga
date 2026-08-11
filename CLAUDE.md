@@ -10801,6 +10801,56 @@ soltó de una vez.
     real**: falta que Santiago confirme que, con el Automático activo,
     apretar Stop en Ventana 1 corta la reproducción y apaga el
     Automático de una sola vez, sin ningún diálogo de por medio.
+109. ~~Musicalizador: columna "Título" entre Clase y Tipo, se sacó
+    "Detalle", las 4 columnas movibles y ajustables a mano~~ — pedido
+    explícito: "En el musicalizador, para armar mejor, entre la
+    columna clase y tipo, poné el nombre del título. Sacá la columna
+    de detalle. Y que esas columnas puedan moverse para ver el
+    título, es decir que puedan ajustarse manualmente." La columna
+    "Detalle" (ronda 30) mostraba, para un ítem Específico, la RUTA
+    CRUDA del archivo (ej. `/home/.../tema.mp3`) — dificultaba
+    reconocer de un vistazo qué tema era mientras se armaba un
+    formato. Reemplazada por una columna "Título" NUEVA, insertada
+    entre Clase y Tipo (orden final: Clase | Título | Tipo | Pisador).
+
+    `gui/ventana_musicalizador.py`: `_texto_titulo(ventana_explorador,
+    item_config)` (nueva, reemplaza a `_texto_detalle()` eliminada)
+    resuelve el contenido según el tipo de ítem — Específico: el
+    TÍTULO real, resuelto contra la biblioteca
+    (`ventana_explorador.buscar_registro_por_ruta()`, mismo mecanismo
+    ya usado por `_texto_clase()`) en vez de la ruta; si el archivo no
+    se encuentra, muestra `(no encontrado: <ruta>)` como aviso en vez
+    de fallar en silencio. Aleatorio y Subformato NO tienen un
+    "título" real (uno apunta a una categoría entera, el otro es un
+    contenedor) — conservan EXACTAMENTE el mismo texto que ya
+    mostraba la vieja "Detalle" para esos dos casos (camino de
+    categoría, y nombre+duración respectivamente), así no se pierde
+    esa información al sacar la columna, solo se reubica.
+
+    **Columnas movibles y ajustables** (pedido explícito, "que puedan
+    moverse... que puedan ajustarse manualmente"): las 4 columnas
+    pasaron TODAS a `QHeaderView.ResizeMode.Interactive` (antes
+    "Detalle" era `Stretch` fijo, no se podía achicar/agrandar a
+    mano) + `header().setSectionsMovable(True)` (arrastrar el
+    encabezado para reordenar columnas) — pensado sobre todo para
+    poder ensanchar "Título" y leer un nombre largo completo sin que
+    quede truncado. Ancho inicial de "Título" (260px) mayor que el
+    resto, ya que es la columna que más se va a necesitar leer.
+
+    Probado con `test_musicalizador_columna_titulo.py` (nuevo,
+    dedicado): `_texto_titulo()` resuelve el título real para
+    Específico, avisa con la ruta si el archivo no se encuentra,
+    conserva el camino de categoría para Aleatorio y nombre+duración
+    para Subformato (ambos idénticos a lo que ya mostraba Detalle), y
+    degrada limpio sin `ventana_explorador`; la UI real confirma el
+    orden de columnas exacto, que las 4 son `Interactive` (ninguna
+    `Stretch` fija) y que el header admite reordenar — + suite de
+    regresión completa de los 9 scripts de test de rondas anteriores
+    en este mismo bloque de trabajo sin fallos nuevos + `py_compile`
+    completo + smoke test de arranque sin traceback. Falta que
+    Santiago confirme que ahora reconoce los temas de un vistazo al
+    armar un formato, y que el orden/ancho de columnas se siente
+    cómodo en su pantalla real.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
