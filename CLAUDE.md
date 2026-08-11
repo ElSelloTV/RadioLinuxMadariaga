@@ -10604,6 +10604,76 @@ soltó de una vez.
     con la misma batería de tests de la ronda (sin fallos) + capturas
     nuevas (oscuro/claro) reenviadas a Santiago para comparar el
     tamaño contra la foto real que mandó.
+106. ~~Fondo casi negro FIJO para las listas de Ventana 1 y 2, igual en
+    los dos temas (copiado de una captura real de Dinesat)~~ — pedido
+    explícito, con una captura real de Dinesat adjunta (lista de
+    bloques/ítems con fondo negro, filas rojo/verde bien saturadas):
+    "Te paso como es el tema claro de Dinesat, tiene fondo negro y
+    fijate y copia EXACTAMENTE igual como lo ves en la pantalla, rojo,
+    verde y el celeste de selección. La diferencia del negro y gris
+    oscuro, etc. Aplicá esto en tema oscuro como claro." — es decir:
+    incluso el tema "claro" de Dinesat mantiene la LISTA de
+    reproducción con fondo casi negro (con un sutil alternado entre
+    negro y gris muy oscuro) — solo el rojo/verde/celeste de estado
+    necesitan ese fondo oscuro para resaltar de verdad; el resto de la
+    superficie (paneles/chrome) sí puede aclararse. El pedido es
+    puntual: "el contenido de las ventanas 1 y 2" — Ventana 3
+    (Explorador) no se toca.
+
+    **Implementación** (`gui/styles.py`): 3 constantes nuevas junto al
+    resto de los colores SEMÁNTICOS (rojo/verde/celeste, ya
+    documentados como "iguales en los dos temas a propósito") —
+    `COLOR_LISTA_V1V2_FONDO = "#141414"`, `COLOR_LISTA_V1V2_ALTERNO =
+    "#1e1e1e"`, `COLOR_LISTA_V1V2_HEADER_FONDO = "#2a2a2a"` — estimadas
+    a ojo de la captura real (no hay forma de samplear píxeles exactos
+    de una foto de pantalla comprimida, mismo criterio ya usado para
+    el tema Claro completo en una ronda anterior). El bloque QSS que ya
+    existía para `#tree_publicidad`/`#tree_reproductor` ("modo
+    compacto", fuente 8pt) ganó `background-color`/
+    `alternate-background-color` con estas constantes FIJAS —en vez de
+    `{{p['tree_fondo']}}`/`{{p['tree_alterno']}}`, que sí varían por
+    tema— así el fondo de estas DOS listas puntuales (Ventana 2 también
+    cubre a la Auxiliar, que reutiliza el mismo `#tree_reproductor`)
+    queda IDÉNTICO sin importar qué tema esté activo. Mismo criterio
+    para el header de columnas ("Título/Duración/Código"), con un
+    selector descendiente nuevo (`QTreeWidget#tree_publicidad
+    QHeaderView::section`) para no tocar el header genérico que sigue
+    usando `{{p['header_columnas_fondo']}}` en el resto de los árboles
+    de la app (Ventana 3).
+
+    **Bug real evitado ANTES de llegar a Santiago, encontrado en la
+    propia captura de verificación**: con el fondo forzado a
+    casi-negro en el tema Claro, el texto de un ítem NORMAL (sin
+    rojo/verde) se volvía CASI INVISIBLE — `_color_para_estado()`
+    (`gui/panel_reproductor.py`) devuelve un `QBrush()` vacío para el
+    estado normal (deja el texto en el color heredado del QSS, que en
+    el tema Claro es un marrón oscuro pensado para fondos caqui/plata,
+    ilegible sobre negro). Corregido agregando `color: #e0e0e0;`
+    explícito al bloque QSS de `#tree_publicidad::item`/
+    `#tree_reproductor::item` — un gris claro fijo, independiente del
+    tema, que cubre SOLO el estado normal (un ítem rojo/verde ya trae
+    su propio blanco explícito puesto por Python, sin cambios ahí).
+
+    Probado con `test_listas_v1v2_fondo_negro.py` (nuevo, dedicado):
+    las 3 constantes son casi-negras (luminancia verificada por
+    fórmula, no solo "se ve oscuro"), y DISTINTAS del fondo crema del
+    tema Claro; el QSS generado para AMBOS temas
+    (`QSS_APLICACION`/`QSS_APLICACION_CLARO`) contiene el mismo fondo/
+    alternado/header fijos; el texto de ítems normales queda claro
+    incluso en el tema Claro; y una `VentanaPublicidad`/`VentanaEmision`
+    reales, construidas y pobladas con contenido real bajo los dos
+    temas, no rompen — + regresión completa de los 6 scripts de test
+    de rondas anteriores en este mismo bloque de trabajo sin fallos
+    nuevos + `py_compile` completo + smoke test de arranque sin
+    traceback. Se generaron y enviaron a Santiago 2 capturas reales
+    (oscuro/claro, con bloques y rojo/verde reales cargados) para
+    comparar contra la foto de Dinesat que mandó. **Sigue sin poder
+    confirmarse con fidelidad de color 100% exacta** (los 3 hex son una
+    estimación visual de una foto comprimida, no un sampleo de
+    píxeles): falta que Santiago confirme si el negro/gris oscuro
+    elegido se parece lo suficiente a su Dinesat real, o si prefiere
+    ajustar el tono exacto (más o menos negro, más o menos contraste
+    entre las dos franjas alternadas).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
