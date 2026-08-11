@@ -27,6 +27,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from satelite.ventana_satelite import VentanaSatelite
+from core.actualizador import asegurar_lanzadores_escritorio
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
 
@@ -36,6 +37,15 @@ def main():
     app.setApplicationName("Auto-Radio Tuyú — Satélite")
     app.setApplicationDisplayName("Auto-Radio Tuyú — Satélite")
     app.setWindowIcon(QIcon(RUTA_ICONO))
+
+    # Mismo mecanismo que main.py -- si esta sesión alguna vez corre
+    # satelite_main.py a mano (primer arranque, sin ícono todavía) o
+    # actualiza el checkout más adelante, el ícono de escritorio queda
+    # instalado/refrescado solo, sin volver a tocar una terminal.
+    try:
+        asegurar_lanzadores_escritorio()
+    except Exception:
+        pass
 
     ventana = VentanaSatelite()
     ventana.show()

@@ -26,6 +26,7 @@ from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 from gui.styles import qss_para_tema
 from config.settings import cargar_configuracion, registrar_error, registrar_evento
 from core.instancia_unica import adquirir_bloqueo_instancia_unica
+from core.actualizador import asegurar_lanzadores_escritorio
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
 
@@ -104,6 +105,17 @@ def main():
         cargar_configuracion()
     except Exception as error:
         registrar_error(f"Error al iniciar la aplicación: {error}")
+
+    # Pedido explícito ("necesito un ícono de escritorio. Nada de
+    # comando por consola"): el botón "Actualizar" de Configuración
+    # SOLO hace git pull, nunca corre instalar.sh -- sin esto, un
+    # ícono nuevo/cambiado nunca se instalaba solo para quien siempre
+    # actualiza desde adentro del programa. Idempotente y silencioso;
+    # nunca debe poder frenar el arranque de la radio.
+    try:
+        asegurar_lanzadores_escritorio()
+    except Exception as error:
+        registrar_error(f"No se pudieron instalar/refrescar los lanzadores de escritorio: {error}")
 
     registrar_evento("Aplicación iniciada")
 

@@ -271,3 +271,93 @@ def reiniciar_aplicacion(app):
     QProcess.startDetached(python, [script])
     app.closeAllWindows()
     app.quit()
+
+
+# ------------------------------------------------------------------
+# Lanzadores de escritorio — pedido explícito: "necesito un ícono de
+# escritorio. Nada de comando por consola". `instalar.sh` ya sabe
+# instalarlos/refrescarlos, pero solo corre cuando alguien lo llama a
+# mano desde una terminal — el botón "Actualizar" de Configuración
+# (el camino que Santiago usa siempre, "actualicé por el programa
+# como siempre") SOLO hace `git pull`, nunca corre `instalar.sh`, así
+# que un ícono nuevo (o uno que cambió de contenido) nunca llegaba a
+# instalarse solo. Esta función replica en Python el mismo mecanismo
+# de `instalar.sh` (mismo par de .desktop, mismo reemplazo de ruta,
+# misma carpeta de Escritorio real vía xdg-user-dir) para poder
+# llamarla SOLA al arrancar cualquiera de los dos puntos de entrada
+# (main.py / satelite_main.py) — idempotente y silenciosa: si ya
+# está todo instalado y al día, sobreescribe sin más; si algo falla
+# (sin permisos, sin carpeta de Escritorio), nunca rompe el arranque.
+# ------------------------------------------------------------------
+_LANZADORES_DESKTOP = (
+    ("radiolinuxmadariaga.desktop", "iniciar.sh"),
+    ("radiolinuxmadariaga_satelite.desktop", "iniciar_satelite.sh"),
+)
+
+
+def _carpeta_escritorio_real() -> str | None:
+    try:
+        resultado = subprocess.run(
+            ["xdg-user-dir", "DESKTOP"], capture_output=True, text=True, timeout=3,
+        )
+        candidata = resultado.stdout.strip()
+        if candidata and os.path.isdir(candidata):
+            return candidata
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        pass
+    for nombre in ("Escritorio", "Desktop"):
+        candidata = os.path.join(os.path.expanduser("~"), nombre)
+        if os.path.isdir(candidata):
+            return candidata
+    return None
+
+
+def asegurar_lanzadores_escritorio() -> None:
+    raiz = _raiz_app()
+    if not os.path.isdir(os.path.join(raiz, "assets")):
+        return  # checkout parcial/roto -- no hay nada de dónde copiar
+
+    carpeta_menu = os.path.join(os.path.expanduser("~"), ".local", "share", "applications")
+    carpeta_escritorio = _carpeta_escritorio_real()
+
+    for nombre_desktop, nombre_script in _LANZADORES_DESKTOP:
+        script = os.path.join(raiz, nombre_script)
+        if os.path.isfile(script):
+            try:
+                os.chmod(script, 0o755)
+            except OSError:
+                pass
+
+        plantilla = os.path.join(raiz, "assets", nombre_desktop)
+        if not os.path.isfile(plantilla):
+            continue
+        try:
+            with open(plantilla, "r", encoding="utf-8") as f:
+                contenido = f.read()
+        except OSError:
+            continue
+        contenido = contenido.replace("/home/santiago/RadioLinuxMadariaga", raiz)
+
+        for carpeta_destino in (carpeta_menu, carpeta_escritorio):
+            if not carpeta_destino:
+                continue
+            try:
+                os.makedirs(carpeta_destino, exist_ok=True)
+                ruta_destino = os.path.join(carpeta_destino, nombre_desktop)
+                with open(ruta_destino, "w", encoding="utf-8") as f:
+                    f.write(contenido)
+                os.chmod(ruta_destino, 0o755)
+                if carpeta_destino == carpeta_escritorio:
+                    # Algunos entornos (GNOME/Nautilus) no muestran el
+                    # ícono como ejecutable hasta que se marca
+                    # "confiable" -- best-effort, sin romper nada si
+                    # `gio` no está instalado.
+                    try:
+                        subprocess.run(
+                            ["gio", "set", ruta_destino, "metadata::trusted", "true"],
+                            capture_output=True, timeout=3,
+                        )
+                    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+                        pass
+            except OSError:
+                pass
