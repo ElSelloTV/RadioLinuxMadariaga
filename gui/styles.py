@@ -60,6 +60,21 @@ COLOR_LISTA_V1V2_FONDO = "#141414"
 COLOR_LISTA_V1V2_ALTERNO = "#1e1e1e"
 COLOR_LISTA_V1V2_HEADER_FONDO = "#2a2a2a"
 
+# Ventana 3 (Explorador) — pedido explícito, ronda posterior: "aplica
+# el mismo color de la ventana negro en el explorador. diferencia
+# categoria de la ventana de elementos" — mismo criterio que arriba
+# (fondo casi negro FIJO en los dos temas), pero con DOS tonos
+# ligeramente distintos para que Categorías (izquierda) y Archivos/
+# Elementos (derecha) se distingan entre sí a simple vista, en vez de
+# verse como un solo bloque negro sin límites. Archivos reusa EXACTO
+# el mismo tono que V1/V2 ("el mismo color de la ventana negro");
+# Categorías queda un escalón más claro.
+COLOR_LISTA_V3_ARCHIVOS_FONDO = COLOR_LISTA_V1V2_FONDO
+COLOR_LISTA_V3_ARCHIVOS_ALTERNO = COLOR_LISTA_V1V2_ALTERNO
+COLOR_LISTA_V3_CATEGORIAS_FONDO = "#242424"
+COLOR_LISTA_V3_CATEGORIAS_ALTERNO = "#2e2e2e"
+COLOR_LISTA_V3_HEADER_FONDO = COLOR_LISTA_V1V2_HEADER_FONDO
+
 # Paleta de SUPERFICIE del tema OSCURO (default, sin cambios respecto
 # de siempre — mismos valores que antes vivían como constantes
 # sueltas COLOR_FONDO_PRINCIPAL/COLOR_FONDO_PANEL/etc.). `chrome_fondo`/
@@ -261,12 +276,35 @@ QHeaderView::section {{
 
 /* ---------- Ventana 3 (Explorador): tipografía más chica en los
    ítems (pedido explícito) para tener más visibilidad de los datos
-   sin agrandar la ventana. ---------- */
+   sin agrandar la ventana. Fondo casi negro FIJO en los dos temas
+   (pedido explícito, ronda posterior: "aplica el mismo color de la
+   ventana negro en el explorador") — Categorías y Archivos con dos
+   tonos distintos ("diferencia categoria de la ventana de
+   elementos"), y texto claro FIJO (nunca {{p['texto']}}, que en el
+   tema Claro es oscuro y quedaría ilegible sobre negro — mismo
+   criterio que ya se usó para V1/V2). Un ítem con color de género
+   propio (`_pintar_por_genero`) sigue pisando esto con su propio
+   fondo/texto, sin cambios ahí — esta regla solo cubre filas SIN
+   color asignado. ---------- */
 QTreeWidget#tree_archivos, QTreeWidget#tree_categorias {{
     font-size: 8pt;
 }}
 QTreeWidget#tree_archivos::item, QTreeWidget#tree_categorias::item {{
     padding: 1px;
+    color: #e0e0e0;
+}}
+QTreeWidget#tree_archivos {{
+    background-color: {COLOR_LISTA_V3_ARCHIVOS_FONDO};
+    alternate-background-color: {COLOR_LISTA_V3_ARCHIVOS_ALTERNO};
+}}
+QTreeWidget#tree_categorias {{
+    background-color: {COLOR_LISTA_V3_CATEGORIAS_FONDO};
+    alternate-background-color: {COLOR_LISTA_V3_CATEGORIAS_ALTERNO};
+}}
+QTreeWidget#tree_archivos QHeaderView::section,
+QTreeWidget#tree_categorias QHeaderView::section {{
+    background-color: {COLOR_LISTA_V3_HEADER_FONDO};
+    color: #e0e0e0;
 }}
 
 /* Ventana 3, árbol de categorías: NADA de QSS custom sobre ::branch a
@@ -396,13 +434,20 @@ QPushButton[class="btnCompacto"] {{
    resto grises") ----------
    Botón grande verde: Play SI está en silencio, "Siguiente con
    fundido" si ya hay algo sonando — las dos funciones en un botón,
-   ahora solo el glifo "▶", sin texto. */
+   ahora solo el glifo "▶", sin texto. Pedido explícito, ronda
+   posterior ("el botón play es rectangular, hacelo cuadrado tal cual
+   Dinesat"): `padding: 0` acá (en vez de heredar el `6px 10px`
+   asimétrico del QPushButton genérico) para que el glifo quede
+   centrado en un cuadrado de verdad — el tamaño FIJO real
+   (`setFixedSize`, igual en las dos ventanas) lo pone
+   panel_reproductor.py/ventana_publicidad.py en Python. */
 QPushButton#btnPlayPrincipal {{
     background-color: #1e8449;
     border: 2px solid #2ecc71;
     color: white;
     font-weight: bold;
-    font-size: 16pt;
+    font-size: 20pt;
+    padding: 0;
 }}
 QPushButton#btnPlayPrincipal:hover {{ background-color: #229954; }}
 QPushButton#btnPlayPrincipal:pressed {{ background-color: #145a32; }}

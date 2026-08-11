@@ -10851,6 +10851,90 @@ soltó de una vez.
     Santiago confirme que ahora reconoce los temas de un vistazo al
     armar un formato, y que el orden/ancho de columnas se siente
     cómodo en su pantalla real.
+110. ~~Fondo casi negro del Explorador (Ventana 3, diferenciando
+    Categorías de Archivos) + botón Play principal cuadrado, no
+    rectangular~~ — dos pedidos con una captura real de la app en uso:
+    "aplica el mismo color de la ventana negro en el explorador.
+    diferencia categoria de la ventana de elementos en la 3. verifica
+    que no haya en este cambio el color de la letra, es decir que
+    haya contraste. no letra gris sobre negro. ni negro sobre negro."
+    + "el botón play es rectangular, hacelo cuadrado tal cual dinesat,
+    del tamaño proporcional cuadrado como 4 botones de los otros más
+    chicos."
+
+    **a) Ventana 3 — mismo criterio ya usado en V1/V2 (ronda 106),
+    extendido acá con una diferenciación nueva**: `tree_archivos`
+    (columna derecha, Duración/Título/Artista/Categoría) pasa a usar
+    EXACTO el mismo negro que ya tienen las listas de Ventana 1 y 2
+    (`COLOR_LISTA_V3_ARCHIVOS_FONDO = COLOR_LISTA_V1V2_FONDO`,
+    reutilizado tal cual — "el mismo color de la ventana negro").
+    `tree_categorias` (columna izquierda) usa un tono DISTINTO pero
+    también oscuro (`#242424`/`#2e2e2e`, un escalón más claro) —
+    "diferencia categoria de la ventana de elementos" — para que las
+    dos columnas se noten como paneles separados en vez de un solo
+    bloque negro sin límites. Ambos fondos son FIJOS en los dos temas
+    de la app (mismo criterio ya establecido para V1/V2), con texto
+    claro fijo (`color: #e0e0e0`) para cualquier ítem sin color propio.
+
+    **Bug real evitado ANTES de llegar a Santiago, atrapado por el
+    propio pedido de "verificá el contraste"**: `_ESTILOS_POR_NIVEL_CLARO`
+    (`gui/ventana_explorador.py`, ronda 99) tenía marrones oscuros
+    (`#241c10`, `#4a3c28`, etc.) diseñados a propósito para el fondo
+    CREMA que tenía `tree_categorias` en el tema Claro — con el fondo
+    ahora forzado a casi negro en los DOS temas, esa tabla hubiera
+    quedado directamente ilegible (letra oscura sobre fondo oscuro,
+    justo lo que Santiago pidió evitar explícitamente: "no letra gris
+    sobre negro, ni negro sobre negro"). Corregido colapsando las DOS
+    tablas (`_ESTILOS_POR_NIVEL_OSCURO`/`_CLARO`) en UNA sola
+    (`_ESTILOS_POR_NIVEL`, siempre los colores claros — ya no hace
+    falta una variante oscura-sobre-claro, el fondo nunca vuelve a ser
+    claro) — `_aplicar_estilo_por_nivel()` ya no rama por tema.
+    `self._tema_actual` (atributo que solo servía para esa elección)
+    quedó sin ningún otro uso — eliminado por completo, código muerto.
+    Los colores por GÉNERO de `tree_archivos` (`_pintar_por_genero`,
+    verde/amarillo/naranja/violeta/azul) no se tocaron — ya calculan
+    su propio contraste con `color_texto_legible()`, independiente del
+    fondo base del árbol, así que siguen funcionando igual sobre el
+    negro nuevo.
+
+    **b) Botón Play principal cuadrado**: `setMinimumHeight(34)` +
+    `setMinimumWidth(40)` (dejaban que el `sizeHint()` por contenido —
+    con el padding asimétrico `6px 10px` heredado del `QPushButton`
+    genérico — lo estirara más ANCHO que ALTO, el "rectangular" que
+    reportó Santiago) reemplazado por `setFixedSize(56, 56)` en las
+    dos ventanas (`gui/panel_reproductor.py`/`gui/ventana_publicidad.py`)
+    — un tamaño fijo REAL, nunca dependiente del contenido. 56px calza
+    aproximadamente con el alto de las 2 filas de botones chicos de al
+    lado (`grilla`), así el cuadrado ocupa más o menos lo mismo que un
+    bloque de 2x2 de esos botones — "del tamaño proporcional cuadrado
+    como 4 botones de los otros más chicos". `gui/styles.py`:
+    `#btnPlayPrincipal` ganó `padding: 0` (para que el glifo quede
+    centrado en el cuadrado, sin el padding asimétrico de antes) y el
+    `font-size` subió de 16pt a 20pt (más presencia dentro del
+    cuadrado más grande).
+
+    Probado con `test_v3_negro_y_play_cuadrado.py` (nuevo, dedicado):
+    Archivos reusa EXACTO el mismo negro que V1/V2, Categorías usa un
+    tono distinto pero igual de oscuro, con una diferencia de
+    luminancia real (no un tono casi idéntico); los DOS temas
+    (`QSS_APLICACION`/`QSS_APLICACION_CLARO`) llevan el mismo fondo/
+    texto fijo; una `VentanaExplorador` real con una jerarquía de 6
+    niveles de categoría confirma que TODOS los niveles usan colores
+    de luminancia alta (legibles sobre negro, nunca los marrones
+    viejos) en los DOS temas, y que `_tema_actual` ya no existe; el
+    botón Play de V1 y V2 es exactamente cuadrado (56x56, mismo valor
+    en las dos) — + suite de regresión completa de los 10 scripts de
+    test de rondas anteriores en este mismo bloque de trabajo sin
+    fallos nuevos + `py_compile` completo + smoke test de arranque sin
+    traceback. Se generaron y enviaron a Santiago capturas reales
+    (Ventana 3 con jerarquía de 5 niveles, en los dos temas; grilla de
+    V1/V2 con el Play ya cuadrado) para comparar contra lo pedido.
+    **Sigue sin poder confirmarse con fidelidad visual 100% exacta en
+    su pantalla real**: falta que Santiago confirme que el contraste
+    de Categorías/Archivos se lee bien de un vistazo con su biblioteca
+    real, que la diferencia entre los dos paneles se nota lo
+    suficiente, y que el tamaño/proporción del botón Play cuadrado se
+    siente como en Dinesat.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

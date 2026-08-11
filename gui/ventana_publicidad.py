@@ -211,8 +211,11 @@ class VentanaPublicidad(QWidget):
             "En silencio: reproduce el ítem elegido.\n"
             "Con algo sonando: pasa al ítem en cola (verde) con fundido."
         )
-        self.btn_play.setMinimumHeight(34)
-        self.btn_play.setMinimumWidth(40)
+        # Pedido explícito, ronda posterior ("el botón play es
+        # rectangular, hacelo cuadrado tal cual Dinesat, del tamaño
+        # proporcional cuadrado como 4 botones de los otros más
+        # chicos"): tamaño FIJO cuadrado, mismo valor que Ventana 2.
+        self.btn_play.setFixedSize(56, 56)
         self.btn_play.clicked.connect(self.solicitud_play.emit)
         barra_botones.addWidget(self.btn_play)
 
