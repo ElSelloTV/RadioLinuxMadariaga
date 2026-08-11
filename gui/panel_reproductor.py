@@ -212,8 +212,15 @@ class PanelReproductor(QWidget):
             "En silencio: reproduce el ítem elegido.\n"
             "Con algo sonando: pasa al ítem en cola (verde) con fundido."
         )
-        self.btn_play.setMinimumHeight(34)
-        self.btn_play.setMinimumWidth(40)
+        # Pedido explícito, ronda posterior ("el botón play es
+        # rectangular, hacelo cuadrado tal cual Dinesat, del tamaño
+        # proporcional cuadrado como 4 botones de los otros más
+        # chicos"): tamaño FIJO cuadrado (nunca min/max por separado,
+        # que dejaban que el sizeHint por contenido lo estirara de
+        # ancho) — 56x56 calza con el alto real de las 2 filas de
+        # botones chicos de al lado (grilla), así el cuadrado ocupa
+        # aprox. lo mismo que un bloque de 2x2 de esos botones.
+        self.btn_play.setFixedSize(56, 56)
         self.btn_play.clicked.connect(self.solicitud_play.emit)
         barra_botones.addWidget(self.btn_play)
 

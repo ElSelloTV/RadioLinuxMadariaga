@@ -163,17 +163,10 @@ class VentanaExplorador(QWidget):
         # config guardada ya en la construcción, igual que hace
         # `repintar_colores_genero()`.
         self._colores_genero = cargar_configuracion()["apariencia"]["colores_genero"]
-        # Tema visual actual (pedido explícito, bug real corregido:
-        # "la letra sigue blanca y no se ve con el fondo claro") --
-        # mismo criterio que _colores_genero de arriba: se lee ya en
-        # la construcción para que la jerarquía de categorías nazca
-        # con el color correcto, y se refresca en vivo con
-        # repintar_estilo_categorias() (ver más abajo).
-        self._tema_actual = cargar_configuracion()["general"]["tema"]
         # Tamaño de fuente configurable de Ventana 3 (pedido explícito,
         # bug real corregido: "solo hasta 3 niveles, no a todos" — ver
         # nota completa en _aplicar_estilo_por_nivel más abajo). Se lee
-        # ya en la construcción, mismo criterio que _tema_actual.
+        # ya en la construcción, mismo criterio que _colores_genero.
         self._tamano_fuente_categorias = (
             cargar_configuracion()["apariencia"]["tamano_fuente_ventanas"]["explorador"]
         )
@@ -709,14 +702,15 @@ class VentanaExplorador(QWidget):
     # del nivel 5 (no sigue aclarándose para siempre).
     #
     # Bug real corregido ("la letra sigue blanca y no se ve con el
-    # fondo claro"): esta tabla estaba hardcodeada para el tema
-    # OSCURO -- colores blanco/gris claro, invisibles contra el fondo
-    # crema del tema Claro (tree_fondo). Ahora hay DOS tablas
-    # (oscuro/claro) y `_aplicar_estilo_por_nivel()` elige según
-    # `self._tema_actual` (leído en __init__ y actualizado en vivo por
-    # `repintar_estilo_categorias()`, mismo patrón ya usado para
-    # `repintar_colores_genero()`).
-    _ESTILOS_POR_NIVEL_OSCURO = [
+    # fondo claro"): esta tabla vivía DUPLICADA (oscuro/claro), elegida
+    # según el tema activo — necesario mientras `tree_categorias` tenía
+    # un fondo crema en el tema Claro. Desde que ese fondo pasó a ser
+    # casi negro FIJO en LOS DOS temas (pedido explícito, ronda
+    # posterior: "aplica el mismo color de la ventana negro en el
+    # explorador"), la variante "clara" (marrones oscuros, pensada para
+    # fondo crema) quedaría directamente ilegible sobre negro — una
+    # sola tabla alcanza, SIEMPRE la de colores claros.
+    _ESTILOS_POR_NIVEL = [
         # (negrita, cursiva, mayúsculas, color, tamaño_relativo_pt)
         (True, False, True, "#e67e22", 1),    # nivel 1: categoría raíz
         (True, False, False, "#e0e0e0", 0),   # nivel 2
@@ -724,17 +718,10 @@ class VentanaExplorador(QWidget):
         (False, True, False, "#9a9a9a", 0),   # nivel 4
         (False, True, False, "#7a7a7a", -1),  # nivel 5+
     ]
-    _ESTILOS_POR_NIVEL_CLARO = [
-        (True, False, True, "#e67e22", 1),    # nivel 1: mismo naranja, ya contrasta bien
-        (True, False, False, "#241c10", 0),   # nivel 2: marrón casi negro
-        (False, False, False, "#4a3c28", 0),  # nivel 3
-        (False, True, False, "#6b5d3f", 0),   # nivel 4
-        (False, True, False, "#8a7a58", -1),  # nivel 5+
-    ]
 
     def _aplicar_estilo_por_nivel(self, item: QTreeWidgetItem, item_padre):
         """Aplica el estilo que corresponda a la profundidad real de
-        `item` (1 = categoría raíz) y al tema visual actual.
+        `item` (1 = categoría raíz).
 
         El "MAYÚSCULAS" es solo de PINTADO (QFont.Capitalization.AllUppercase)
         — el texto real del ítem (item.text(0), lo que se guarda en
@@ -760,7 +747,7 @@ class VentanaExplorador(QWidget):
             nivel += 1
             nodo = nodo.parent()
 
-        tabla = self._ESTILOS_POR_NIVEL_CLARO if self._tema_actual == "claro" else self._ESTILOS_POR_NIVEL_OSCURO
+        tabla = self._ESTILOS_POR_NIVEL
         negrita, cursiva, mayusculas, color, delta_pt = tabla[min(nivel, len(tabla)) - 1]
 
         fuente = QFont(item.font(0))
@@ -1149,12 +1136,13 @@ class VentanaExplorador(QWidget):
             self._pintar_por_genero(item, registro.get("genero", ""))
 
     def repintar_estilo_categorias(self):
-        """Refresca `self._tema_actual` y repinta la jerarquía de
-        negrita/cursiva/color por nivel de TODO el árbol de categorías
-        — llamado tras cambiar el tema en Configuración (bug real:
-        "la letra sigue blanca y no se ve con el fondo claro", mismo
-        patrón que `repintar_colores_genero()`)."""
-        self._tema_actual = cargar_configuracion()["general"]["tema"]
+        """Repinta la jerarquía de negrita/cursiva/color por nivel de
+        TODO el árbol de categorías — llamado tras guardar
+        Configuración, mismo patrón que `repintar_colores_genero()`.
+        El fondo de `tree_categorias` ya no depende del tema (fijo,
+        casi negro en los dos — ver `gui/styles.py`), así que esto ya
+        no necesita releer ningún tema; se mantiene por si algún otro
+        cambio de Configuración necesita forzar un repintado."""
         for i in range(self.tree_categorias.topLevelItemCount()):
             self._repintar_estilo_categoria_recursivo(self.tree_categorias.topLevelItem(i))
 
