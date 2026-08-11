@@ -566,15 +566,22 @@ class VentanaPublicidad(QWidget):
         )
 
     def _on_click_stop(self):
-        # Bug real corregido: antes, con el Automático activo, el STOP
-        # quedaba DESHABILITADO (`setEnabled(False)`) — un botón
-        # deshabilitado no emite `clicked`, así que el operador
-        # apretaba Stop y "no pasaba nada", sin ningún aviso. Ahora el
-        # botón queda siempre clickeable y avisa con un mensaje
-        # explícito en vez de quedar mudo (pedido explícito).
+        # Pedido explícito, SOLO Ventana 1 (Fade-Stop y Stop diferido
+        # siguen bloqueados con aviso, sin cambios ahí — ver
+        # `_avisar_bloqueado_por_automatico`): con el Automático
+        # activo, apretar el botón Stop lo APAGA de una, SIN
+        # confirmación, y detiene la reproducción en el mismo gesto —
+        # reemplaza el comportamiento anterior de "bloquear con un
+        # aviso" que sí sigue teniendo Fade-Stop/Stop diferido.
+        # `_toggle_automatico()` se llama DIRECTO, nunca
+        # `_on_click_automatico()` (que pide confirmación Sí/No) —
+        # mismo patrón ya usado por el arranque de la app para cambiar
+        # el modo sin pasar por ningún diálogo. `setChecked()` no
+        # emite `clicked`, así que esto no dispara el diálogo de
+        # `_on_click_automatico` (conectado a esa señal) por su cuenta.
         if self._modo_automatico:
-            self._avisar_bloqueado_por_automatico()
-            return
+            self.btn_automatico.setChecked(False)
+            self._toggle_automatico()
         self.solicitud_stop.emit()
 
     def _on_click_fade_stop(self):
