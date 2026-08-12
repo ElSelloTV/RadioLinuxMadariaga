@@ -10,6 +10,13 @@ usa la app principal (por RPC) — quedan afuera de esta ronda el
 drag&drop de reordenar, copiar/pegar entre bloques y "duplicar para
 otro día", que sí tiene la versión local (`gui/ventana_programador.py`).
 
+Pedido explícito (ronda posterior): "que en el programador pueda
+cargar FMT" — botón "▶ Comando FMT..." que inserta un ítem
+`{"es_comando": True, "tipo_comando": "FMT", "parametro_comando":
+<formato>}` en el bloque destino, eligiendo de la lista de formatos
+YA CREADOS del Musicalizador (por RPC, nunca texto libre — mismo
+criterio que el Comando FMT local).
+
 El estado real vive acá, en `self._bloques` (una lista de dicts, el
 MISMO formato que ya usa `cargar_bloques()`/`programacion.json`) — el
 árbol visual se reconstruye entero desde ahí después de cada cambio
@@ -65,12 +72,19 @@ class DialogoProgramadorRemoto(QDialog):
         fila_edicion = QHBoxLayout()
         btn_agregar_bloque = QPushButton("＋ Bloque horario...")
         btn_agregar_item = QPushButton("➕ Agregar ítem...")
+        btn_agregar_fmt = QPushButton("▶ Comando FMT...")
+        btn_agregar_fmt.setToolTip(
+            "Al pasar la reproducción por este ítem, dispara la generación\n"
+            "continua de música en Emisión según un formato del Musicalizador Avanzado."
+        )
         btn_quitar = QPushButton("✕ Quitar seleccionado")
         btn_agregar_bloque.clicked.connect(self._agregar_bloque)
         btn_agregar_item.clicked.connect(self._agregar_item)
+        btn_agregar_fmt.clicked.connect(self._insertar_comando_fmt)
         btn_quitar.clicked.connect(self._quitar_seleccionado)
         fila_edicion.addWidget(btn_agregar_bloque)
         fila_edicion.addWidget(btn_agregar_item)
+        fila_edicion.addWidget(btn_agregar_fmt)
         fila_edicion.addWidget(btn_quitar)
         layout.addLayout(fila_edicion)
 
@@ -208,6 +222,35 @@ class DialogoProgramadorRemoto(QDialog):
             "ruta": registro["ruta"], "punto_inicio_ms": 0, "punto_fin_ms": None, "ganancia_db": 0.0,
             "fecha_inicio": None, "fecha_fin": None,
         }
+        self._bloques[i_bloque]["items"].append(item)
+        self._refrescar_arbol()
+
+    def _insertar_comando_fmt(self):
+        """Pedido explícito ("que en el programador pueda cargar
+        FMT"): mismo criterio que el Comando FMT local — se elige de
+        una lista de formatos YA CREADOS del Musicalizador (por RPC),
+        nunca texto libre."""
+        i_bloque = self._bloque_destino()
+        if i_bloque is None:
+            QMessageBox.information(self, "Comando FMT", "Primero creá un bloque horario.")
+            return
+        try:
+            formatos = self._cliente.musicalizador_listar_formatos()
+        except ErrorControlRemoto as error:
+            QMessageBox.warning(self, "Control remoto", str(error))
+            return
+        if not formatos:
+            QMessageBox.information(
+                self, "Comando FMT",
+                "Todavía no hay ningún formato creado en el Musicalizador Avanzado.",
+            )
+            return
+        elegido, ok = QInputDialog.getItem(
+            self, "Insertar Comando FMT", "Formato:", formatos, editable=False,
+        )
+        if not ok:
+            return
+        item = {"es_comando": True, "tipo_comando": "FMT", "parametro_comando": elegido}
         self._bloques[i_bloque]["items"].append(item)
         self._refrescar_arbol()
 

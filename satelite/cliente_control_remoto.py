@@ -177,3 +177,9 @@ class ClienteControlRemoto:
         return self._pedir("musicalizador_renombrar_formato", {
             "nombre_viejo": nombre_viejo, "nombre_nuevo": nombre_nuevo,
         })
+
+    def emision_agregar_ciclo_fmt(self, nombre_formato: str, minutos: float) -> dict:
+        """Agrega un ciclo del formato al final de lo que ya está
+        cargado en Ventana 2/Emisión (nunca la limpia) — mismo motor
+        que el botón local "🎵 Agregar ciclo FMT por tiempo..."."""
+        return self._pedir("emision_agregar_ciclo_fmt", {"nombre_formato": nombre_formato, "minutos": minutos})

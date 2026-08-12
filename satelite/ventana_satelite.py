@@ -15,6 +15,11 @@ Pedido explícito de reorganización (ronda posterior, "ordenemos"):
   versiones remotas de esas ventanas (alcance MVP deliberado, ver los
   docstrings de `dialogo_programador_remoto.py`/
   `dialogo_musicalizador_remoto.py` y la nota en CLAUDE.md).
+- Pedido explícito (ronda posterior): el Programador remoto puede
+  insertar un Comando FMT en un bloque, y Ventana 2 (Emisión) tiene un
+  botón "🎵 FMT..." para agregar X minutos de un formato del
+  Musicalizador sin borrar lo ya cargado — mismos dos mecanismos que
+  ya tenía la app principal, ahora también remotos.
 
 Sin salida de audio — es lo único que queda afuera a propósito (pedido
 explícito: "sería un programa aparte satélite sin salida de audio").
@@ -35,6 +40,7 @@ from PySide6.QtGui import QAction
 
 from satelite.cliente_control_remoto import ClienteControlRemoto, ErrorControlRemoto
 from satelite.config_satelite import cargar_config_satelite, guardar_config_satelite
+from satelite.dialogo_ciclo_fmt_remoto import DialogoCicloFMTRemoto
 from satelite.dialogo_configuracion_conexion import DialogoConfiguracionConexion
 from satelite.dialogo_musicalizador_remoto import DialogoMusicalizadorRemoto
 from satelite.dialogo_programador_remoto import DialogoProgramadorRemoto
@@ -109,7 +115,13 @@ class VentanaSatelite(QMainWindow):
         self.grupo_transporte = QGroupBox("Transporte")
         layout_transporte = QVBoxLayout(self.grupo_transporte)
         self._widgets_v1 = self._fila_transporte(layout_transporte, "Ventana 1 (Publicidad)", "v1")
-        self._widgets_v2 = self._fila_transporte(layout_transporte, "Ventana 2 (Emisión)", "v2")
+        # Pedido explícito: "en la ventana 2 pueda también cargar x
+        # cantidad de tiempo de FMT" -- exclusivo de V2, mismo criterio
+        # que `permitir_ciclo_fmt` en gui/panel_reproductor.py (nunca
+        # V1, que ya tiene su propio Comando FMT dentro de un bloque).
+        self._widgets_v2 = self._fila_transporte(
+            layout_transporte, "Ventana 2 (Emisión)", "v2", permitir_ciclo_fmt=True,
+        )
         layout.addWidget(self.grupo_transporte)
 
         layout.addStretch()
@@ -122,7 +134,7 @@ class VentanaSatelite(QMainWindow):
         self.btn_programador.setEnabled(activo)
         self.btn_musicalizador.setEnabled(activo)
 
-    def _fila_transporte(self, layout_padre, titulo: str, ventana: str) -> dict:
+    def _fila_transporte(self, layout_padre, titulo: str, ventana: str, permitir_ciclo_fmt: bool = False) -> dict:
         grupo = QGroupBox(titulo)
         layout = QVBoxLayout(grupo)
         lbl_ahora = QLabel("Ahora: —")
@@ -158,6 +170,14 @@ class VentanaSatelite(QMainWindow):
         btn_cut.clicked.connect(lambda: self._accion_transporte(ventana, "cut"))
         fila_botones.addWidget(btn_stop)
         fila_botones.addWidget(btn_cut)
+        if permitir_ciclo_fmt:
+            btn_fmt = QPushButton("🎵 FMT...")
+            btn_fmt.setToolTip(
+                "Agregar un ciclo de un formato del Musicalizador por X minutos,\n"
+                "al final de lo que ya esté cargado (nunca lo borra)."
+            )
+            btn_fmt.clicked.connect(self._agregar_ciclo_fmt_emision)
+            fila_botones.addWidget(btn_fmt)
         fila_botones.addStretch()
         layout.addLayout(fila_botones)
 
@@ -291,6 +311,50 @@ class VentanaSatelite(QMainWindow):
         if self._cliente is None:
             return
         DialogoMusicalizadorRemoto(self._cliente, parent=self).exec()
+
+    def _agregar_ciclo_fmt_emision(self):
+        """Pedido explícito: "en la ventana 2 pueda también cargar x
+        cantidad de tiempo de FMT" — mismo flujo que el botón local
+        equivalente (elegir formato + minutos, AGREGA al final de lo
+        ya cargado en Emisión, nunca lo limpia)."""
+        if self._cliente is None:
+            return
+        try:
+            formatos = self._cliente.musicalizador_listar_formatos()
+        except ErrorControlRemoto as error:
+            QMessageBox.warning(self, "Control remoto", str(error))
+            return
+
+        dialogo = DialogoCicloFMTRemoto(formatos, parent=self)
+        if dialogo.exec() != QDialog.DialogCode.Accepted:
+            return
+        resultado = dialogo.resultado()
+        if resultado is None:
+            return
+        nombre_formato, minutos = resultado
+
+        try:
+            respuesta = self._cliente.emision_agregar_ciclo_fmt(nombre_formato, minutos)
+        except ErrorControlRemoto as error:
+            QMessageBox.warning(self, "Control remoto", str(error))
+            return
+        if not respuesta.get("ok"):
+            QMessageBox.warning(self, "Control remoto", respuesta.get("error", "No se pudo agregar el ciclo FMT."))
+            return
+
+        cantidad = respuesta.get("datos", {}).get("cantidad", 0)
+        if cantidad:
+            QMessageBox.information(
+                self, "Ciclo FMT",
+                f"Agregados {cantidad} ítem(s) de \"{nombre_formato}\" (~{minutos} min) a Emisión.",
+            )
+        else:
+            QMessageBox.warning(
+                self, "Ciclo FMT",
+                f"El formato \"{nombre_formato}\" no generó ningún ítem — revisá sus\n"
+                "categorías/archivos en el Musicalizador Avanzado.",
+            )
+        self._actualizar_estado_transporte()
 
     # ------------------------------------------------------------------
     # Subir archivo
