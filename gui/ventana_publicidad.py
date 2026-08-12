@@ -508,6 +508,49 @@ class VentanaPublicidad(QWidget):
     def hora_de_bloque(self, item_bloque) -> str:
         return item_bloque.data(0, ROL_HORA_BLOQUE) or ""
 
+    def serializar_bloques_actuales(self) -> list:
+        """Serializa el árbol de Ventana 1 TAL COMO ESTÁ AHORA MISMO al
+        mismo formato que ya usa `cargar_bloques()`/el Programador
+        (`_serializar_bloques()`) -- pedido explícito de la app
+        satélite: poder "cargar el actual" como punto de partida al
+        programar de forma remota, sin depender de que haya una
+        programación guardada de antes."""
+        bloques = []
+        for i in range(self.tree.topLevelItemCount()):
+            nodo = self.tree.topLevelItem(i)
+            hora = nodo.data(0, ROL_HORA_BLOQUE) or "00:00:00"
+            titulo = titulo_bloque_sin_prefijo_hora(hora, nodo.text(0))
+            items = []
+            for j in range(nodo.childCount()):
+                hijo = nodo.child(j)
+                if self.es_comando(hijo):
+                    items.append({
+                        "es_comando": True,
+                        "tipo_comando": self.tipo_comando_de_item(hijo),
+                        "parametro_comando": self.parametro_comando_de_item(hijo),
+                    })
+                    continue
+                if self.es_aleatorio(hijo):
+                    items.append({
+                        "es_aleatorio": True,
+                        "categoria_aleatorio": self.categoria_aleatorio_de_item(hijo) or [],
+                        "recursivo_aleatorio": self.recursivo_aleatorio_de_item(hijo),
+                    })
+                    continue
+                analisis = self.analisis_de_item(hijo)
+                vigencia = self.vigencia_de_item(hijo)
+                items.append({
+                    "titulo": hijo.text(0), "duracion": hijo.text(1), "codigo": hijo.text(2),
+                    "ruta": hijo.data(0, Qt.ItemDataRole.UserRole) or "",
+                    "punto_inicio_ms": analisis.get("punto_inicio_ms") or 0,
+                    "punto_fin_ms": analisis.get("punto_fin_ms"),
+                    "ganancia_db": analisis.get("ganancia_db") or 0.0,
+                    "fecha_inicio": vigencia.get("fecha_inicio"),
+                    "fecha_fin": vigencia.get("fecha_fin"),
+                })
+            bloques.append({"hora": hora, "titulo": titulo, "items": items})
+        return bloques
+
     # ------------------------------------------------------------------
     def _on_click_automatico(self):
         """Pedido explícito: confirmar SIEMPRE que el operador toca el

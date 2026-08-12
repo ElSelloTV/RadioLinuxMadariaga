@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, QDialogButtonBox, QLabel,
 )
 
+from satelite.utilidades import poblar_combo_categorias
+
 
 class DialogoSubirArchivo(QDialog):
     def __init__(self, ruta_local: str, categorias: list, generos: list, parent=None):
@@ -40,9 +42,7 @@ class DialogoSubirArchivo(QDialog):
         form.addRow("Género:", self.combo_genero)
 
         self.combo_categoria = QComboBox()
-        for categoria in categorias:
-            sangria = "    " * max(0, categoria["nivel"] - 1)
-            self.combo_categoria.addItem(f"{sangria}{categoria['ruta'][-1]}", categoria["ruta"])
+        poblar_combo_categorias(self.combo_categoria, categorias)
         form.addRow("Categoría:", self.combo_categoria)
 
         layout.addLayout(form)
