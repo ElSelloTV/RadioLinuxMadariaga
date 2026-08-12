@@ -11684,6 +11684,96 @@ soltó de una vez.
     para otro día, Pisador remoto) extraña de verdad en el uso diario
     — para priorizarlas en una ronda futura en vez de adivinar.
 
+119. ~~El Automático deja de "atrapar"/recuperar bloques — revierte a
+    propósito la ronda 43~~ — pedido explícito, textual: "vamos a
+    retocar el sistema del automático porque hay algo que no se
+    debería cuando lo suspendo. y es que la reproducción de la
+    ventana 1 si es suspendida a la mitad del bloque horario, ya no
+    debe volver, por si solo, a reproducir lo que faltó. Sencillamente
+    si está activado el automático esperara su ejecución a la hora
+    determinada. b) Si alguien 'olvido' poner el automático y luego se
+    activa siendo las 7am, no puede empezar a reproducir desde donde
+    quedó el cursor (a las 5am por ejemplo) y venir desde allí todo
+    seguido. sencillamente: a) El automático si se suspende o se
+    cancela para pasar a para ventana no vuelve más a ese bloque. b)
+    el automático ventana 1, es solo, y solo si, el botón esta
+    activado y es el bloque horario, y desde el bloque horario (no
+    desde donde dejo el usuario o se encendió la pc)." — reversión
+    deliberada de un comportamiento explícito de la ronda 43
+    ("Activar el botón AUTOMÁTICO a mano debe arrancar YA el bloque
+    horario vigente"): con más uso real, Santiago encontró que ese
+    "atrapar" el bloque vigente al activar el botón (o al reiniciarse
+    la PC sola, con Automático quedando activo) era exactamente lo que
+    NO quería — un bloque interrumpido a mitad de camino, o
+    simplemente no disparado porque el botón estaba apagado, nunca
+    debe "recuperarse" por su cuenta; el único disparador legítimo de
+    un bloque es la transición de hora real, en el instante exacto.
+
+    **`SchedulerAutomatico._on_automatico_cambiado()`
+    (`core/playlist_manager.py`) reescrito de raíz**: antes, al
+    activarse el botón (`activo=True`), buscaba el "bloque vigente"
+    (`_bloque_vigente()` — el de hora más tardía ya pasada, con
+    ítems) y lo disparaba DE UNA con `_disparar_bloque()` — ahora ya
+    NO hace nada de eso: solo llama a
+    `_marcar_bloques_pasados_sin_disparar()` (sin cambios en sí
+    misma), que marca CUALQUIER bloque con hora ya pasada como "ya
+    emitido hoy" — así ese bloque queda definitivamente fuera de
+    juego para el resto del día, sin importar cuántas veces se
+    apague/prenda el botón después. **`_bloque_vigente()` se eliminó
+    por completo** (confirmado por grep que no tenía ningún otro
+    llamador — código muerto tras sacarle su única invocación, no
+    dejado "por las dudas"). El ÚNICO disparador real de un bloque
+    sigue siendo, sin ningún cambio, la transición de hora exacta
+    dentro de `_tick()` (`self._ultima_hora_tick <= hora_bloque <=
+    ahora`, ya gateada por `esta_en_automatico()` desde la ronda 42)
+    — ese método NO se tocó en esta ronda, confirmado con un test de
+    regresión dedicado. `_arrancar_al_iniciar()` (el arranque del
+    programa, ya corregido en la ronda 101 para no disparar nunca un
+    bloque vigente) mantiene su comportamiento intacto — solo se
+    actualizó su docstring, que hasta ahora describía
+    `_on_automatico_cambiado` como la excepción "sin cambios" a esa
+    regla; ahora ambos caminos son consistentes: nunca disparar
+    retroactivamente, por ningún camino.
+
+    Con este diseño, los dos puntos del pedido de Santiago quedan
+    cubiertos de raíz por el MISMO mecanismo (nunca por dos reglas
+    separadas): (a) un bloque interrumpido/suspendido a mitad de
+    camino, al haber sido disparado alguna vez por `_tick()`, ya
+    figura en `_horas_disparadas_hoy` — apagar y prender el
+    Automático nunca vuelve a mirarlo; (b) "olvidarse" de activar el
+    botón hasta las 7am con un bloque de las 5am simplemente deja ese
+    bloque marcado como agotado en el momento de activar el botón
+    (por `_marcar_bloques_pasados_sin_disparar`), sin sonar nunca —
+    el próximo bloque en sonar es el siguiente cuya hora TODAVÍA no
+    haya llegado, cuando de verdad llegue.
+
+    Probado con `test_automatico_no_recupera_bloque.py` (nuevo,
+    dedicado): confirmado que `_bloque_vigente` ya no existe como
+    atributo del scheduler; activar el Automático a mano con un
+    bloque de hora ya pasada (con ítems reproducibles reales) NUNCA
+    dispara ese bloque, y lo deja marcado como agotado (confirmado
+    además que `_tick()` tampoco lo recupera después); un bloque ya
+    marcado como disparado (simulando el estado real que deja
+    `_tick()` al dispararlo) tampoco vuelve a sonar al apagar/prender
+    el botón; y de regresión, `_tick()` sigue disparando un bloque
+    exactamente en su transición de hora real tanto con el Automático
+    activo (dispara) como apagado (no dispara nada) — sin cambios
+    respecto de siempre. + regresión completa de los tests de este
+    mismo bloque de trabajo que también tocan `SchedulerAutomatico`/
+    Ventana 1 (`test_pedidos_a_b.py`, `test_pedidos_d_e_f.py`,
+    `test_boton_hth_manual_y_automatico.py`,
+    `test_stop_apaga_automatico_v1.py`,
+    `test_dinesat_layout_y_hth_v1.py`) sin fallos nuevos + `py_compile`
+    completo + smoke test de arranque de `main.py` sin traceback.
+    **Sigue sin poder confirmarse con audio/hardware real ni con el
+    paso real de varias horas del reloj**: falta que Santiago
+    confirme en su radio real que (1) suspender el Automático a mitad
+    de un bloque y volver a activarlo más tarde nunca retoma ese
+    bloque interrumpido, y (2) si se "olvida" de activar el botón
+    hasta bien entrada la mañana, al activarlo la radio se queda en
+    Emisión (Música) esperando el PRÓXIMO bloque real, sin ponerse a
+    recorrer de golpe todo lo que ya pasó.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
