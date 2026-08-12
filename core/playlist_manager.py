@@ -1313,12 +1313,17 @@ class SchedulerAutomatico:
     ventana 2; a la hora del bloque horario de la ventana 1, corta la
     2, reproduce todo el bloque y vuelve a la 2"):
 
-    - Los bloques de Publicidad se disparan por horario SIEMPRE (ya no
-      depende del botón AUTOMÁTICO — punto 3 del pedido: "si no está
-      activado, reproducirá el bloque horario y se quedará en
-      silencio"). El disparo es por TRANSICIÓN de hora (la hora del
-      bloque cae entre el tick anterior y el actual): un bloque creado
-      a mitad del día con una hora ya pasada NO se dispara de golpe.
+    - Los bloques de Publicidad se disparan por horario SOLO con el
+      botón AUTOMÁTICO activo (ver `_tick()` — pedido explícito de
+      una ronda posterior: "solo se dispara si el botón Automático
+      está activado"). El disparo es por TRANSICIÓN de hora (la hora
+      del bloque cae entre el tick anterior y el actual): un bloque
+      creado a mitad del día con una hora ya pasada NO se dispara de
+      golpe. Con Automático ACTIVO, el disparo SIEMPRE interrumpe lo
+      que esté sonando en Ventana 2/Auxiliar — si está sonando algo,
+      lo deja terminar solo antes de tomar el control (ver
+      `ceder_control_al_terminar_item`); si está detenida o sin nada
+      sonando, toma el control de inmediato, sin esperar nada.
     - El botón AUTOMÁTICO gobierna la VUELTA a Emisión (Ventana 2): con
       el modo activo, al terminar cada bloque (o al agotarse la
       reproducción de Publicidad porque el próximo bloque es futuro),
@@ -1336,11 +1341,20 @@ class SchedulerAutomatico:
       `_arrancar_al_iniciar`). Los bloques horarios quedan esperando
       su hora real, disparados solo por `_tick()` cuando el reloj
       efectivamente cruza esa hora. Activar el Automático A MANO en
-      pleno uso tampoco "atrapa" ningún bloque vigente ni retoma uno
-      interrumpido (pedido explícito, revierte la ronda 43 — ver
-      `_on_automatico_cambiado`): el ÚNICO disparador real de un
-      bloque es la transición de hora exacta en `_tick()`. Un bloque
-      suspendido/cancelado a mitad de camino no vuelve a sonar solo.
+      pleno uso (`_on_automatico_cambiado`) tampoco "atrapa" ni
+      recupera un bloque interrumpido o de hora ya pasada (pedido
+      explícito, revierte la ronda 43) — con UNA sola excepción
+      puntual: si la hora de algún bloque coincide EXACTA (al
+      segundo) con el instante del click, ESE sí se dispara ya mismo
+      (misma transición que dispararía `_tick()` un segundo después,
+      solo que la marca el propio click). Fuera de ese caso exacto,
+      cualquier bloque de hora ya pasada queda marcado como agotado
+      para el resto del día — nunca se recupera, ni ahora ni después
+      — y el bloque horario que corresponde a continuación queda
+      "pintado" en verde, listo para su hora (ver
+      `_marcar_bloque_correspondiente_en_espera`). Un bloque
+      suspendido/cancelado a mitad de camino no vuelve a sonar solo
+      por ningún camino.
     - A medianoche (o al iniciar) carga sola la programación resuelta
       para hoy (fecha específica > patrón semanal — ver
       config/settings.py:resolver_programacion_del_dia), si hay alguna
@@ -1416,22 +1430,86 @@ class SchedulerAutomatico:
 
     # ------------------------------------------------------------------
     def _on_automatico_cambiado(self, activo: bool):
-        """Pedido explícito (revierte a propósito la ronda 43, "activar
-        el Automático a mano debe arrancar YA el bloque horario
-        vigente"): "el automático, si se suspende o se cancela... no
-        vuelve más a ese bloque" y "es solo, y solo si, el botón está
-        activado Y es el bloque horario — desde el bloque horario, no
-        desde donde dejó el usuario o se encendió la PC". Activar el
-        botón a mano YA NO dispara ni "atrapa" ningún bloque cuya hora
-        ya pasó, ni retoma uno que haya quedado a mitad de camino —
-        el ÚNICO disparador real de un bloque sigue siendo la
-        transición de hora exacta en `_tick()`. Acá solo se asegura de
-        que ningún bloque con hora ya pasada pueda disparar DESPUÉS
-        por la vía normal (ver `_marcar_bloques_pasados_sin_disparar`)
-        — un "olvidate del pasado, quedate esperando lo que sigue"."""
+        """Pedido explícito (afinado sobre la ronda 119, "revisá de
+        punta a punta"): al activar el botón a mano hay EXACTAMENTE 3
+        casos, con la misma regla de siempre de fondo (nunca "atrapa"
+        ni recupera un bloque de hora ya pasada) más UNA excepción
+        puntual:
+        - "apretar justo a las 12 y son las 12, dispara la
+          reproducción" — si la hora de ALGÚN bloque coincide EXACTA
+          (al segundo) con el instante del click, se dispara YA,
+          mismo mecanismo que usaría `_tick()` en esa transición
+          (`_disparar_bloque()`, corta Emisión con el mismo criterio
+          de siempre: si está sonando, espera a que termine el ítem;
+          si está detenida o no sonando nada, cede el control de
+          inmediato).
+        - "si aprieta a las 11:50, esperará la reproducción de las 12
+          como viene haciendo" — sin match exacto, no dispara nada;
+          `_tick()` sigue siendo quien lo va a disparar en su
+          momento.
+        - "si aprieta a las 12:02, esperará el bloque de las 13" — un
+          bloque de hora YA pasada (sin ser el match exacto) queda
+          marcado como agotado para el resto del día, igual que
+          siempre (`_marcar_bloques_pasados_sin_disparar`) — "salvo
+          que manualmente el usuario comience a reproducir el bloque
+          de las 12" sigue disponible como Play manual, sin cambios.
+        Fuera del caso de match exacto, además "pinta" (deja en
+        verde, mismo significado ya establecido por
+        `_marcar_proximo_bloque_en_espera`: "en espera de que llegue
+        su hora") el bloque horario que corresponde a continuación,
+        para que se vea de un vistazo qué es lo próximo que viene."""
         if not activo:
             return
+        ahora = QTime.currentTime()
+        bloque_exacto = self._bloque_con_hora_exacta(ahora)
         self._marcar_bloques_pasados_sin_disparar()
+        disparado = False
+        if (
+            bloque_exacto is not None
+            and not self._esperando_liberar_emision
+            and not self.gestor_publicidad.motor.esta_reproduciendo()
+        ):
+            registrar_evento(
+                f"Automático activado justo a la hora del bloque "
+                f"'{bloque_exacto.text(0)}' — lo dispara de inmediato"
+            )
+            self._disparar_bloque(bloque_exacto)
+            disparado = True
+        if not disparado:
+            self._marcar_bloque_correspondiente_en_espera()
+
+    def _bloque_con_hora_exacta(self, ahora):
+        """El bloque cuya hora coincide EXACTA (al segundo) con
+        `ahora` y tiene al menos un ítem reproducible — o `None` si
+        ninguno coincide. Mismo criterio de `_bloque_tiene_items` que
+        ya usa `_tick()` (un bloque vacío no dispara nada)."""
+        for bloque in self.ventana.bloques():
+            hora_str = self.ventana.hora_de_bloque(bloque)
+            if not hora_str:
+                continue
+            hora_bloque = QTime.fromString(hora_str, "HH:mm:ss")
+            if hora_bloque.isValid() and hora_bloque == ahora and self._bloque_tiene_items(bloque):
+                return bloque
+        return None
+
+    def _marcar_bloque_correspondiente_en_espera(self):
+        """Deja en verde ("en cola", esperando su hora) el primer
+        ítem reproducible del PRÓXIMO bloque horario que todavía no
+        se disparó/agotó hoy — mismo significado de verde que ya
+        establece `_marcar_proximo_bloque_en_espera`. Nunca pisa un
+        verde que el operador ya haya dejado apuntando a algo
+        todavía válido (mismo criterio de siempre, ver
+        `_asegurar_rojo_y_verde`)."""
+        if self.gestor_publicidad._item_valido(self.ventana.item_siguiente()):
+            return
+        for bloque in self.ventana.bloques():
+            hora_str = self.ventana.hora_de_bloque(bloque)
+            if not hora_str or hora_str in self._horas_disparadas_hoy:
+                continue
+            primero = self.gestor_publicidad._primer_item_valido_de(bloque)
+            if primero is not None:
+                self.ventana.marcar_siguiente_item(primero)
+                return
 
     def _marcar_bloques_pasados_sin_disparar(self):
         ahora = QTime.currentTime()
