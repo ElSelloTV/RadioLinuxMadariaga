@@ -964,6 +964,8 @@ class MainWindow(QMainWindow):
             return self._musicalizador_eliminar_formato_remoto(params)
         if accion == "musicalizador_renombrar_formato":
             return self._musicalizador_renombrar_formato_remoto(params)
+        if accion == "emision_agregar_ciclo_fmt":
+            return self._emision_agregar_ciclo_fmt_remoto(params)
         return {"ok": False, "error": f"Acción desconocida: {accion}"}
 
     def _alternar_automatico_remoto(self, activar: bool) -> dict:
@@ -1100,6 +1102,29 @@ class MainWindow(QMainWindow):
         if not renombrar_formato(nombre_viejo, nombre_nuevo):
             return {"ok": False, "error": f"Ya existe un formato llamado '{nombre_nuevo}'."}
         return {"ok": True}
+
+    def _emision_agregar_ciclo_fmt_remoto(self, params: dict) -> dict:
+        """Pedido explícito ("en la ventana 2 pueda también cargar x
+        cantidad de tiempo de FMT") — mismo motor que ya usa el botón
+        local `_agregar_ciclo_fmt_emision()`
+        (`GestorPlaylist.insertar_ciclo_fmt_por_tiempo`, AGREGA al
+        final de lo que ya hay cargado, nunca limpia Emisión). El
+        cliente decide qué mostrarle al operador según `cantidad`
+        (0 = el formato no generó nada) — acá solo se ejecuta y se
+        informa el resultado crudo."""
+        nombre_formato = (params.get("nombre_formato") or "").strip()
+        if not nombre_formato:
+            return {"ok": False, "error": "Falta el nombre del formato."}
+        try:
+            minutos = float(params.get("minutos"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Cantidad de minutos inválida."}
+        cantidad = self.gestor_emision.insertar_ciclo_fmt_por_tiempo(nombre_formato, minutos)
+        registrar_evento(
+            f"Control remoto: agregó ciclo FMT '{nombre_formato}' (~{minutos} min) a "
+            f"Emisión de forma remota — {cantidad} ítem(s)"
+        )
+        return {"ok": True, "datos": {"cantidad": cantidad, "nombre_formato": nombre_formato, "minutos": minutos}}
 
     def _estado_transporte_remoto(self) -> dict:
         v1 = self.ventana_publicidad

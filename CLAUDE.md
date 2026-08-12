@@ -12022,6 +12022,97 @@ soltó de una vez.
     guardar una programación para hoy le ofrece aplicarla ya, tal
     como pidió.
 
+122. ~~Comando FMT en el Programador remoto + ciclo FMT por tiempo en
+    Ventana 2 remota (app satélite)~~ — pedido explícito: "vamos al
+    satelite, agregá la posibilidad de que en el programador pueda
+    cargar FMT, y en la ventana 2 pueda también cargar x cantidad de
+    tiempo de FMT" — extiende el MVP deliberado de la ronda 118 (que
+    dejaba explícitamente afuera los Comandos FMT/HTH del Programador
+    remoto) con los dos mecanismos de FMT que ya existían en la app
+    principal, ahora también disponibles desde la app satélite.
+
+    **a) Comando FMT en el Programador remoto**
+    (`satelite/dialogo_programador_remoto.py`): nuevo botón
+    "▶ Comando FMT..." junto a "➕ Agregar ítem.../✕ Quitar
+    seleccionado" — mismo criterio que el Comando FMT local: se elige
+    de la lista de formatos YA CREADOS del Musicalizador (por RPC,
+    reusando la acción `musicalizador_listar_formatos` que ya existía
+    desde la ronda 118 — no hizo falta ninguna acción de servidor
+    nueva para esto), nunca texto libre — con `QInputDialog.getItem`
+    (mismo patrón liviano que ya usa `_cargar_guardada()` en este
+    mismo archivo, en vez de un diálogo dedicado como el local). El
+    ítem se guarda como `{"es_comando": True, "tipo_comando": "FMT",
+    "parametro_comando": <formato>}` — EXACTO el mismo formato de
+    datos que ya usa `_serializar_bloques()`/`cargar_bloques()` de la
+    app principal, así viaja sin ningún cambio por
+    `programador_guardar`/`programador_aplicar_ahora` (ya existentes)
+    y `_texto_item()` (también ya existente) lo renderiza igual que
+    cualquier otro comando, sin tocar nada ahí.
+
+    **b) Ciclo FMT por tiempo en Ventana 2 remota** (pedido explícito,
+    "cargar x cantidad de tiempo de FMT" — mismo concepto que el
+    menú contextual "🎵 Agregar ciclo FMT por tiempo..." de la app
+    principal, ronda 95g): nuevo botón "🎵 FMT..." en el grupo
+    "Ventana 2 (Emisión)" de `satelite/ventana_satelite.py`
+    (`_fila_transporte()` ganó un parámetro `permitir_ciclo_fmt: bool`,
+    mismo criterio de alcance que `permitir_ciclo_fmt` en
+    `gui/panel_reproductor.py` — exclusivo de V2, la fila de Ventana 1
+    no lo recibe). Nuevo diálogo `satelite/dialogo_ciclo_fmt_remoto.py`
+    (formato + minutos) — espejo casi textual de
+    `gui/dialogo_ciclo_fmt_por_tiempo.py`, con la única diferencia real
+    de que la lista de formatos se trae por RPC
+    (`musicalizador_listar_formatos`) en vez de leer
+    `config.settings.listar_formatos()` directo del disco — este
+    proceso no tiene ni debe tener acceso al filesystem de la radio.
+    Nueva acción de servidor `emision_agregar_ciclo_fmt`
+    (`gui/main_window.py:_emision_agregar_ciclo_fmt_remoto()`) que
+    delega, sin ningún camino paralelo, en el MISMO
+    `GestorPlaylist.insertar_ciclo_fmt_por_tiempo()` que ya usa el
+    menú contextual local — agrega al final de lo que ya esté cargado
+    en Emisión, nunca lo limpia, y deja ese formato activo para el
+    refill continuo de ahí en más (mismo comportamiento ya establecido).
+    Nuevo método de cliente
+    `ClienteControlRemoto.emision_agregar_ciclo_fmt(nombre_formato,
+    minutos)`. La respuesta cruda (`cantidad` de ítems generados,
+    0 si el formato no generó nada) viaja sin interpretar — es la app
+    satélite quien decide el mensaje final al operador (información si
+    `cantidad > 0`, aviso si el formato resultó vacío), mismo criterio
+    ya establecido para el resto de las acciones remotas ("el servidor
+    nunca decide textos de UI, solo ejecuta y devuelve el resultado").
+
+    Probado con `test_fmt_remoto.py` (nuevo, dedicado, 13
+    verificaciones): dispatch REAL del servidor contra una
+    `MainWindow` real (`_manejar_comando_remoto("emision_agregar_ciclo_fmt",
+    ...)` con un formato real de tipo "específico" agrega ítems de
+    VERDAD a `mw.gestor_emision.panel` — no un mock —, rechaza sin
+    nombre de formato o con minutos inválidos, y un formato vacío
+    responde `ok=True, cantidad=0` sin romper nada); el método de
+    cliente arma el pedido RPC exacto; `DialogoCicloFMTRemoto` con y
+    sin formatos disponibles (Ok deshabilitado si no hay ninguno);
+    `DialogoProgramadorRemoto._insertar_comando_fmt()` avisa sin
+    bloque/sin formatos, agrega el ítem con el formato elegido
+    (`QInputDialog.getItem` mockeado, mismo patrón ya establecido en
+    todo el proyecto para no bloquear en un diálogo modal real), y el
+    ítem se renderiza igual que cualquier otro comando; el botón
+    "🎵 FMT..." existe EXACTAMENTE una vez en toda la ventana satélite
+    (confirmado que nunca aparece en el grupo de Ventana 1); y
+    `VentanaSatelite._agregar_ciclo_fmt_emision()` de punta a punta
+    (diálogo mockeado, cliente falso, confirma el pedido remoto exacto
+    y el mensaje final al operador) — + regresión completa de
+    `test_control_remoto.py`, `test_config_control_remoto.py`,
+    `test_servidor_prog_music.py`, `test_ventana_satelite_menu.py`,
+    `test_ventana_satelite_reorg.py`, `test_socket_real_prog_music.py`
+    y `test_satelite_ronda3.py` sin fallos nuevos + `py_compile`
+    completo + smoke test de arranque de `main.py` Y
+    `satelite_main.py` sin traceback. **Sigue sin poder confirmarse
+    con Chrome Remote Desktop real ni con audio real**: falta que
+    Santiago confirme desde la app satélite (1) que puede insertar un
+    Comando FMT real en un bloque del Programador remoto y que suena
+    igual que uno insertado localmente, y (2) que el botón "🎵 FMT..."
+    de Ventana 2 en la satélite agrega el ciclo esperado a Emisión sin
+    borrar lo que ya estaba cargado, igual que el menú contextual
+    local.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
