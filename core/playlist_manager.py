@@ -1336,8 +1336,11 @@ class SchedulerAutomatico:
       `_arrancar_al_iniciar`). Los bloques horarios quedan esperando
       su hora real, disparados solo por `_tick()` cuando el reloj
       efectivamente cruza esa hora. Activar el Automático A MANO en
-      pleno uso sigue disparando el bloque vigente de inmediato (ver
-      `_on_automatico_cambiado`, sin cambios).
+      pleno uso tampoco "atrapa" ningún bloque vigente ni retoma uno
+      interrumpido (pedido explícito, revierte la ronda 43 — ver
+      `_on_automatico_cambiado`): el ÚNICO disparador real de un
+      bloque es la transición de hora exacta en `_tick()`. Un bloque
+      suspendido/cancelado a mitad de camino no vuelve a sonar solo.
     - A medianoche (o al iniciar) carga sola la programación resuelta
       para hoy (fecha específica > patrón semanal — ver
       config/settings.py:resolver_programacion_del_dia), si hay alguna
@@ -1385,8 +1388,9 @@ class SchedulerAutomatico:
         # hoy; si no hay nada guardado, no toca lo restaurado.
         self._cargar_programacion_del_dia()
 
-        # Los bloques cuya hora ya pasó quedan como "ya emitidos hoy"
-        # — el arranque automático de abajo reproduce SOLO el vigente.
+        # Los bloques cuya hora ya pasó quedan como "ya emitidos hoy" —
+        # nunca se disparan retroactivamente por ningún camino, ni acá
+        # ni al activar el Automático a mano (_on_automatico_cambiado).
         self._marcar_bloques_pasados_sin_disparar()
         QTimer.singleShot(self.RETARDO_INICIO_MS, self._arrancar_al_iniciar)
 
@@ -1412,31 +1416,22 @@ class SchedulerAutomatico:
 
     # ------------------------------------------------------------------
     def _on_automatico_cambiado(self, activo: bool):
+        """Pedido explícito (revierte a propósito la ronda 43, "activar
+        el Automático a mano debe arrancar YA el bloque horario
+        vigente"): "el automático, si se suspende o se cancela... no
+        vuelve más a ese bloque" y "es solo, y solo si, el botón está
+        activado Y es el bloque horario — desde el bloque horario, no
+        desde donde dejó el usuario o se encendió la PC". Activar el
+        botón a mano YA NO dispara ni "atrapa" ningún bloque cuya hora
+        ya pasó, ni retoma uno que haya quedado a mitad de camino —
+        el ÚNICO disparador real de un bloque sigue siendo la
+        transición de hora exacta en `_tick()`. Acá solo se asegura de
+        que ningún bloque con hora ya pasada pueda disparar DESPUÉS
+        por la vía normal (ver `_marcar_bloques_pasados_sin_disparar`)
+        — un "olvidate del pasado, quedate esperando lo que sigue"."""
         if not activo:
             return
         self._marcar_bloques_pasados_sin_disparar()
-        # Pedido explícito: activar el botón AUTOMÁTICO a mano (no
-        # solo al iniciar la app) debe arrancar YA el bloque horario
-        # VIGENTE — ej. si son las 21:24, el bloque de las 21hs —
-        # mismo criterio que _arrancar_al_iniciar(), reutilizado acá.
-        # Guard contra doble disparo: si ya hay un bloque disparándose
-        # (esperando que Emisión libere el control) o Publicidad YA
-        # está sonando algo (un bloque en curso, o el operador puso a
-        # mano un ítem a sonar), no se dispara otro encima — activar
-        # el Automático nunca debe REINICIAR desde el principio algo
-        # que ya está sonando.
-        if self._esperando_liberar_emision or self.gestor_publicidad.motor.esta_reproduciendo():
-            return
-        bloque = self._bloque_vigente()
-        if bloque is None:
-            return
-        hora_str = self.ventana.hora_de_bloque(bloque)
-        if hora_str:
-            self._horas_disparadas_hoy.add(hora_str)
-        registrar_evento(
-            f"Automático activado a mano: reproduciendo el bloque horario vigente '{bloque.text(0)}'"
-        )
-        self._disparar_bloque(bloque)
 
     def _marcar_bloques_pasados_sin_disparar(self):
         ahora = QTime.currentTime()
@@ -1448,26 +1443,6 @@ class SchedulerAutomatico:
                 marcadas.add(hora_str)
         self._horas_disparadas_hoy = marcadas
 
-    # ------------------------------------------------------------------
-    # Arranque del programa (punto a): reproducir el bloque VIGENTE
-    # ------------------------------------------------------------------
-    def _bloque_vigente(self):
-        """El bloque con la hora MÁS TARDÍA que ya pasó (<= ahora) y
-        que tenga al menos un ítem reproducible. Nunca el primero del
-        árbol porque sí."""
-        ahora = QTime.currentTime()
-        mejor, mejor_hora = None, None
-        for bloque in self.ventana.bloques():
-            hora_str = self.ventana.hora_de_bloque(bloque)
-            hora = QTime.fromString(hora_str, "HH:mm:ss") if hora_str else QTime()
-            if not hora.isValid() or hora > ahora:
-                continue
-            if not self._bloque_tiene_items(bloque):
-                continue
-            if mejor_hora is None or hora >= mejor_hora:
-                mejor, mejor_hora = bloque, hora
-        return mejor
-
     def _arrancar_al_iniciar(self):
         """Pedido explícito ("el automático debe estar activado, eso
         es correcto, pero que comience emitiendo la música que está
@@ -1478,14 +1453,16 @@ class SchedulerAutomatico:
         las 14:10 y existía un bloque de las 14hs, arrancaba
         DIRECTAMENTE ese bloque de Publicidad, saltando Emisión por
         completo. Ese comportamiento de "recuperar" el bloque vigente
-        queda reservado EXCLUSIVAMENTE para activar el botón
-        AUTOMÁTICO A MANO en pleno uso (ver `_on_automatico_cambiado`,
-        pedido explícito de una ronda anterior, sin cambios acá) — el
-        arranque del programa siempre empieza por Emisión (Música) si
-        el Automático está activo, y los bloques horarios quedan
+        (que hasta una ronda anterior sí sobrevivía para activar el
+        botón AUTOMÁTICO A MANO) fue eliminado por completo, pedido
+        explícito de una ronda posterior: "no vuelve más a ese
+        bloque... desde el bloque horario, no desde donde dejó el
+        usuario" (ver `_on_automatico_cambiado`) — el arranque del
+        programa siempre empieza por Emisión (Música) si el
+        Automático está activo, y los bloques horarios quedan
         esperando su hora real: `_tick()` los sigue disparando, pero
         solo en el instante exacto en que el reloj cruza esa hora,
-        nunca antes."""
+        nunca antes ni de forma retroactiva por ningún otro camino."""
         if self.ventana.esta_en_automatico():
             registrar_evento("Inicio: arranca Emisión (Automático activo, esperando el próximo bloque horario)")
             self._reanudar_o_arrancar_emision()
