@@ -11774,6 +11774,137 @@ soltó de una vez.
     Emisión (Música) esperando el PRÓXIMO bloque real, sin ponerse a
     recorrer de golpe todo lo que ya pasó.
 
+120. ~~Repaso de punta a punta del Automático: interrupción SIEMPRE de
+    V2 con el botón activo + 3 casos exactos al reactivarlo + "pintar"
+    el próximo bloque~~ — pedido explícito, "Revisá de punta a punta
+    que todo haya quedado así como te indico", con el ciclo descripto
+    en dos mitades:
+
+    > "BOTÓN AUTOMÁTICO ACTIVO. Pase lo que pase, siempre interrumpirá
+    > la reproducción de la ventana 2 como viene haciendolo, para
+    > pasar al bloque horario correspondiente, incluso si está
+    > detenida o "muda" la reproducción de la ventana 2 (raro, pero
+    > puede suceder)
+    >
+    > BOTÓN AUTOMATICO DESACTIVADO. Si el usuario está reproduciendo
+    > en el auxiliar o ventana 2, de ningúna manera debe volver solo a
+    > reproducir un item ni nada de la ventana 1, salvo que el usuario
+    > lo haga manualmente, incluso, algun archivo de bloque anterior
+    > lo podrá hacer pero manualmente. Al volver a activar el botón de
+    > Automatico, el sistema ya pintará el bloque horario que
+    > corresponda y lo dejará listo para su reproducción, si está en
+    > hora (apretar justo a las 12 y son las 12, dispara la
+    > reproducción, si aprieta a las 11:50, esperará la reproducción
+    > de las 12 como viene haciendo, si aprieta a las 12:02, esperará
+    > el bloque de las 13 salvo que manualmente el usuario comience a
+    > reproducir el bloque de las 12."
+
+    **Auditoría del bloque "AUTOMÁTICO ACTIVO" — ya cumplido, sin
+    necesitar cambios de código**: confirmado leyendo
+    `SchedulerAutomatico._disparar_bloque()` →
+    `GestorPlaylist.ceder_control_al_terminar_item()`
+    (`core/gestor_emision.py`, mecanismo de la ronda 36): con Emisión
+    SONANDO, deja terminar el ítem solo y RECIÉN AHÍ toma el control
+    (nunca corta a mitad, "como viene haciendolo"); con Emisión
+    DETENIDA o sin nada sonando (`not motor.esta_reproduciendo()`),
+    toma el control DE INMEDIATO, sin esperar nada — "pase lo que
+    pase... incluso si está detenida". Confirmado con un test
+    dedicado (caso 5, ver abajo) que dispara un bloque real por
+    `_tick()` con Ventana 2 detenida y confirma que arranca sin
+    ningún delay. El caso "muda" (Emisión técnicamente reproduciendo
+    pero sin volumen audible, por algún problema de hardware/driver)
+    queda cubierto igual: al estar `esta_reproduciendo()` en `True`,
+    espera el fin NATURAL de ese ítem (que va a llegar solo, esté o no
+    audible) antes de tomar el control — mismo camino, sin trato
+    especial, ya correcto de fábrica.
+
+    **El bloque "AUTOMÁTICO DESACTIVADO" — afinado sobre la ronda 119,
+    que era demasiado tajante**: la primera mitad ("de ninguna manera
+    debe volver a reproducir nada de Ventana 1 sola, salvo manual")
+    ya estaba resuelta por la ronda 119 (`_tick()` gateado por
+    `esta_en_automatico()`, confirmado sin cambios con un test de
+    regresión). La segunda mitad — "al volver a activar el botón" —
+    es la que necesitaba ajuste: la ronda 119 dejó
+    `_on_automatico_cambiado(True)` sin disparar NUNCA nada, ni
+    siquiera en el caso límite de activar el botón EXACTO en el mismo
+    segundo de la hora de un bloque — mientras que Santiago fue
+    explícito en que ESE caso puntual sí debe disparar. Reescrito
+    `_on_automatico_cambiado()` (`core/playlist_manager.py`) con los 3
+    casos EXACTOS que describió, todos con la misma regla de fondo de
+    la ronda 119 (nunca "atrapa" ni recupera retroactivamente) más una
+    sola excepción puntual:
+    - **"apretar justo a las 12 y son las 12, dispara la
+      reproducción"**: nuevo `_bloque_con_hora_exacta(ahora)` — si
+      ALGÚN bloque tiene la hora EXACTA (al segundo) del instante del
+      click y tiene ítems reproducibles, se dispara YA con
+      `_disparar_bloque()` — el MISMO camino que usaría `_tick()` un
+      segundo después en esa transición, así que hereda gratis la
+      interrupción de V2 del bloque anterior (espera si está sonando,
+      toma control ya si no). Guardado por el mismo guard contra
+      doble disparo que ya existía antes de la ronda 119 (si ya hay
+      un bloque "esperando liberar Emisión" o si Ventana 1 YA está
+      reproduciendo algo A MANO en ese instante, el match exacto NO
+      fuerza un disparo encima — respeta la reproducción manual en
+      curso).
+    - **"si aprieta a las 11:50, esperará... como viene haciendo"**:
+      sin match exacto, no dispara nada — sigue siendo `_tick()`
+      quien lo va a disparar en su momento real, sin cambios.
+    - **"si aprieta a las 12:02, esperará el bloque de las 13"**: un
+      bloque de hora YA pasada (sin ser el match exacto puntual)
+      queda marcado como agotado para el resto del día, exactamente
+      igual que la ronda 119 — "salvo que manualmente el usuario
+      comience a reproducir el bloque de las 12" sigue disponible
+      como Play manual (doble click en el título del bloque), sin
+      ningún cambio ahí.
+    - **"el sistema ya pintará el bloque horario que corresponda y lo
+      dejará listo para su reproducción"**: nuevo
+      `_marcar_bloque_correspondiente_en_espera()` — fuera del caso de
+      match exacto (que ya arma su propio rojo/verde al disparar),
+      deja en VERDE ("en cola") el primer ítem reproducible del
+      PRÓXIMO bloque horario que todavía no se disparó/agotó hoy —
+      mismo significado de verde ya establecido por
+      `_marcar_proximo_bloque_en_espera` ("en espera de que llegue su
+      hora"). Nunca pisa un verde que el operador ya haya dejado
+      apuntando a algo todavía válido (mismo criterio de siempre,
+      `_asegurar_rojo_y_verde`).
+
+    Probado con `test_automatico_afinado_toggle.py` (nuevo, dedicado,
+    9 verificaciones — la detección del match exacto se prueba con una
+    `QTime` FIJA, nunca contra el reloj real, para no caer en la
+    misma clase de flakiness ya documentada para los tests de
+    transición horaria; la DECISIÓN de disparar se prueba con
+    `_bloque_con_hora_exacta` monkeypatcheado, desacoplando el timing
+    de la lógica de despacho): match exacto sin nada más sonando
+    dispara de una y arma el rojo; match exacto con V2 "sonando"
+    (mock) interrumpe igual pero espera a que termine (no corta a
+    mitad); match exacto con Ventana 1 YA reproduciendo algo a mano no
+    fuerza un disparo encima; activar ANTES de una hora futura no
+    dispara nada pero pinta en verde ese bloque; activar DESPUÉS de
+    una hora ya pasada no la dispara, la marca agotada, y pinta en
+    verde el próximo bloque real en su lugar (con el bloque pasado
+    todavía disponible para Play manual); con el Automático apagado,
+    nada se dispara solo (regresión ronda 119); y un disparo NORMAL
+    por `_tick()` con Ventana 2 detenida toma el control de inmediato,
+    sin esperar nada — + regresión completa de
+    `test_automatico_no_recupera_bloque.py` (ronda 119, sin fallos
+    nuevos pese al caso nuevo de match exacto) y de los tests de esta
+    misma tanda de trabajo que tocan Ventana 1/`SchedulerAutomatico`
+    (`test_pedidos_a_b.py`, `test_pedidos_d_e_f.py`,
+    `test_boton_hth_manual_y_automatico.py`,
+    `test_stop_apaga_automatico_v1.py`,
+    `test_dinesat_layout_y_hth_v1.py`) + `py_compile` completo + smoke
+    test de arranque de `main.py` sin traceback. **Sigue sin poder
+    confirmarse con audio/hardware real ni con el paso real del reloj
+    exactamente sobre la hora de un bloque**: falta que Santiago
+    confirme en su radio real que (1) activar el Automático justo
+    cuando el reloj marca la hora de un bloque lo dispara de una, (2)
+    activar unos minutos después de esa hora NO lo dispara y en cambio
+    deja pintado en verde el próximo bloque real, (3) que el bloque
+    salteado sigue pudiendo reproducirse a mano si hace falta, y (4)
+    que con el Automático activo la vuelta a Ventana 1 siempre
+    interrumpe a Ventana 2/Auxiliar, incluso en esos casos raros donde
+    quedó detenida o sin sonido audible.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
