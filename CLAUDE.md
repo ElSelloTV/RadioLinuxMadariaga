@@ -2587,6 +2587,54 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
+## Incidente real — PC de la radio se congeló con Chrome Remote Desktop
+(diagnóstico en curso, fuera del código de este repo)
+
+Santiago reportó que, conectándose por Chrome Remote Desktop a la
+sesión física de la PC de la radio ("sesión original Radio"), tanto
+RadioLinuxMadariaga como ZaraRadio (bajo Wine) "desaparecieron" —
+ventanas sin responder, aunque los procesos seguían vivos (confirmado
+porque el lock de instancia única de esta app, `core/instancia_unica.py`
+ronda 107, decía "ya está abierto" al reintentar abrir) — y la barra
+de tareas de TDE/Q4OS (kicker) también quedó trabada. Solo un reinicio
+completo de la PC lo destrabó. Diagnosticado 100% de forma remota,
+leyendo salidas reales de `ps aux`/`free -h`/`Xorg.0.log.old` que
+Santiago fue pegando en el chat — **nunca se tocó ningún archivo de
+este repo para esto**, es un problema de la sesión gráfica/X11 de la
+máquina, no de la app.
+
+**Encontrado y ya resuelto**: la máquina tenía **NoMachine/NX**
+instalado (`nomachine-personal-edition`) corriendo como daemon de
+fondo (`nxserver.service`) — Santiago confirmó que no lo usa
+("lo instalé pero no lo voy a usar") y se desinstaló por completo
+(servicio frenado/deshabilitado, paquete purgado, `/etc/NX`/`/usr/NX`
+borrados, usuario `nx` eliminado, unidad de systemd sacada — todo
+confirmado limpio con `dpkg -l`/`ps aux`/`systemctl list-unit-files`
+sin ningún rastro). El log de `nxserver` mostraba reintentos fallidos
+de licencia ("No subscription found") en loop — candidato razonable a
+carga de fondo silenciosa, sumado a que competía con Chrome Remote
+Desktop (que tiene su propia pantalla X virtual, `Xorg :20`) por la
+misma placa de video que la sesión física (`Xorg :0`).
+
+**Causa de fondo TODAVÍA sin confirmar** — nunca se pudo capturar el
+estado del sistema DURANTE un cuelgue real, solo fotos de después del
+reinicio (que siempre salen "sanas"). Para resolverlo la próxima vez,
+se dejó un monitoreo liviano corriendo en la PC de la radio (fuera de
+este repo, en el `$HOME` del usuario `radio`): `~/monitor_radio/
+snapshot.sh`, vía `cron` cada 15 minutos, agrega una foto de `free -h`
++ `ps aux --sort=-%cpu`/`--sort=-%mem` a `~/monitor_radio/snapshot.log`
+(con tope de 3000 líneas).
+
+**Regla para cualquier sesión futura**: si Santiago reporta que la PC
+de la radio "se cuelga"/"se congela"/dejó de responder (sea la app,
+ZaraRadio, o el escritorio entero), **pedirle el contenido de
+`~/monitor_radio/snapshot.log`** (sobre todo las últimas fotos antes
+del reinicio) ANTES de especular — es la única forma de tener datos
+reales del momento del incidente en vez de una foto post-reinicio ya
+sana. Este archivo vive en la PC de la radio, no en este repo — hay
+que pedírselo a Santiago pegado en el chat, no se puede leer desde
+acá.
+
 ## Dirección futura (mencionado por Santiago, todavía no arrancado)
 
 Antes de encarar los "motores principales" (programación/carga
