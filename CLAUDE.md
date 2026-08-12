@@ -11905,6 +11905,123 @@ soltó de una vez.
     interrumpe a Ventana 2/Auxiliar, incluso en esos casos raros donde
     quedó detenida o sin sonido audible.
 
+121. ~~Rediseño de la Ventana Programador — dropdown de archivo,
+    renombre de botones, pre-escucha por Preescucha, auto-aplicar al
+    guardar "lo de hoy"~~ — pedido explícito: "Rediseñame con los
+    mismos comandos y todo la ventana de Programación. Es confusa.
+    Cambia la leyenda label de los botones 'Reemplazar Selección' y
+    'Quitar Selección' por 'Reemplazar Item' y 'Quitar Item'. Otorgá
+    orden. Si es posible, una pre-escucha por la salida auxiliar.
+    Agregá la función que al guardar, si se trata de una programación
+    del transcurso del día... automáticamente [dispare] 'aplicando
+    ahora' con la acción del botón." Alcance deliberado: TODOS los
+    comandos existentes se conservan intactos (mismos métodos/
+    handlers, ver `gui/ventana_programador.py`) — el cambio es
+    exclusivamente de LAYOUT + 2 funciones nuevas.
+
+    **a) Dropdown "📁 Programación" reemplaza los 6 botones sueltos de
+    Grupo 1**: `QToolButton` + `QMenu` (mismo patrón ya establecido en
+    el toolbar principal, `gui/main_window.py` → "⚙ Configuración") —
+    Nueva/Cargar/Eliminar/Eliminar varias/Duplicar quedan como
+    `QAction` dentro del menú, con separadores agrupando por
+    "afecta el editor entero" (Nueva) / "trae otra" (Cargar) /
+    "borra guardadas" (Eliminar, Eliminar varias) / "copia bajo otro
+    nombre" (Duplicar). "▶ Aplicar Ahora en Ventana 1" queda como la
+    ÚNICA acción con botón propio y destacado del grupo (rojo,
+    `btnStop`) — es la que corta el aire, merece quedar bien visible
+    en vez de mezclada entre las demás.
+
+    **b) Renombre pedido explícito**: "🔁 Reemplazar seleccionado..."
+    → "🔁 Reemplazar Item", "✕ Quitar seleccionado(s)" → "✕ Quitar
+    Item" — mismo handler (`_reemplazar_seleccionado`/
+    `_quitar_seleccionados`), mismo comportamiento (detecta si hay un
+    bloque o un ítem seleccionado).
+
+    **c) "Otorgá orden" — Grupo 2 reorganizado con subtítulos que
+    separan 3 conceptos que antes estaban mezclados en dos filas
+    crudas de 6+3 botones**: nuevo helper `_crear_subtitulo()` (label
+    chica/atenuada, mismo estilo `lblTituloBloqueActivo` ya usado
+    para la nota de abajo) marca "Nuevo bloque horario:" / "Ítem
+    seleccionado en el árbol:" / "Insertar ítem especial en el
+    bloque:" — esta última separa a propósito FMT/HTH/Aleatorio (no
+    son archivos de la biblioteca, se resuelven recién al
+    reproducirse) de Añadir/Reemplazar/Quitar Item (si son archivos
+    reales) — la mezcla de ambos conceptos en una sola fila de 6
+    botones era, según lectura del pedido, la fuente real de "es
+    confusa". El reordenar por arrastre (`ArbolProgramadorConDrop`,
+    ronda 35) no se tocó — ya funcionaba, tanto dentro de un bloque
+    como hacia otro distinto.
+
+    **d) Pre-escucha por la salida auxiliar/Preescucha (pedido
+    explícito, nueva)**: `▶ Previo` / `⏹ Detener`, junto a
+    Añadir/Reemplazar/Quitar Item (misma fila, ya que los tres actúan
+    sobre "el ítem seleccionado"). Motor DEDICADO
+    (`self._motor_previo = MotorAudio(id_dispositivo_preescucha,
+    aplicar_procesador=False)`, resuelto de
+    `config.settings.cargar_configuracion()["audio"]["dispositivo_preescucha"]`
+    en el `__init__`) — SIEMPRE por la salida de "Salida Preescucha"
+    configurada, NUNCA la Master que va al aire, mismo criterio ya
+    establecido en toda la app (▶ Previo de Ventana 3,
+    `DialogoVincularArchivo`, ronda 79). `_reproducir_previo()` solo
+    tiene sentido sobre una TANDA real (con archivo) — sobre un
+    bloque, un Comando FMT/HTH o un Ítem Aleatorio avisa en vez de
+    intentar reproducir nada (ninguno de esos tres tiene un archivo
+    fijo). Reproduce con el `ROL_ANALISIS_AUDIO` YA guardado en el
+    ítem (recorte de silencio + nivelado, sin recalcular nada — mismo
+    dato que ya viaja con cada ítem del editor). Se detiene solo al
+    cambiar de selección en el árbol (mismo criterio que el ▶ Previo
+    de Ventana 3) y al cerrar la ventana (`closeEvent`/`reject`
+    sobrescritos, mismo patrón que `DialogoVincularArchivo`) — nunca
+    queda sonando de fondo con el diálogo ya cerrado.
+
+    **e) Aplicar automáticamente al guardar "lo de hoy" (pedido
+    explícito, nueva — decisión de diseño explicada, no preguntada
+    literalmente)**: `_corresponde_a_hoy(fecha_especifica,
+    dias_seleccionados)` (nuevo, función pura) es `True` si la fecha
+    específica guardada es la de HOY, o si el día de semana de HOY
+    está entre los días tildados. `_guardar()`, tras persistir con
+    éxito, si `_corresponde_a_hoy()` da `True`, ofrece la MISMA acción
+    que "▶ Aplicar Ahora" — pero **sigue pidiendo confirmación en UN
+    solo diálogo combinado** ("guardado + ¿aplicarlo ya?", Sí/No,
+    default No) en vez de aplicarlo en silencio: es un handoff a
+    audio EN VIVO que puede cortar lo que esté sonando, y el resto de
+    la app SIEMPRE pide confirmación para ese tipo de acción (mismo
+    criterio ya establecido para "▶ Aplicar Ahora" manual) — "guardé
+    algo" no es lo mismo que "quiero que suene ya", aunque el pedido
+    de Santiago sea que el sistema lo OFREZCA de una sin que haga
+    falta ir a buscar el botón aparte. Reusa `self.solicitud_aplicar_ahora.emit(bloques)`
+    tal cual (misma señal que ya conecta `MainWindow.
+    _aplicar_programacion_ahora`) — no hay ningún camino nuevo de
+    aplicación, solo un disparador nuevo para el mismo camino de
+    siempre.
+
+    Probado con `test_programador_rediseno.py` (nuevo, dedicado): el
+    dropdown expone las 5 acciones de archivo (los viejos
+    `btn_nueva`/`btn_cargar`/etc. ya no existen como atributos),
+    "Aplicar Ahora" sigue siendo un botón propio; los renombres de
+    texto confirmados exactos; agregar un bloque horario y los 3
+    tipos de ítem especial (FMT/HTH/Aleatorio) siguen funcionando
+    igual que siempre; la pre-escucha respeta el análisis de silencio/
+    nivelado del ítem seleccionado, avisa (no intenta reproducir)
+    sobre un Comando, avisa sobre un archivo sin vincular, y cambiar
+    de selección corta cualquier pre-escucha en curso;
+    `_corresponde_a_hoy()` con el día de semana REAL de hoy (calculado
+    dinámicamente, nunca hardcodeado, para no depender de en qué día
+    corra el test) y con una fecha específica de hoy vs. una vieja;
+    guardar una programación de HOY y confirmar el ofrecimiento
+    dispara `solicitud_aplicar_ahora`, decir que no no dispara nada, y
+    guardar algo que NO es de hoy ni siquiera pregunta — + captura
+    real (offscreen) del layout completo enviada a Santiago para
+    comparar antes de dar la ronda por terminada + `py_compile`
+    completo + smoke test de arranque de `main.py` sin traceback.
+    **Sigue sin poder confirmarse con audio/hardware real ni con
+    fidelidad visual 100% en su pantalla**: falta que Santiago
+    confirme (1) que el layout nuevo se siente menos confuso que el
+    anterior, (2) que la pre-escucha suena por sus parlantes de
+    Preescucha/monitoreo (nunca por la salida al aire), y (3) que
+    guardar una programación para hoy le ofrece aplicarla ya, tal
+    como pidió.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
