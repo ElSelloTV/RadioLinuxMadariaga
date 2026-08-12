@@ -12113,6 +12113,70 @@ soltó de una vez.
     borrar lo que ya estaba cargado, igual que el menú contextual
     local.
 
+123. ~~Actualizar la app satélite por GitHub desde Configuración~~ —
+    pedido explícito: "Agregale también en Configuraciones, la opción
+    de actualizar el programa por GitHub, aunque reinice la APP, no
+    importa." Nuevo menú **"Configuración"** en `VentanaSatelite`
+    (junto a los ya existentes "Conexión"/"Opciones"), con la única
+    acción "⬇ Actualizaciones..." — disponible SIEMPRE, esté o no
+    conectada a la radio (es git local sobre el mismo checkout, no
+    pasa por el socket de control remoto).
+
+    **Reuso total de `core/actualizador.py`, sin ningún camino
+    paralelo**: las dos apps (radio y satélite) viven en el MISMO
+    checkout git — mismo repo, misma rama, mismo `git pull` — así que
+    "actualizar" ya era, de fondo, el mismo mecanismo de siempre
+    (`hay_actualizacion_disponible()`/`aplicar_actualizacion()`, sin
+    tocar nada). La ÚNICA pieza que hacía falta generalizar era
+    `reiniciar_aplicacion()`: hasta esta ronda tenía hardcodeado
+    `main.py` como el script a relanzar — perfecto para la radio,
+    pero hubiera reabierto la RADIO en vez de la satélite si se
+    reusaba tal cual acá. Ganó un parámetro `script: str = "main.py"`
+    (default intacto, cero cambio para el único call site existente
+    en `gui/ventana_configuracion.py`) — la satélite pasa
+    `script="satelite_main.py"` explícito, así el reinicio siempre
+    reabre a la app que lo pidió, nunca la otra.
+
+    Nuevo `satelite/dialogo_actualizaciones.py` (`DialogoActualizaciones`):
+    calco casi textual de Configuración → Actualizaciones de la app
+    principal (repo + commit instalado + "🔎 Buscar actualización" +
+    "⬇ Actualizar y reiniciar", con el botón de actualizar
+    deshabilitado hasta buscar, y deshabilitado del todo si la copia
+    no es una instalación git) — mismo flujo, misma confirmación
+    antes de aplicar ("se va a reiniciar. ¿Continuar?"), mismo
+    criterio de "nunca reiniciar si `aplicar_actualizacion()` falló".
+    Nota explícita en el diálogo aclarando que la radio (programa
+    principal) NO se toca ni se reinicia desde acá — pedido implícito
+    de evitar confusión entre "actualizar la satélite" y "actualizar
+    la radio", dos acciones separadas con la misma fuente (git) pero
+    cada una reabriéndose a sí misma.
+
+    Probado con `test_actualizaciones_satelite.py` (nuevo, dedicado,
+    10 verificaciones): `reiniciar_aplicacion()` sin argumento sigue
+    relanzando `main.py` exacto (regresión, cero cambio para la
+    radio); con `script="satelite_main.py"` relanza la satélite —
+    ambos casos confirmados interceptando `QProcess.startDetached`
+    (nunca se lanza un proceso real durante el test); el diálogo
+    muestra la URL real del repo y el commit instalado actual, con
+    Actualizar deshabilitado hasta buscar; `_buscar()` habilita o no
+    el botón según haya o no actualización (mockeado, sin depender de
+    red real); `_actualizar()` de punta a punta — confirmar aplica y
+    reinicia apuntando SIEMPRE a `satelite_main.py`, decir que no no
+    toca nada, y un fallo de `aplicar_actualizacion()` nunca dispara
+    el reinicio; y `VentanaSatelite` expone el menú "Configuración"
+    con la acción wireada — + regresión completa de
+    `test_control_remoto.py`, `test_config_control_remoto.py`,
+    `test_servidor_prog_music.py`, `test_ventana_satelite_menu.py`,
+    `test_ventana_satelite_reorg.py`, `test_socket_real_prog_music.py`,
+    `test_satelite_ronda3.py` y `test_fmt_remoto.py` sin fallos nuevos
+    + `py_compile` completo + smoke test de arranque de `main.py` Y
+    `satelite_main.py` sin traceback. **Sigue sin poder confirmarse
+    con git/GitHub reales de producción ni con Chrome Remote Desktop
+    real**: falta que Santiago confirme desde la app satélite que
+    "🔎 Buscar actualización" detecta una actualización real pendiente,
+    y que "⬇ Actualizar y reiniciar" descarga los cambios y reabre la
+    satélite sola (nunca la radio) con la versión nueva ya aplicada.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que

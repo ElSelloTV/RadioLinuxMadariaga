@@ -40,6 +40,7 @@ from PySide6.QtGui import QAction
 
 from satelite.cliente_control_remoto import ClienteControlRemoto, ErrorControlRemoto
 from satelite.config_satelite import cargar_config_satelite, guardar_config_satelite
+from satelite.dialogo_actualizaciones import DialogoActualizaciones
 from satelite.dialogo_ciclo_fmt_remoto import DialogoCicloFMTRemoto
 from satelite.dialogo_configuracion_conexion import DialogoConfiguracionConexion
 from satelite.dialogo_musicalizador_remoto import DialogoMusicalizadorRemoto
@@ -81,6 +82,15 @@ class VentanaSatelite(QMainWindow):
         self._accion_automatico.setCheckable(True)
         self._accion_automatico.triggered.connect(self._on_toggle_automatico_menu)
         menu_opciones.addAction(self._accion_automatico)
+
+        # Pedido explícito: "agregale también en Configuraciones, la
+        # opción de actualizar el programa por GitHub, aunque reinice
+        # la APP, no importa" — independiente de la conexión con la
+        # radio (es git local, no pasa por el socket de control
+        # remoto), así que queda disponible siempre, conectado o no.
+        menu_config = self.menuBar().addMenu("Configuración")
+        accion_actualizaciones = menu_config.addAction("⬇ Actualizaciones...")
+        accion_actualizaciones.triggered.connect(self._abrir_actualizaciones)
 
     def _construir_ui(self):
         central = QWidget()
@@ -194,6 +204,12 @@ class VentanaSatelite(QMainWindow):
             return
         guardar_config_satelite(dialogo.resultado())
         self._conectar()
+
+    # ------------------------------------------------------------------
+    # Configuración -> Actualizaciones
+    # ------------------------------------------------------------------
+    def _abrir_actualizaciones(self):
+        DialogoActualizaciones(parent=self).exec()
 
     def _conectar(self):
         config = cargar_config_satelite()

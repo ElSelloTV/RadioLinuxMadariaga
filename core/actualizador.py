@@ -17,8 +17,12 @@ Flujo:
        fast-forward-only, nunca pisa cambios locales sin avisar:
        si el pull no puede hacerse limpio, devuelve error en vez de
        forzar nada.
-    3) reiniciar_aplicacion() -> lanza una copia nueva del proceso
-       (python main.py) y cierra la app actual.
+    3) reiniciar_aplicacion(app, script="main.py") -> lanza una copia
+       nueva del proceso (python <script>) y cierra la app actual —
+       el mismo checkout git sirve tanto para `main.py` (la radio)
+       como para `satelite_main.py` (la app satélite, ver
+       satelite/dialogo_actualizaciones.py), cada una reabriéndose a
+       sí misma.
 --------------------------------------------------------
 """
 
@@ -254,9 +258,14 @@ def subir_log_a_git(ruta_log: str) -> tuple[bool, str]:
         return False, f"Error subiendo el log: {error}"
 
 
-def reiniciar_aplicacion(app):
-    """Lanza una copia nueva de la app (python main.py) y cierra ésta.
-    `app` es la instancia de QApplication en curso.
+def reiniciar_aplicacion(app, script: str = "main.py"):
+    """Lanza una copia nueva de la app (python <script>) y cierra
+    ésta. `app` es la instancia de QApplication en curso. `script`
+    default "main.py" (la radio) — la app satélite pasa
+    "satelite_main.py" acá (pedido explícito: "agregale también en
+    Configuraciones, la opción de actualizar el programa por GitHub,
+    aunque reinicie la APP, no importa" — mismo mecanismo, pero tiene
+    que reabrirse A SÍ MISMA, nunca la radio).
 
     closeAllWindows() antes de quit() es a propósito: app.quit() solo
     corta el event loop SIN pasar por closeEvent, y ahí se perdía el
@@ -267,8 +276,8 @@ def reiniciar_aplicacion(app):
     from PySide6.QtCore import QProcess
 
     python = sys.executable
-    script = os.path.join(_raiz_app(), "main.py")
-    QProcess.startDetached(python, [script])
+    ruta_script = os.path.join(_raiz_app(), script)
+    QProcess.startDetached(python, [ruta_script])
     app.closeAllWindows()
     app.quit()
 
