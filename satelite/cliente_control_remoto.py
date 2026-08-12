@@ -112,3 +112,68 @@ class ClienteControlRemoto:
             },
             timeout_segundos=TIMEOUT_IMPORTAR_ARCHIVO_SEGUNDOS,
         )
+
+    def alternar_automatico(self, activar: bool) -> dict:
+        return self._pedir("alternar_automatico", {"activar": activar})
+
+    def listar_registros_categoria(self, categoria_ruta: list, recursivo: bool = False) -> list:
+        respuesta = self._pedir("listar_registros_categoria", {
+            "categoria_ruta": categoria_ruta, "recursivo": recursivo,
+        })
+        if not respuesta.get("ok"):
+            raise ErrorControlRemoto(respuesta.get("error", "listar_registros_categoria falló"))
+        return respuesta["datos"]["registros"]
+
+    # ------------------------------------------------------------------
+    # Programador remoto
+    # ------------------------------------------------------------------
+    def programador_listar_guardadas(self) -> list:
+        respuesta = self._pedir("programador_listar_guardadas")
+        if not respuesta.get("ok"):
+            raise ErrorControlRemoto(respuesta.get("error", "programador_listar_guardadas falló"))
+        return respuesta["datos"]["programaciones"]
+
+    def programador_cargar_guardada(self, tipo: str, clave: str) -> dict:
+        return self._pedir("programador_cargar_guardada", {"tipo": tipo, "clave": clave})
+
+    def programador_bloques_actuales(self) -> list:
+        respuesta = self._pedir("programador_bloques_actuales")
+        if not respuesta.get("ok"):
+            raise ErrorControlRemoto(respuesta.get("error", "programador_bloques_actuales falló"))
+        return respuesta["datos"]["bloques"]
+
+    def programador_guardar(self, nombre: str, bloques: list, dias_semana: list = None,
+                             fecha_especifica: str = None) -> dict:
+        return self._pedir("programador_guardar", {
+            "nombre": nombre, "bloques": bloques,
+            "dias_semana": dias_semana or [], "fecha_especifica": fecha_especifica,
+        })
+
+    def programador_aplicar_ahora(self, bloques: list) -> dict:
+        return self._pedir("programador_aplicar_ahora", {"bloques": bloques})
+
+    # ------------------------------------------------------------------
+    # Musicalizador remoto
+    # ------------------------------------------------------------------
+    def musicalizador_listar_formatos(self) -> list:
+        respuesta = self._pedir("musicalizador_listar_formatos")
+        if not respuesta.get("ok"):
+            raise ErrorControlRemoto(respuesta.get("error", "musicalizador_listar_formatos falló"))
+        return respuesta["datos"]["formatos"]
+
+    def musicalizador_obtener_formato(self, nombre: str) -> dict:
+        return self._pedir("musicalizador_obtener_formato", {"nombre": nombre})
+
+    def musicalizador_guardar_formato(self, nombre: str, items: list, forzar: bool = False) -> dict:
+        return self._pedir("musicalizador_guardar_formato", {"nombre": nombre, "items": items, "forzar": forzar})
+
+    def musicalizador_nuevo_formato(self, nombre: str) -> dict:
+        return self._pedir("musicalizador_nuevo_formato", {"nombre": nombre})
+
+    def musicalizador_eliminar_formato(self, nombre: str) -> dict:
+        return self._pedir("musicalizador_eliminar_formato", {"nombre": nombre})
+
+    def musicalizador_renombrar_formato(self, nombre_viejo: str, nombre_nuevo: str) -> dict:
+        return self._pedir("musicalizador_renombrar_formato", {
+            "nombre_viejo": nombre_viejo, "nombre_nuevo": nombre_nuevo,
+        })

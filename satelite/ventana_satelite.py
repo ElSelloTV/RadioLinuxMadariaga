@@ -5,11 +5,16 @@ Ventana principal de la app satélite (pedido explícito: "una app
 aparte satélite... pueda controlar el programa en ejecución por el
 usuario Radio... incluso subir algún archivo de audio al explorador").
 
-Alcance de esta primera ronda (confirmado con Santiago): control
-básico de transporte (Play/Stop/Cut de Ventana 1 y 2, con su estado
-Ahora/Luego) + subir un archivo de audio al Explorador con el mismo
-tipo de diálogo de categoría/género que ya usa la app real. Abrir el
-Programador/Musicalizador remoto queda para una ronda futura.
+Pedido explícito de reorganización (ronda posterior, "ordenemos"):
+- La configuración de conexión (host/puerto/token) ya NO está a la
+  vista -- vive en un diálogo aparte, disponible desde el menú
+  "Conexión" de arriba (`DialogoConfiguracionConexion`).
+- La carga de archivos es lo PRIMERO que se ve, arriba de todo.
+- "Poner y/o sacar el automático" vive en el menú "Opciones".
+- Dos botones nuevos, "📅 Programador" y "🎵 Musicalizador", abren
+  versiones remotas de esas ventanas (alcance MVP deliberado, ver los
+  docstrings de `dialogo_programador_remoto.py`/
+  `dialogo_musicalizador_remoto.py` y la nota en CLAUDE.md).
 
 Sin salida de audio — es lo único que queda afuera a propósito (pedido
 explícito: "sería un programa aparte satélite sin salida de audio").
@@ -22,59 +27,66 @@ import base64
 import os
 
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QLabel, QLineEdit,
-    QPushButton, QFileDialog, QMessageBox,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
+    QPushButton, QFileDialog, QMessageBox, QDialog,
 )
 from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QAction
 
 from satelite.cliente_control_remoto import ClienteControlRemoto, ErrorControlRemoto
 from satelite.config_satelite import cargar_config_satelite, guardar_config_satelite
+from satelite.dialogo_configuracion_conexion import DialogoConfiguracionConexion
+from satelite.dialogo_musicalizador_remoto import DialogoMusicalizadorRemoto
+from satelite.dialogo_programador_remoto import DialogoProgramadorRemoto
 from satelite.dialogo_subir_archivo import DialogoSubirArchivo
 
 INTERVALO_POLLING_MS = 3000
 
 
-class VentanaSatelite(QWidget):
+class VentanaSatelite(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Remoto Radio — control remoto de Auto-Radio Tuyú")
         self.setMinimumWidth(480)
         self._cliente = None
+        self._construir_menu()
         self._construir_ui()
-        self._cargar_configuracion_en_ui()
 
         self._timer_estado = QTimer(self)
         self._timer_estado.setInterval(INTERVALO_POLLING_MS)
         self._timer_estado.timeout.connect(self._actualizar_estado_transporte)
 
+        # Auto-conectar al abrir SI ya hay una conexión guardada de
+        # antes -- evita tener que ir al menú Conexión cada vez que se
+        # abre la app. Diferido para no demorar el primer render.
+        if cargar_config_satelite().get("token"):
+            QTimer.singleShot(0, self._conectar)
+
     # ------------------------------------------------------------------
+    def _construir_menu(self):
+        menu_conexion = self.menuBar().addMenu("Conexión")
+        accion_configurar = menu_conexion.addAction("⚙ Configurar conexión...")
+        accion_configurar.triggered.connect(self._abrir_configuracion_conexion)
+        accion_reconectar = menu_conexion.addAction("🔄 Reconectar")
+        accion_reconectar.triggered.connect(self._conectar)
+
+        menu_opciones = self.menuBar().addMenu("Opciones")
+        self._accion_automatico = QAction("🔁 Automático activo (Ventana 1)", self)
+        self._accion_automatico.setCheckable(True)
+        self._accion_automatico.triggered.connect(self._on_toggle_automatico_menu)
+        menu_opciones.addAction(self._accion_automatico)
+
     def _construir_ui(self):
-        layout = QVBoxLayout(self)
+        central = QWidget()
+        layout = QVBoxLayout(central)
 
-        grupo_conexion = QGroupBox("Conexión")
-        form_conexion = QFormLayout(grupo_conexion)
-        self.txt_host = QLineEdit()
-        self.spin_puerto = QLineEdit()
-        self.txt_token = QLineEdit()
-        self.txt_token.setEchoMode(QLineEdit.EchoMode.Password)
-        form_conexion.addRow("Host:", self.txt_host)
-        form_conexion.addRow("Puerto:", self.spin_puerto)
-        form_conexion.addRow("Token:", self.txt_token)
-        self.btn_conectar = QPushButton("🔌 Conectar")
-        self.btn_conectar.clicked.connect(self._conectar)
-        form_conexion.addRow(self.btn_conectar)
-        self.lbl_estado_conexion = QLabel("Sin conectar.")
+        self.lbl_estado_conexion = QLabel("Sin conectar -- configurala desde el menú \"Conexión\".")
         self.lbl_estado_conexion.setWordWrap(True)
-        form_conexion.addRow(self.lbl_estado_conexion)
-        layout.addWidget(grupo_conexion)
+        layout.addWidget(self.lbl_estado_conexion)
 
-        self.grupo_transporte = QGroupBox("Transporte")
-        layout_transporte = QVBoxLayout(self.grupo_transporte)
-        self._widgets_v1 = self._fila_transporte(layout_transporte, "Ventana 1 (Publicidad)", "v1")
-        self._widgets_v2 = self._fila_transporte(layout_transporte, "Ventana 2 (Emisión)", "v2")
-        self.grupo_transporte.setEnabled(False)
-        layout.addWidget(self.grupo_transporte)
-
+        # Pedido explícito: "que la carga de archivos sea lo primero
+        # arriba" -- es el grupo más usado en el flujo real (recibir
+        # un archivo por correo y subirlo), así que va primero.
         self.grupo_subir = QGroupBox("Subir archivo al Explorador")
         layout_subir = QVBoxLayout(self.grupo_subir)
         self.btn_elegir_archivo = QPushButton("📂 Elegir archivo y subir...")
@@ -83,10 +95,32 @@ class VentanaSatelite(QWidget):
         self.lbl_estado_subida = QLabel("")
         self.lbl_estado_subida.setWordWrap(True)
         layout_subir.addWidget(self.lbl_estado_subida)
-        self.grupo_subir.setEnabled(False)
         layout.addWidget(self.grupo_subir)
 
+        fila_remotas = QHBoxLayout()
+        self.btn_programador = QPushButton("📅 Programador")
+        self.btn_musicalizador = QPushButton("🎵 Musicalizador")
+        self.btn_programador.clicked.connect(self._abrir_programador_remoto)
+        self.btn_musicalizador.clicked.connect(self._abrir_musicalizador_remoto)
+        fila_remotas.addWidget(self.btn_programador)
+        fila_remotas.addWidget(self.btn_musicalizador)
+        layout.addLayout(fila_remotas)
+
+        self.grupo_transporte = QGroupBox("Transporte")
+        layout_transporte = QVBoxLayout(self.grupo_transporte)
+        self._widgets_v1 = self._fila_transporte(layout_transporte, "Ventana 1 (Publicidad)", "v1")
+        self._widgets_v2 = self._fila_transporte(layout_transporte, "Ventana 2 (Emisión)", "v2")
+        layout.addWidget(self.grupo_transporte)
+
         layout.addStretch()
+        self.setCentralWidget(central)
+        self._set_widgets_habilitados(False)
+
+    def _set_widgets_habilitados(self, activo: bool):
+        self.grupo_subir.setEnabled(activo)
+        self.grupo_transporte.setEnabled(activo)
+        self.btn_programador.setEnabled(activo)
+        self.btn_musicalizador.setEnabled(activo)
 
     def _fila_transporte(self, layout_padre, titulo: str, ventana: str) -> dict:
         grupo = QGroupBox(titulo)
@@ -131,35 +165,28 @@ class VentanaSatelite(QWidget):
         return {"lbl_ahora": lbl_ahora, "lbl_luego": lbl_luego}
 
     # ------------------------------------------------------------------
-    def _cargar_configuracion_en_ui(self):
-        config = cargar_config_satelite()
-        self.txt_host.setText(config["host"])
-        self.spin_puerto.setText(str(config["puerto"]))
-        self.txt_token.setText(config["token"])
-
-    def _guardar_configuracion_de_ui(self):
-        try:
-            puerto = int(self.spin_puerto.text().strip())
-        except ValueError:
-            puerto = 8765
-        guardar_config_satelite({
-            "host": self.txt_host.text().strip() or "127.0.0.1",
-            "puerto": puerto,
-            "token": self.txt_token.text().strip(),
-        })
-
+    # Conexión
     # ------------------------------------------------------------------
-    def _conectar(self):
-        self._guardar_configuracion_de_ui()
+    def _abrir_configuracion_conexion(self):
         config = cargar_config_satelite()
+        dialogo = DialogoConfiguracionConexion(config["host"], config["puerto"], config["token"], parent=self)
+        if dialogo.exec() != QDialog.DialogCode.Accepted:
+            return
+        guardar_config_satelite(dialogo.resultado())
+        self._conectar()
+
+    def _conectar(self):
+        config = cargar_config_satelite()
+        if not config.get("token"):
+            self.lbl_estado_conexion.setText("⚠ Configurá la conexión primero (menú \"Conexión\").")
+            return
         self._cliente = ClienteControlRemoto(config["host"], config["puerto"], config["token"])
         try:
             respuesta = self._cliente.ping()
         except ErrorControlRemoto as error:
             self._cliente = None
             self.lbl_estado_conexion.setText(f"⚠ {error}")
-            self.grupo_transporte.setEnabled(False)
-            self.grupo_subir.setEnabled(False)
+            self._set_widgets_habilitados(False)
             self._timer_estado.stop()
             return
 
@@ -168,17 +195,17 @@ class VentanaSatelite(QWidget):
             self.lbl_estado_conexion.setText(
                 "⚠ El servidor respondió pero rechazó el pedido -- revisá el token."
             )
-            self.grupo_transporte.setEnabled(False)
-            self.grupo_subir.setEnabled(False)
+            self._set_widgets_habilitados(False)
             self._timer_estado.stop()
             return
 
-        self.lbl_estado_conexion.setText("✅ Conectado.")
-        self.grupo_transporte.setEnabled(True)
-        self.grupo_subir.setEnabled(True)
+        self.lbl_estado_conexion.setText(f"✅ Conectado a {config['host']}:{config['puerto']}.")
+        self._set_widgets_habilitados(True)
         self._actualizar_estado_transporte()
         self._timer_estado.start()
 
+    # ------------------------------------------------------------------
+    # Transporte + Automático
     # ------------------------------------------------------------------
     def _actualizar_estado_transporte(self):
         if self._cliente is None:
@@ -188,8 +215,7 @@ class VentanaSatelite(QWidget):
         except ErrorControlRemoto as error:
             self.lbl_estado_conexion.setText(f"⚠ Se perdió la conexión: {error}")
             self._timer_estado.stop()
-            self.grupo_transporte.setEnabled(False)
-            self.grupo_subir.setEnabled(False)
+            self._set_widgets_habilitados(False)
             return
 
         v1 = estado.get("v1", {})
@@ -198,6 +224,9 @@ class VentanaSatelite(QWidget):
         if v1.get("automatico_activo"):
             etiqueta_luego_v1 += "   (AUTOMÁTICO activo)"
         self._widgets_v1["lbl_luego"].setText(etiqueta_luego_v1)
+        # setChecked() no emite `triggered` -- sincronizar acá nunca
+        # dispara el pedido de confirmación por su cuenta.
+        self._accion_automatico.setChecked(bool(v1.get("automatico_activo")))
 
         v2 = estado.get("v2", {})
         self._widgets_v2["lbl_ahora"].setText(f"Ahora: {v2.get('ahora') or '—'}")
@@ -219,6 +248,52 @@ class VentanaSatelite(QWidget):
             return
         self._actualizar_estado_transporte()
 
+    def _on_toggle_automatico_menu(self, activar: bool):
+        """Pedido explícito: "poner y/o sacar el automático" desde las
+        opciones. Mismo criterio de confirmación que la app principal
+        (ronda 54) -- PERO la confirmación se pide ACÁ, del lado
+        satélite, nunca del lado servidor (un QMessageBox ahí sería
+        MODAL y congelaría el proceso principal esperando un click que
+        nadie puede dar remoto)."""
+        if self._cliente is None:
+            self._accion_automatico.setChecked(not activar)
+            return
+        texto = "ACTIVAR" if activar else "DESACTIVAR"
+        respuesta = QMessageBox.question(
+            self, "Automático",
+            f"¿Confirmás que querés {texto} el modo AUTOMÁTICO de Ventana 1?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            self._accion_automatico.setChecked(not activar)
+            return
+        try:
+            r = self._cliente.alternar_automatico(activar)
+        except ErrorControlRemoto as error:
+            QMessageBox.warning(self, "Control remoto", str(error))
+            self._accion_automatico.setChecked(not activar)
+            return
+        if not r.get("ok"):
+            QMessageBox.warning(self, "Control remoto", r.get("error", "No se pudo cambiar."))
+            self._accion_automatico.setChecked(not activar)
+            return
+        self._actualizar_estado_transporte()
+
+    # ------------------------------------------------------------------
+    # Programador / Musicalizador remotos
+    # ------------------------------------------------------------------
+    def _abrir_programador_remoto(self):
+        if self._cliente is None:
+            return
+        DialogoProgramadorRemoto(self._cliente, parent=self).exec()
+
+    def _abrir_musicalizador_remoto(self):
+        if self._cliente is None:
+            return
+        DialogoMusicalizadorRemoto(self._cliente, parent=self).exec()
+
+    # ------------------------------------------------------------------
+    # Subir archivo
     # ------------------------------------------------------------------
     def _elegir_y_subir_archivo(self):
         if self._cliente is None:

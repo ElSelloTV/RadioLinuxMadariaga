@@ -43,11 +43,15 @@ from core.gestor_emision import GestorPlaylist
 from core.audio_engine import obtener_duracion_formateada
 from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
 from core.servidor_control_remoto import ServidorControlRemoto
+from core.musicalizador import validar_formato
 from config.settings import (
     cargar_configuracion, registrar_evento, registrar_error, guardar_configuracion,
     guardar_lista_auxiliar, listar_listas_auxiliares,
     obtener_lista_auxiliar, eliminar_lista_auxiliar,
     rutas_recientes_en_historial,
+    listar_programaciones, obtener_programacion, guardar_programacion,
+    cargar_musicalizador, listar_formatos, obtener_formato,
+    guardar_formato, eliminar_formato, renombrar_formato,
 )
 
 
@@ -934,7 +938,168 @@ class MainWindow(QMainWindow):
             return self._accion_transporte_remota(params.get("ventana", ""), params.get("accion", ""))
         if accion == "importar_archivo":
             return self._importar_archivo_remoto(params)
+        if accion == "alternar_automatico":
+            return self._alternar_automatico_remoto(bool(params.get("activar")))
+        if accion == "listar_registros_categoria":
+            return self._listar_registros_categoria_remoto(params)
+        if accion == "programador_listar_guardadas":
+            return self._programador_listar_guardadas_remoto()
+        if accion == "programador_cargar_guardada":
+            return self._programador_cargar_guardada_remoto(params)
+        if accion == "programador_bloques_actuales":
+            return {"ok": True, "datos": {"bloques": self.ventana_publicidad.serializar_bloques_actuales()}}
+        if accion == "programador_guardar":
+            return self._programador_guardar_remoto(params)
+        if accion == "programador_aplicar_ahora":
+            return self._programador_aplicar_ahora_remoto(params)
+        if accion == "musicalizador_listar_formatos":
+            return {"ok": True, "datos": {"formatos": listar_formatos()}}
+        if accion == "musicalizador_obtener_formato":
+            return self._musicalizador_obtener_formato_remoto(params)
+        if accion == "musicalizador_guardar_formato":
+            return self._musicalizador_guardar_formato_remoto(params)
+        if accion == "musicalizador_nuevo_formato":
+            return self._musicalizador_nuevo_formato_remoto(params)
+        if accion == "musicalizador_eliminar_formato":
+            return self._musicalizador_eliminar_formato_remoto(params)
+        if accion == "musicalizador_renombrar_formato":
+            return self._musicalizador_renombrar_formato_remoto(params)
         return {"ok": False, "error": f"Acción desconocida: {accion}"}
+
+    def _alternar_automatico_remoto(self, activar: bool) -> dict:
+        """Prende/apaga el Automático de Ventana 1 -- mismo mecanismo
+        que YA usa el arranque de la app y el botón Stop de V1 (ronda
+        108) para cambiar el modo SIN pasar por el diálogo de
+        confirmación Sí/No de `_on_click_automatico()` (ese diálogo,
+        si se disparara acá, sería un QMessageBox MODAL congelando el
+        proceso principal esperando un click que nadie puede dar del
+        otro lado del socket). La confirmación, si hace falta, la pide
+        la propia app satélite ANTES de mandar este pedido."""
+        v1 = self.ventana_publicidad
+        if v1.esta_en_automatico() == activar:
+            return {"ok": True, "datos": {"automatico_activo": activar}}
+        v1.btn_automatico.setChecked(activar)
+        v1._toggle_automatico()
+        registrar_evento(f"Control remoto: Automático de V1 {'activado' if activar else 'desactivado'} de forma remota")
+        return {"ok": True, "datos": {"automatico_activo": v1.esta_en_automatico()}}
+
+    def _listar_registros_categoria_remoto(self, params: dict) -> dict:
+        categoria_ruta = params.get("categoria_ruta") or []
+        recursivo = bool(params.get("recursivo", False))
+        item_categoria = self.ventana_explorador.buscar_categoria_por_ruta(categoria_ruta)
+        if item_categoria is None:
+            return {"ok": False, "error": f"No se encontró la categoría {categoria_ruta!r}."}
+        registros = self.ventana_explorador.listar_registros_de_categoria(item_categoria, recursivo)
+        datos = [
+            {
+                "codigo": r.get("codigo", ""), "titulo": r.get("titulo", ""),
+                "duracion": r.get("duracion", ""), "ruta": r.get("ruta", ""),
+            }
+            for r in registros
+        ]
+        return {"ok": True, "datos": {"registros": datos}}
+
+    # ------------------------------------------------------------------
+    # Programador remoto (pedido explícito: "que pueda mediante otro
+    # botón, programar, igual que en el programa principal") -- MVP
+    # deliberado (documentado en CLAUDE.md): cubre el flujo central
+    # (cargar/armar/guardar/aplicar) reusando los MISMOS métodos que
+    # ya usa VentanaProgramador/config.settings -- quedan afuera de
+    # esta ronda el drag&drop de reordenar, copiar/pegar y "duplicar
+    # para otro día", que sí tiene la versión local.
+    # ------------------------------------------------------------------
+    def _programador_listar_guardadas_remoto(self) -> dict:
+        datos = [
+            {"tipo": tipo, "clave": clave, "nombre": nombre}
+            for tipo, clave, nombre in listar_programaciones()
+        ]
+        return {"ok": True, "datos": {"programaciones": datos}}
+
+    def _programador_cargar_guardada_remoto(self, params: dict) -> dict:
+        tipo = params.get("tipo", "")
+        clave = params.get("clave", "")
+        contenido = obtener_programacion(tipo, clave)
+        if contenido is None:
+            return {"ok": False, "error": "No se encontró esa programación guardada."}
+        return {"ok": True, "datos": {"nombre": contenido.get("nombre", ""), "bloques": contenido.get("bloques", [])}}
+
+    def _programador_guardar_remoto(self, params: dict) -> dict:
+        nombre = (params.get("nombre") or "").strip()
+        bloques = params.get("bloques") or []
+        dias_semana = params.get("dias_semana") or []
+        fecha_especifica = params.get("fecha_especifica") or None
+        if not nombre:
+            return {"ok": False, "error": "Falta el nombre de la programación."}
+        if not dias_semana and not fecha_especifica:
+            return {"ok": False, "error": "Elegí al menos un día de la semana o una fecha específica."}
+        guardar_programacion(nombre, bloques, dias_semana=dias_semana, fecha_especifica=fecha_especifica)
+        registrar_evento(f"Control remoto: programación \"{nombre}\" guardada de forma remota")
+        return {"ok": True}
+
+    def _programador_aplicar_ahora_remoto(self, params: dict) -> dict:
+        bloques = params.get("bloques") or []
+        self._aplicar_programacion_ahora(bloques)
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Musicalizador remoto (pedido explícito: "que pueda mediante otro
+    # botón, musicalizar, igual que en el programa principal") -- MVP
+    # deliberado, mismo criterio que el Programador remoto de arriba:
+    # cubre crear/editar/guardar formatos con ítems Específico/
+    # Aleatorio/Subformato, sin Pisador (queda para una ronda futura
+    # si hace falta).
+    # ------------------------------------------------------------------
+    def _musicalizador_obtener_formato_remoto(self, params: dict) -> dict:
+        nombre = params.get("nombre") or ""
+        formato = obtener_formato(nombre)
+        if formato is None:
+            return {"ok": False, "error": f"No se encontró el formato '{nombre}'."}
+        return {"ok": True, "datos": {"items": formato.get("items", [])}}
+
+    def _musicalizador_guardar_formato_remoto(self, params: dict) -> dict:
+        nombre = (params.get("nombre") or "").strip()
+        items = params.get("items") or []
+        forzar = bool(params.get("forzar"))
+        if not nombre:
+            return {"ok": False, "error": "Falta el nombre del formato."}
+        todos_los_formatos = cargar_musicalizador()["formatos"]
+        problemas = validar_formato(self.ventana_explorador, nombre, items, todos_los_formatos)
+        bloqueantes = [p for p in problemas if p["bloquea"]]
+        if bloqueantes:
+            return {"ok": False, "error": "No se puede guardar: " + " / ".join(p["mensaje"] for p in bloqueantes)}
+        avisos = [p for p in problemas if not p["bloquea"]]
+        if avisos and not forzar:
+            return {
+                "ok": False, "requiere_confirmacion": True,
+                "avisos": [p["mensaje"] for p in avisos],
+            }
+        guardar_formato(nombre, items)
+        registrar_evento(f"Control remoto: formato del Musicalizador \"{nombre}\" guardado de forma remota")
+        return {"ok": True}
+
+    def _musicalizador_nuevo_formato_remoto(self, params: dict) -> dict:
+        nombre = (params.get("nombre") or "").strip()
+        if not nombre:
+            return {"ok": False, "error": "Falta el nombre del formato."}
+        if obtener_formato(nombre) is not None:
+            return {"ok": False, "error": f"Ya existe un formato llamado '{nombre}'."}
+        guardar_formato(nombre, [])
+        return {"ok": True}
+
+    def _musicalizador_eliminar_formato_remoto(self, params: dict) -> dict:
+        nombre = params.get("nombre") or ""
+        eliminar_formato(nombre)
+        registrar_evento(f"Control remoto: formato del Musicalizador \"{nombre}\" eliminado de forma remota")
+        return {"ok": True}
+
+    def _musicalizador_renombrar_formato_remoto(self, params: dict) -> dict:
+        nombre_viejo = params.get("nombre_viejo") or ""
+        nombre_nuevo = (params.get("nombre_nuevo") or "").strip()
+        if not nombre_nuevo:
+            return {"ok": False, "error": "Falta el nombre nuevo."}
+        if not renombrar_formato(nombre_viejo, nombre_nuevo):
+            return {"ok": False, "error": f"Ya existe un formato llamado '{nombre_nuevo}'."}
+        return {"ok": True}
 
     def _estado_transporte_remoto(self) -> dict:
         v1 = self.ventana_publicidad

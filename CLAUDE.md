@@ -11513,6 +11513,177 @@ soltó de una vez.
     bien — y (3) que los botones Stop/Cut se ven cuadrados y parejos,
     sin estirarse.
 
+118. ~~Reorganización de la app satélite + Programador y
+    Musicalizador remotos~~ — pedido explícito: "ahora ordenemos.
+    Que la configuración no esté a la vista, sino dentro de un menu
+    interno, disponible mediante un menu arriba. Que la carga de
+    archivos sea lo primero arriba. Que dentro de las opciones, esté,
+    poner y/o sacar el automático. Que pueda mediante otro botón,
+    programar (igual que en el programa principal). Que pueda
+    mediante otro boton, musicalizar (igual que en el programa
+    principal). Ordenalo, que sea intuitivo y funcional."
+
+    **a) Reorganización de la ventana principal**: `VentanaSatelite`
+    pasó de `QWidget` a `QMainWindow` para tener un `QMenuBar` real —
+    menú **"Conexión"** ("⚙ Configurar conexión..." abre
+    `DialogoConfiguracionConexion`, nuevo — host/puerto/token, antes
+    siempre visibles arriba, ahora SOLO ahí; + "🔄 Reconectar") y menú
+    **"Opciones"** (acción checkeable "🔁 Automático activo (Ventana
+    1)"). La ventana arranca auto-conectando sola (diferido,
+    `QTimer.singleShot(0, ...)`) si ya hay una conexión guardada de
+    una sesión anterior — no hace falta ir al menú cada vez que se
+    abre. El primer grupo visible del contenido es **"Subir archivo al
+    Explorador"** (pedido explícito, "lo primero arriba"), seguido de
+    la fila nueva de botones "📅 Programador" / "🎵 Musicalizador", y
+    recién después "Transporte" — los 4 quedan deshabilitados juntos
+    hasta conectar (`_set_widgets_habilitados()`, nuevo, reemplaza el
+    habilitar/deshabilitar de a dos grupos sueltos que había antes).
+
+    **b) Automático desde "Opciones"**: nueva acción remota
+    `alternar_automatico` (`MainWindow._alternar_automatico_remoto()`)
+    — prende/apaga `ventana_publicidad.btn_automatico` llamando
+    `_toggle_automatico()` DIRECTO, nunca `_on_click_automatico()`
+    (que muestra un `QMessageBox` de confirmación MODAL — si se
+    disparara del lado servidor, congelaría el proceso principal
+    esperando un click que nadie puede dar del otro lado del socket,
+    mismo riesgo ya documentado para el Stop de V2 bloqueado en la
+    ronda 112). La confirmación Sí/No equivalente la pide la propia
+    app satélite ANTES de mandar el pedido
+    (`VentanaSatelite._on_toggle_automatico_menu()`) — si el operador
+    cancela, el checkbox del menú se revierte a mano (`setChecked()`
+    no dispara `triggered`, así que revertir nunca reabre el diálogo
+    de confirmación en bucle). El polling de estado
+    (`_actualizar_estado_transporte`, cada 3s) sincroniza el check del
+    menú con el estado REAL de V1 por el mismo camino, sin disparar
+    ninguna confirmación de más.
+
+    **c) Programador y Musicalizador remotos — alcance MVP deliberado
+    (no preguntado explícitamente, documentado acá)**: "igual que en
+    el programa principal" se interpretó como "cubrir el flujo
+    CENTRAL de cada ventana" (cargar un punto de partida, armar
+    bloques/ítems o formatos/ítems, guardar, aplicar), reusando SIEMPRE
+    las MISMAS funciones de persistencia que ya usa la app principal
+    (nunca un camino paralelo) — en vez de replicar 1:1 CADA función
+    de las versiones locales, que tienen muchísimos más años de rondas
+    encima (drag&drop de reordenar, copiar/pegar entre bloques,
+    duplicar programación para otro día, Pisador en los ítems del
+    Musicalizador). Esas quedan explícitamente FUERA de esta ronda —
+    si Santiago las necesita remotas, son extensiones acotadas sobre
+    la misma base ya construida acá, no un rediseño.
+    - **Servidor** (`gui/main_window.py`, nuevas acciones en
+      `_manejar_comando_remoto`): `listar_registros_categoria`
+      (archivos de una categoría, para elegir uno — reusa
+      `VentanaExplorador.listar_registros_de_categoria()`);
+      `programador_listar_guardadas`/`programador_cargar_guardada`/
+      `programador_guardar`/`programador_aplicar_ahora` (delegan
+      directo en `config.settings.listar_programaciones()`/
+      `obtener_programacion()`/`guardar_programacion()`/
+      `MainWindow._aplicar_programacion_ahora()`, ESTA ÚLTIMA
+      reusada tal cual, sin duplicar nada — la confirmación de "puede
+      cortar lo que esté sonando" la pide la app satélite antes de
+      mandar el pedido, mismo patrón que el punto b);
+      `programador_bloques_actuales` (nuevo método
+      `VentanaPublicidad.serializar_bloques_actuales()`, espejo de
+      `_serializar_bloques()` del Programador local pero leyendo el
+      árbol de Ventana 1 EN VIVO — "cargar el actual" como punto de
+      partida, sin depender de que haya algo guardado); 6 acciones
+      `musicalizador_*` (listar/obtener/guardar/nuevo/eliminar/
+      renombrar, delegan en `config.settings`/`core.musicalizador.
+      validar_formato()` — el guardado remoto replica EXACTO el flujo
+      local de `_guardar_formato_actual()`: bloqueantes rechazan
+      directo, avisos no bloqueantes devuelven
+      `requiere_confirmacion` + la lista de avisos, y la satélite
+      re-manda el guardado con `forzar=True` si el operador confirma).
+    - **Cliente** (`satelite/cliente_control_remoto.py`): un método
+      por acción nueva, mismo criterio ya establecido (getters que
+      solo LEEN devuelven los datos ya desenvueltos y tiran
+      `ErrorControlRemoto` si `ok=False`; acciones que ESCRIBEN
+      devuelven el dict crudo para que el llamador pueda mostrar
+      `error`/`requiere_confirmacion`/`avisos`).
+    - **`satelite/dialogo_programador_remoto.py`** (nuevo): el
+      estado real vive en `self._bloques` (lista de dicts, MISMO
+      formato que ya usa `cargar_bloques()`/`programacion.json`) — el
+      árbol visual se reconstruye ENTERO desde ahí después de cada
+      cambio ("redraw from model", más simple y robusto que
+      sincronizar un árbol Qt a mano contra el modelo). Botones:
+      Cargar guardada.../Cargar el actual (Ventana 1)/Nueva (vacía),
+      ＋ Bloque horario.../➕ Agregar ítem.../✕ Quitar seleccionado,
+      💾 Guardar.../▶ Aplicar AHORA en Ventana 1 (con confirmación).
+      "Agregar ítem" abre `dialogo_elegir_registro_biblioteca.py`
+      (nuevo, compartido también por el Musicalizador remoto) —
+      combo de categoría indentado (mismo patrón que
+      `DialogoSubirArchivo`, factorizado a `satelite/utilidades.py`)
+      + checkbox "incluir subcategorías" + lista de archivos,
+      refrescada por RPC (`listar_registros_categoria`) cada vez que
+      cambia la categoría.
+    - **`satelite/dialogo_musicalizador_remoto.py`** (nuevo): columna
+      izquierda con los formatos (＋ Nuevo/✏ Renombrar/✕ Eliminar),
+      columna derecha con los ítems del formato seleccionado (texto
+      resumen por tipo — Específico/Aleatorio/Subformato — más
+      simple que las 4 columnas Clase/Título/Tipo/Pisador de la
+      versión local) + ➕ Añadir ítem.../✕ Quitar ítem/💾 Guardar
+      formato. `dialogo_item_musicalizador_remoto.py` (nuevo) arma UN
+      ítem con los mismos 3 tipos del motor real
+      (`core/musicalizador.py`) — Específico usa el mismo picker de
+      biblioteca; Aleatorio, categoría + checkbox recursivo;
+      Subformato, combo de otros formatos (sin el actual) + minutos —
+      sin Pisador en esta ronda (documentado como deferred arriba).
+      `dialogo_bloque_horario.py`/`dialogo_guardar_programacion.py`
+      (nuevos, chicos): alta de un bloque (hora vía `QTimeEdit` +
+      título) y guardado de programación (nombre + checkboxes de
+      días de semana + fecha específica opcional vía `QDateEdit`).
+
+    Probado en 3 capas (mismo criterio de siempre: nunca confiar en
+    una sola forma de probar algo tan grande): (1)
+    `test_servidor_prog_music.py` — las 13 acciones nuevas llamadas
+    DIRECTO sobre `mw._manejar_comando_remoto()` (sin red, sin
+    threading) contra una `MainWindow` real con categorías/archivos
+    reales: alternar automático (y que pedir el mismo estado de nuevo
+    es un no-op seguro), listar registros de una categoría real,
+    guardar/listar/cargar/aplicar-ahora una programación completa
+    (confirmado que `programador_bloques_actuales` refleja lo recién
+    aplicado, cerrando el círculo), y el ciclo completo del
+    Musicalizador (crear, guardar con y sin avisos —
+    `forzar`—, ciclo de subformatos BLOQUEADO incluso con
+    `forzar=True`, renombrar, eliminar); (2)
+    `test_ventana_satelite_reorg.py` — los 2 diálogos principales
+    (Programador/Musicalizador remotos) y el diálogo de ítem,
+    ejercitados con un `ClienteFalso` en memoria (sin red, sin
+    servidor real — evita por completo la clase de deadlock ya
+    documentada de mezclar un socket bloqueante con el hilo que tiene
+    que correr el event loop de Qt) y las sub-ventanas parcheadas por
+    CLASE (no por instancia, patrón ya establecido en este proyecto
+    para simular un `.exec()` sin bloquear): agregar/quitar bloques e
+    ítems, guardar, cargar guardada, cargar el actual, aplicar ahora
+    (confirmado Y cancelado), los 3 tipos de ítem del Musicalizador,
+    crear/renombrar/eliminar formato; (3)
+    `test_ventana_satelite_menu.py` — la reorganización de
+    `VentanaSatelite` en sí (menú con Conexión/Opciones, sin campos
+    de conexión sueltos, Subir archivo como primer grupo, existen los
+    botones Programador/Musicalizador) más el flujo de Automático
+    desde el menú (confirmado, cancelado, sincronizado por polling
+    sin reabrir el diálogo); (4) `test_socket_real_prog_music.py` —
+    una pasada de humo con un SOCKET REAL (mismo patrón
+    `threading.Thread` + `app.processEvents()` de la ronda 112) para
+    3 acciones representativas, cerrando el círculo de que el
+    protocolo de verdad funciona para las acciones nuevas, no solo el
+    despacho en memoria — + regresión completa de
+    `test_control_remoto.py`/`test_config_control_remoto.py`/
+    `test_satelite_ronda3.py` sin fallos nuevos + `py_compile`
+    completo + smoke test de arranque de `satelite_main.py` sin
+    traceback + capturas reales (offscreen) de la ventana principal
+    reorganizada, el Programador remoto y el Musicalizador remoto.
+    **Sigue sin poder confirmarse con Chrome Remote Desktop real, dos
+    sesiones de usuario Linux reales, ni el uso genuino de un
+    operador**: falta que Santiago (1) confirme que el menú de arriba
+    se siente intuitivo y que no extraña los campos de conexión
+    sueltos, (2) pruebe armar y aplicar una programación real desde
+    la satélite, (3) pruebe crear y guardar un formato del
+    Musicalizador real desde la satélite, y (4) avise qué funciones
+    de las que quedaron afuera (reordenar, copiar/pegar, duplicar
+    para otro día, Pisador remoto) extraña de verdad en el uso diario
+    — para priorizarlas en una ronda futura en vez de adivinar.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
