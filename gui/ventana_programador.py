@@ -61,6 +61,28 @@ específica == hoy, o el día de semana de hoy está entre los
 tildados), `_guardar()` ofrece de una la MISMA acción que
 "▶ Aplicar Ahora" — ver `_corresponde_a_hoy()`. Sigue pidiendo
 confirmación (puede cortar el aire), nunca se aplica en silencio.
+
+Layout (pedido explícito: "la lista de ítem a la izquierda más
+larga... todo lo que está por ahora abajo, lo vamos a poner a la
+derecha, ordenado y distinguible"): el árbol de bloques/ítems vive
+SOLO a la izquierda, con la mayor parte del ancho de la ventana
+(stretch alto) y fondo casi negro fijo (`tree_programador` en
+`gui/styles.py` — mismo tono ya usado en Ventana 1/2/Auxiliar); TODOS
+los controles (los 3 grupos de siempre: Programación guardada / la
+fila de armar bloque + ítem seleccionado + insertar especial /
+Guardar) pasan a una columna angosta a la derecha, cada uno en su
+propio `QGroupBox` (el borde+título de cada caja ya da la separación
+"ordenado y distinguible" sin necesitar más colores), envuelta en un
+`QScrollArea` por si no entra entera en una pantalla más chica.
+
+Al CARGAR una programación existente (pedido explícito, dos puntos):
+(a) se tildan TODOS los días de semana que esa programación afecta,
+no solo el día puntual elegido en el picker — ver
+`config/settings.py:dias_que_comparten_contenido()`; (b) cada ítem
+cuyo archivo YA NO está en la biblioteca (borrado el registro, o el
+archivo físico ya no existe) queda marcado con la X roja de siempre
+(`icono_error()`, mismo ícono que Ventana 1/2 para "archivo no
+encontrado") — ver `_marcar_si_falta_en_biblioteca()`.
 --------------------------------------------------------
 """
 
@@ -68,9 +90,9 @@ import os
 from datetime import date
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QTreeWidgetItem,
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QTreeWidgetItem,
     QPushButton, QLabel, QCheckBox, QDateEdit, QTimeEdit, QLineEdit,
-    QMessageBox, QAbstractItemView, QMenu, QToolButton,
+    QMessageBox, QAbstractItemView, QMenu, QToolButton, QScrollArea, QWidget, QHeaderView,
 )
 from PySide6.QtCore import Qt, QDate, QTime, Signal
 from PySide6.QtGui import QBrush, QColor
@@ -78,7 +100,7 @@ from PySide6.QtGui import QBrush, QColor
 from gui.common_widgets import ArbolProgramadorConDrop
 from gui.styles import (
     ROL_ANALISIS_AUDIO, ROL_VIGENCIA, ROL_ES_COMANDO, ROL_TIPO_COMANDO, ROL_PARAMETRO_COMANDO, COLOR_COMANDO,
-    ROL_ES_ALEATORIO, ROL_CATEGORIA_ALEATORIO, ROL_RECURSIVO_ALEATORIO, COLOR_ALEATORIO,
+    ROL_ES_ALEATORIO, ROL_CATEGORIA_ALEATORIO, ROL_RECURSIVO_ALEATORIO, COLOR_ALEATORIO, icono_error,
 )
 from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
 from gui.dialogo_editar_bloque import DialogoEditarBloque
@@ -92,6 +114,7 @@ from core.audio_engine import obtener_duracion_formateada, MotorAudio
 from config.settings import (
     guardar_programacion, listar_programaciones, obtener_programacion, eliminar_programacion,
     titulo_bloque_sin_prefijo_hora, DIAS_SEMANA_ETIQUETAS, NOMBRES_DIAS_SEMANA, cargar_configuracion,
+    dias_que_comparten_contenido,
 )
 
 DIAS_SEMANA = DIAS_SEMANA_ETIQUETAS
@@ -116,7 +139,10 @@ class VentanaProgramador(QDialog):
     def __init__(self, parent=None, ventana_explorador=None):
         super().__init__(parent)
         self.setWindowTitle("Programador de emisión")
-        self.setMinimumSize(780, 620)
+        # Layout árbol-a-la-izquierda / controles-a-la-derecha (pedido
+        # explícito) necesita más ANCHO que el layout apilado de antes
+        # (que necesitaba más alto) — ver _construir_ui().
+        self.setMinimumSize(980, 560)
         self.setWindowModality(Qt.WindowModality.NonModal)
         # Bug real corregido — "no maximiza ni minimiza": un QDialog NO
         # pide esos botones de la barra de título por defecto (a
@@ -153,15 +179,65 @@ class VentanaProgramador(QDialog):
     # ------------------------------------------------------------------
     def _construir_ui(self):
         layout = QVBoxLayout(self)
+        fila_principal = QHBoxLayout()
+        layout.addLayout(fila_principal, 1)
 
         # ============================================================
-        # Grupo 1: LA PROGRAMACIÓN GUARDADA (nivel "archivo completo")
-        # Rediseño: las 5 acciones de "archivo" quedan agrupadas
-        # detrás de un solo botón desplegable — "▶ Aplicar Ahora"
-        # queda como la única acción realmente destacada del grupo.
+        # IZQUIERDA: el árbol de bloques/ítems — pedido explícito, "la
+        # lista de ítem a la izquierda más larga, para eso le vamos a
+        # dar espacio" — ocupa la mayor parte del ancho (stretch 3
+        # contra 1 de la columna de controles) y usa el mismo fondo
+        # casi negro fijo ya establecido en Ventana 1/2/Auxiliar
+        # ("utilizá también una paleta con negros y grises",
+        # `tree_programador` en gui/styles.py).
         # ============================================================
+        panel_izquierdo = QVBoxLayout()
+        panel_izquierdo.addWidget(QLabel("Bloques horarios e ítems:"))
+
+        self.tree = ArbolProgramadorConDrop()
+        self.tree.setObjectName("tree_programador")
+        self.tree.setColumnCount(3)
+        self.tree.setHeaderLabels(["Título", "Duración", "Código"])
+        # "Título" (la columna que de verdad necesita espacio) en modo
+        # Stretch — a diferencia del resto de los árboles de la app,
+        # que estiran su ÚLTIMA columna (configurar_columnas_ajustables),
+        # acá lo importante es leer el título completo, no el código
+        # correlativo. "Duración"/"Código" quedan angostas pero
+        # redimensionables a mano.
+        cabecera = self.tree.header()
+        cabecera.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        cabecera.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        cabecera.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.tree.setColumnWidth(1, 90)
+        self.tree.setColumnWidth(2, 80)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree.archivo_soltado.connect(self._on_archivo_soltado)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._mostrar_menu_contextual)
+        # Cambiar de selección corta cualquier pre-escucha en curso —
+        # mismo criterio que el ▶ Previo de Ventana 3.
+        self.tree.itemSelectionChanged.connect(self._detener_previo)
+        panel_izquierdo.addWidget(self.tree, 1)
+
+        fila_principal.addLayout(panel_izquierdo, 3)
+
+        # ============================================================
+        # DERECHA: "todo lo que estaba por ahora abajo, lo vamos a
+        # poner a la derecha, ordenado y distinguible" — los mismos 3
+        # niveles de acción de siempre, cada uno en su propio
+        # QGroupBox (el borde + título de cada caja ya da la
+        # separación visual pedida, sin necesitar más colores) — una
+        # columna angosta, envuelta en QScrollArea por si no entra
+        # entera en una pantalla más baja (mismo patrón ya usado en
+        # Configuración → Diagnóstico).
+        # ============================================================
+        contenido_derecho = QWidget()
+        panel_derecho = QVBoxLayout(contenido_derecho)
+        panel_derecho.setContentsMargins(0, 0, 0, 0)
+
+        # ---- Programación guardada (archivo completo) --------------
         grupo_prog = QGroupBox("PROGRAMACIÓN GUARDADA")
-        fila_prog = QHBoxLayout(grupo_prog)
+        layout_prog = QVBoxLayout(grupo_prog)
 
         self.boton_archivo = QToolButton()
         self.boton_archivo.setText("📁 Programación")
@@ -184,9 +260,7 @@ class VentanaProgramador(QDialog):
         self.accion_duplicar.setToolTip("Guarda una copia de lo cargado acá bajo un nombre y día/fecha nuevos.")
         self.accion_duplicar.triggered.connect(self._duplicar_programacion)
         self.boton_archivo.setMenu(self.menu_archivo)
-        fila_prog.addWidget(self.boton_archivo)
-
-        fila_prog.addStretch()
+        layout_prog.addWidget(self.boton_archivo)
 
         self.btn_aplicar_ahora = QPushButton("▶ Aplicar Ahora en Ventana 1")
         self.btn_aplicar_ahora.setObjectName("btnStop")
@@ -196,48 +270,26 @@ class VentanaProgramador(QDialog):
             "Puede cortar lo que esté sonando."
         )
         self.btn_aplicar_ahora.clicked.connect(self._aplicar_ahora)
-        fila_prog.addWidget(self.btn_aplicar_ahora)
+        layout_prog.addWidget(self.btn_aplicar_ahora)
 
-        layout.addWidget(grupo_prog)
+        panel_derecho.addWidget(grupo_prog)
 
-        # ============================================================
-        # Grupo 2: BLOQUES HORARIOS Y SUS ÍTEMS (nivel estructura)
-        # Rediseño: cada fila de botones lleva su propio subtítulo
-        # (estilo atenuado, mismo que la nota de abajo) para separar
-        # visualmente "esto arma un bloque" / "esto actúa sobre lo
-        # seleccionado" / "esto inserta algo especial (no un archivo)".
-        # ============================================================
-        grupo = QGroupBox("BLOQUES HORARIOS Y SUS ÍTEMS")
-        layout_grupo = QVBoxLayout(grupo)
-
-        layout_grupo.addWidget(self._crear_subtitulo("Nuevo bloque horario:"))
-        barra_bloque = QHBoxLayout()
+        # ---- Nuevo bloque horario -----------------------------------
+        grupo_bloque = QGroupBox("NUEVO BLOQUE HORARIO")
+        layout_bloque = QVBoxLayout(grupo_bloque)
         self.time_nuevo_bloque = QTimeEdit(QTime.currentTime())
         self.txt_titulo_bloque = QLineEdit()
         self.txt_titulo_bloque.setPlaceholderText("Título del bloque (ej. Bloque Mediodía)")
         self.btn_agregar_bloque = QPushButton("＋ Añadir Bloque Horario")
         self.btn_agregar_bloque.clicked.connect(self._agregar_bloque)
-        barra_bloque.addWidget(self.time_nuevo_bloque)
-        barra_bloque.addWidget(self.txt_titulo_bloque, 1)
-        barra_bloque.addWidget(self.btn_agregar_bloque)
-        layout_grupo.addLayout(barra_bloque)
+        layout_bloque.addWidget(self.time_nuevo_bloque)
+        layout_bloque.addWidget(self.txt_titulo_bloque)
+        layout_bloque.addWidget(self.btn_agregar_bloque)
+        panel_derecho.addWidget(grupo_bloque)
 
-        self.tree = ArbolProgramadorConDrop()
-        self.tree.setColumnCount(3)
-        self.tree.setHeaderLabels(["Título", "Duración", "Código"])
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.tree.archivo_soltado.connect(self._on_archivo_soltado)
-        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tree.customContextMenuRequested.connect(self._mostrar_menu_contextual)
-        # Cambiar de selección corta cualquier pre-escucha en curso —
-        # mismo criterio que el ▶ Previo de Ventana 3.
-        self.tree.itemSelectionChanged.connect(self._detener_previo)
-        layout_grupo.addWidget(self.tree, 1)
-
-        layout_grupo.addWidget(self._crear_subtitulo(
-            "Ítem seleccionado en el árbol (bloque -> edita hora/título; ítem -> cambia el archivo):"
-        ))
-        fila_items = QHBoxLayout()
+        # ---- Ítem seleccionado en el árbol ---------------------------
+        grupo_item = QGroupBox("ÍTEM SELECCIONADO")
+        layout_item = QVBoxLayout(grupo_item)
         self.btn_agregar_item = QPushButton("➕ Añadir Ítem...")
         self.btn_agregar_item.setToolTip("Buscador de biblioteca a dos columnas (categorías / archivos).")
         self.btn_agregar_item.clicked.connect(self._abrir_picker_agregar_item)
@@ -250,23 +302,24 @@ class VentanaProgramador(QDialog):
         self.btn_quitar = QPushButton("✕ Quitar Item")
         self.btn_quitar.setToolTip("Quita del editor lo seleccionado (bloques y/o ítems) — no borra nada de la biblioteca.")
         self.btn_quitar.clicked.connect(self._quitar_seleccionados)
-        for boton in (self.btn_agregar_item, self.btn_reemplazar, self.btn_quitar):
-            fila_items.addWidget(boton, 1)
+        layout_item.addWidget(self.btn_agregar_item)
+        layout_item.addWidget(self.btn_reemplazar)
+        layout_item.addWidget(self.btn_quitar)
 
-        fila_items.addSpacing(12)
+        fila_previo = QHBoxLayout()
         self.btn_previo = QPushButton("▶ Previo")
         self.btn_previo.setToolTip("Pre-escuchar el ítem seleccionado por la salida de Preescucha (nunca la Master al aire).")
         self.btn_previo.clicked.connect(self._reproducir_previo)
         self.btn_detener_previo = QPushButton("⏹ Detener")
         self.btn_detener_previo.clicked.connect(self._detener_previo)
-        fila_items.addWidget(self.btn_previo)
-        fila_items.addWidget(self.btn_detener_previo)
-        layout_grupo.addLayout(fila_items)
+        fila_previo.addWidget(self.btn_previo)
+        fila_previo.addWidget(self.btn_detener_previo)
+        layout_item.addLayout(fila_previo)
+        panel_derecho.addWidget(grupo_item)
 
-        layout_grupo.addWidget(self._crear_subtitulo(
-            "Insertar ítem especial en el bloque (no es un archivo de la biblioteca):"
-        ))
-        fila_especiales = QHBoxLayout()
+        # ---- Insertar ítem especial (no es un archivo) ---------------
+        grupo_especial = QGroupBox("INSERTAR ÍTEM ESPECIAL")
+        layout_especial = QVBoxLayout(grupo_especial)
         self.btn_insertar_fmt = QPushButton("▶ Comando FMT...")
         self.btn_insertar_fmt.setToolTip(
             "Al pasar la reproducción por este ítem, dispara la generación\n"
@@ -285,27 +338,22 @@ class VentanaProgramador(QDialog):
             "le toca sonar (nunca el mismo fijo) — para darle dinamismo, ej. separadores."
         )
         self.btn_insertar_aleatorio.clicked.connect(self._insertar_item_aleatorio)
-        for boton in (self.btn_insertar_fmt, self.btn_insertar_hth, self.btn_insertar_aleatorio):
-            fila_especiales.addWidget(boton, 1)
-        layout_grupo.addLayout(fila_especiales)
+        layout_especial.addWidget(self.btn_insertar_fmt)
+        layout_especial.addWidget(self.btn_insertar_hth)
+        layout_especial.addWidget(self.btn_insertar_aleatorio)
+        panel_derecho.addWidget(grupo_especial)
 
-        layout.addWidget(grupo, 1)
-
-        # ============================================================
-        # Grupo 3: GUARDAR (nombre + fecha/día de la programación actual)
-        # ============================================================
+        # ---- Guardar (nombre + fecha/día de la programación actual) --
         grupo_guardar = QGroupBox("GUARDAR PROGRAMACIÓN")
         layout_guardar = QVBoxLayout(grupo_guardar)
 
-        fila_nombre = QHBoxLayout()
         self.txt_nombre_programacion = QLineEdit()
         self.txt_nombre_programacion.setPlaceholderText("Nombre de la programación")
+        layout_guardar.addWidget(self.txt_nombre_programacion)
         self.btn_guardar = QPushButton("💾 Guardar")
         self.btn_guardar.setObjectName("btnPlay")
         self.btn_guardar.clicked.connect(self._guardar)
-        fila_nombre.addWidget(self.txt_nombre_programacion, 1)
-        fila_nombre.addWidget(self.btn_guardar)
-        layout_guardar.addLayout(fila_nombre)
+        layout_guardar.addWidget(self.btn_guardar)
 
         fila_fecha = QHBoxLayout()
         self.chk_fecha_especifica = QCheckBox("Fecha específica:")
@@ -317,14 +365,16 @@ class VentanaProgramador(QDialog):
         fila_fecha.addWidget(self.date_especifica)
         layout_guardar.addLayout(fila_fecha)
 
-        layout_guardar.addWidget(QLabel("...o días de la semana (patrón general, se repite cada semana):"))
-        fila_dias = QHBoxLayout()
+        layout_guardar.addWidget(self._crear_subtitulo("...o días de la semana (se repite cada semana):"))
+        # Grilla 4x2 en vez de una sola fila — en la columna angosta de
+        # la derecha, los 7 días no entrarían en una fila sin cortarse.
+        grilla_dias = QGridLayout()
         self.checks_dias = {}
-        for clave, etiqueta in DIAS_SEMANA:
+        for indice, (clave, etiqueta) in enumerate(DIAS_SEMANA):
             chk = QCheckBox(etiqueta)
             self.checks_dias[clave] = chk
-            fila_dias.addWidget(chk)
-        layout_guardar.addLayout(fila_dias)
+            grilla_dias.addWidget(chk, indice // 4, indice % 4)
+        layout_guardar.addLayout(grilla_dias)
 
         lbl_nota = QLabel(
             "Nota: una fecha específica prevalece sobre el patrón semanal de ese día. "
@@ -334,16 +384,29 @@ class VentanaProgramador(QDialog):
         lbl_nota.setWordWrap(True)
         layout_guardar.addWidget(lbl_nota)
 
-        layout.addWidget(grupo_guardar)
+        panel_derecho.addWidget(grupo_guardar)
+        panel_derecho.addStretch()
+
+        scroll_derecho = QScrollArea()
+        scroll_derecho.setWidgetResizable(True)
+        scroll_derecho.setWidget(contenido_derecho)
+        scroll_derecho.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll_derecho.setMinimumWidth(300)
+        scroll_derecho.setMaximumWidth(340)
+        fila_principal.addWidget(scroll_derecho, 1)
 
     @staticmethod
     def _crear_subtitulo(texto: str) -> QLabel:
         """Etiqueta chica y atenuada usada como separador visual entre
-        las distintas filas de botones del Grupo 2 — mismo estilo ya
-        establecido en la app (`lblTituloBloqueActivo`, itálica y en
-        el color de texto secundario) para no sumar peso visual extra."""
+        distintos bloques de controles — mismo estilo ya establecido
+        en la app (`lblTituloBloqueActivo`, itálica y en el color de
+        texto secundario) para no sumar peso visual extra. Con ajuste
+        de línea (columna angosta a la derecha, ronda del rediseño de
+        layout — sin esto, un texto largo desbordaba el ancho y hacía
+        aparecer una barra de scroll horizontal de más)."""
         etiqueta = QLabel(texto)
         etiqueta.setObjectName("lblTituloBloqueActivo")
+        etiqueta.setWordWrap(True)
         return etiqueta
 
     # ------------------------------------------------------------------
@@ -376,6 +439,28 @@ class VentanaProgramador(QDialog):
 
     def _detener_previo(self):
         self._motor_previo.detener()
+
+    def _marcar_si_falta_en_biblioteca(self, item, ruta: str):
+        """Pedido explícito: "cuando cargo la programación también
+        marca aquellos ítem que no se encuentran en la biblioteca" —
+        mismo criterio de validez ya usado por el motor de
+        reproducción real (core/playlist_manager.py:_item_valido(),
+        core/gestor_emision.py:_fila_valida()): el archivo tiene que
+        EXISTIR EN DISCO Y seguir REGISTRADO en la biblioteca (un
+        archivo que sigue en el disco pero cuyo registro se borró del
+        Explorador también cuenta como "no se encuentra"). Marca con
+        la misma X roja que ya usa Ventana 1/2 para "archivo no
+        encontrado" (icono_error()). Fail-open sin Explorador
+        disponible en esta sesión — nunca marca de más por una
+        dependencia faltante, solo chequea existencia en disco."""
+        if not ruta:
+            return
+        falta = not os.path.exists(ruta)
+        if self._ventana_explorador is not None:
+            falta = falta or not self._ventana_explorador.ruta_existe_en_biblioteca(ruta)
+        if falta:
+            item.setIcon(0, icono_error())
+            item.setToolTip(0, "Este archivo no se encuentra en la biblioteca (o el registro ya no existe).")
 
     def closeEvent(self, evento):
         self._detener_previo()
@@ -858,7 +943,8 @@ class VentanaProgramador(QDialog):
                     )
                     continue
                 hijo = QTreeWidgetItem([item.get("titulo", ""), item.get("duracion", ""), item.get("codigo", "—")])
-                hijo.setData(0, Qt.ItemDataRole.UserRole, item.get("ruta", ""))
+                ruta_item = item.get("ruta", "")
+                hijo.setData(0, Qt.ItemDataRole.UserRole, ruta_item)
                 hijo.setData(0, ROL_ANALISIS_AUDIO, {
                     "punto_inicio_ms": item.get("punto_inicio_ms") or 0,
                     "punto_fin_ms": item.get("punto_fin_ms"),
@@ -867,6 +953,7 @@ class VentanaProgramador(QDialog):
                 hijo.setData(0, ROL_VIGENCIA, {
                     "fecha_inicio": item.get("fecha_inicio"), "fecha_fin": item.get("fecha_fin"),
                 })
+                self._marcar_si_falta_en_biblioteca(hijo, ruta_item)
                 nodo.addChild(hijo)
             nodo.setExpanded(True)
 
@@ -875,8 +962,14 @@ class VentanaProgramador(QDialog):
             self.date_especifica.setDate(QDate.fromString(clave, "yyyy-MM-dd"))
         else:
             self.chk_fecha_especifica.setChecked(False)
+            # Pedido explícito: tildar TODOS los días que esta
+            # programación afecta, no solo el día puntual elegido en
+            # el picker — un mismo contenido puede haberse guardado
+            # para varios días de una sola vez.
+            dias_afectados = set(dias_que_comparten_contenido(contenido))
+            dias_afectados.add(clave)
             for dia_clave, chk in self.checks_dias.items():
-                chk.setChecked(dia_clave == clave)
+                chk.setChecked(dia_clave in dias_afectados)
 
     def _nueva_programacion(self, confirmar: bool = True, con_plantilla: bool = False):
         """`con_plantilla=True` SOLO cuando el operador aprieta el
