@@ -12224,6 +12224,114 @@ soltó de una vez.
     "🔎 Buscar actualización" detecta una actualización real pendiente,
     y que "⬇ Actualizar y reiniciar" descarga los cambios y reabre la
     satélite sola (nunca la radio) con la versión nueva ya aplicada.
+124. ~~Rediseño de la Ventana Programador (árbol a la izquierda con
+    espacio real, controles a la derecha en columna angosta con
+    paleta negra/gris) + tildar días afectados al cargar + marcar
+    ítems sin biblioteca al cargar~~ — pedido explícito, cuatro
+    puntos: "la lista de ítem a la izquierda más larga, para eso le
+    vamos a dar espacio... todo lo que está por ahora abajo, lo vamos
+    a poner a la derecha, ordenado y distinguible. Utiliza también
+    una paleta con negros y grises si es necesario. Y otra cosa,
+    cuando cargo quisiera que también me tilde los días que afecta
+    esa programación cargada. Si se puede, cuando cargo la
+    programación también marca aquellos ítem que no se encuentran en
+    la biblioteca."
+
+    **a) Layout**: `gui/ventana_programador.py:_construir_ui()`
+    reescrito de un único `QVBoxLayout` apilado (Programación
+    guardada arriba / Bloques+ítems en el medio / Guardar abajo) a un
+    `QHBoxLayout` de dos columnas — el árbol (`self.tree`) queda SOLO
+    a la izquierda con stretch 3 (la mayor parte del ancho); los 5
+    grupos de controles de siempre (Programación guardada / Nuevo
+    bloque horario / Ítem seleccionado + Previo / Insertar ítem
+    especial / Guardar programación) pasan a una columna angosta a la
+    derecha (300-340px), cada uno en su propio `QGroupBox` apilado
+    verticalmente — el borde+título de cada caja ya da la separación
+    "ordenado y distinguible" pedida, sin necesitar colores nuevos —
+    envuelta en un `QScrollArea` (mismo patrón ya usado en
+    Configuración → Diagnóstico) por si no entra entera en una
+    pantalla más baja. Los días de la semana pasaron de una sola fila
+    de 7 checkboxes a una grilla 4x2 (`QGridLayout`) para que entren
+    en la columna angosta sin cortarse. Ningún nombre de atributo
+    (`btn_agregar_item`, `checks_dias`, etc.) cambió — el resto de los
+    métodos de la clase (wiring, lógica de carga/guardado) no tuvo que
+    tocarse, solo dónde vive cada widget en el layout.
+
+    **"Paleta con negros y grises"**: el árbol del Programador ganó
+    `objectName("tree_programador")` y se sumó a la MISMA regla QSS
+    ya establecida en Ventana 1/2/Auxiliar (`gui/styles.py`,
+    `COLOR_LISTA_V1V2_FONDO`/`_ALTERNO`/`_HEADER_FONDO`) — fondo casi
+    negro fijo en los DOS temas de la app (nunca cambia con el tema
+    Claro, mismo criterio ya documentado para esas listas). De paso,
+    la columna "Título" pasó a modo `Stretch` (a diferencia del resto
+    de los árboles de la app, que estiran su ÚLTIMA columna vía
+    `configurar_columnas_ajustables` — acá lo que hace falta leer
+    completo es el TÍTULO, no el código correlativo) — sin esto, darle
+    más ancho al contenedor del árbol no hacía nada por sí solo, las
+    columnas seguían con su ancho fijo de siempre y el texto quedaba
+    igual de cortado ("Pub...").
+
+    **b) Tildar días afectados al cargar**: nuevo
+    `config/settings.py:dias_que_comparten_contenido(contenido)` —
+    `guardar_programacion()` persiste una COPIA independiente del
+    mismo contenido (nombre+bloques) bajo CADA día elegido cuando se
+    guarda para varios días de una sola vez (ej. lunes+miércoles+
+    viernes quedan como 3 entradas separadas en `programacion.json`,
+    sin ningún ID en común) — antes, "Cargar" solo tildaba el checkbox
+    del ÚNICO día elegido en el picker, dejando los otros 2 sin marcar
+    aunque la misma programación también los afectara. El helper
+    nuevo compara por CONTENIDO estructural (nombre + bloques, no una
+    referencia compartida) contra los 7 días guardados y devuelve
+    todos los que coinciden exactamente — `_cargar_programacion_existente()`
+    tilda esa lista completa en vez de un solo día. Si el operador
+    edita después uno de esos días por separado (dejan de ser
+    idénticos), correctamente deja de considerarse "el mismo" — no es
+    un bug, es la señal correcta de que divergieron.
+
+    **c) Marcar ítems sin biblioteca al cargar**: nuevo
+    `VentanaProgramador._marcar_si_falta_en_biblioteca(item, ruta)` —
+    mismo criterio de validez YA usado por el motor de reproducción
+    real (`core/playlist_manager.py:_item_valido()`,
+    `core/gestor_emision.py:_fila_valida()`, ronda 66/83): el archivo
+    tiene que EXISTIR EN DISCO Y seguir REGISTRADO en la biblioteca
+    (`VentanaExplorador.ruta_existe_en_biblioteca()`, ronda 101f) — un
+    archivo que sigue en el disco pero cuyo registro se borró del
+    Explorador también cuenta como "no se encuentra". Marca con la
+    MISMA X roja que ya usa Ventana 1/2 para "archivo no encontrado"
+    (`icono_error()`, reusado tal cual, sin ningún ícono nuevo) más un
+    tooltip explicando por qué. Fail-open sin `_ventana_explorador`
+    disponible en esta sesión (solo chequea disco) — nunca marca de
+    más por una dependencia faltante. Se llama por cada ítem real
+    (tanda) al reconstruir el árbol dentro de
+    `_cargar_programacion_existente()` — los Comandos FMT/HTH y los
+    Ítems Aleatorio no tienen una `ruta` fija, quedan afuera de este
+    chequeo a propósito (no aplica, se resuelven recién al
+    reproducirse).
+
+    Probado con `test_programador_layout_dias_biblioteca.py` (nuevo,
+    dedicado): el árbol vive en el panel izquierdo con el objectName
+    correcto, los 5 `QGroupBox` esperados viven en el `QScrollArea` de
+    la derecha (angosto, ≤340px); `dias_que_comparten_contenido()`
+    reconstruye los 3 días de una programación multi-día eligiendo
+    solo uno en el picker, y una programación de un solo día no
+    "contagia" tildes de más; `_marcar_si_falta_en_biblioteca()` en
+    sus 4 casos (archivo real y registrado → sin marca; archivo real
+    pero sin registro → marca; archivo que no existe en disco aunque
+    esté "registrado" → marca; sin Explorador disponible → fail-open,
+    solo chequea disco); e integración completa de
+    `_cargar_programacion_existente()` con un bloque real de 2 ítems
+    (uno vinculado, uno perdido) confirmando que la X roja queda en el
+    que corresponde — + capturas reales (offscreen) en tema oscuro y
+    claro enviadas a Santiago para comparar antes de dar la ronda por
+    terminada + `py_compile` completo + smoke test de arranque de
+    `main.py` sin traceback. **Sigue sin poder confirmarse con
+    hardware/biblioteca real ni con fidelidad visual 100% en su
+    pantalla**: falta que Santiago confirme que el árbol se siente con
+    más espacio de verdad, que los 5 grupos de la derecha se leen
+    "ordenados y distinguibles" tal como pidió, que cargar una
+    programación guardada para varios días tilda todos los que
+    corresponde, y que un ítem cuyo archivo ya no está en la
+    biblioteca queda marcado con la X roja al cargar.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

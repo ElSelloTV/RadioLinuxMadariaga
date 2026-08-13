@@ -510,6 +510,26 @@ def obtener_programacion(tipo: str, clave: str) -> dict | None:
     return None
 
 
+def dias_que_comparten_contenido(contenido: dict) -> list:
+    """Pedido explícito del Programador: "cuando cargo quisiera que
+    también me tilde los días que afecta esa programación cargada" —
+    dado el `contenido` (nombre + bloques) ya cargado de UN día
+    puntual, devuelve TODOS los días de semana cuyo valor guardado en
+    disco es EXACTAMENTE ese mismo contenido, para poder tildar los
+    checkboxes de todos, no solo del día elegido en el picker.
+
+    Comparación por CONTENIDO estructural (nombre + bloques), no por
+    una referencia compartida ni un ID en común: `guardar_programacion()`
+    persiste una COPIA independiente bajo cada clave de día cuando se
+    guarda para varios días de una sola vez — no queda ningún vínculo
+    explícito entre esas copias más allá de ser byte-a-byte iguales.
+    Si el operador edita después uno de esos días por separado (dejan
+    de ser idénticos), correctamente deja de considerarse "el mismo".
+    """
+    datos = cargar_programaciones()
+    return [dia for dia in NOMBRES_DIAS_SEMANA if datos["dias_semana"].get(dia) == contenido]
+
+
 def eliminar_programacion(tipo: str, clave: str) -> bool:
     """Borra del disco una programación guardada puntual (por día
     genérico o por fecha específica). Devuelve True si había algo que

@@ -350,7 +350,7 @@ QLineEdit#txtBusqueda {{
    Auxiliar (Emisión) — fuente y relleno más chicos para poder
    achicar columnas de verdad (antes un mínimo de sección lo
    impedía). ---------- */
-QTreeWidget#tree_publicidad, QTreeWidget#tree_reproductor {{
+QTreeWidget#tree_publicidad, QTreeWidget#tree_reproductor, QTreeWidget#tree_programador {{
     font-size: 8pt;
     background-color: {COLOR_LISTA_V1V2_FONDO};
     alternate-background-color: {COLOR_LISTA_V1V2_ALTERNO};
@@ -359,13 +359,18 @@ QTreeWidget#tree_publicidad, QTreeWidget#tree_reproductor {{
    arriba, el texto oscuro del tema Claro (pensado para fondos
    caqui/plata del resto de la app) quedaría ilegible acá. Un ítem
    rojo/verde ya trae su propio blanco explícito por Python
-   (_color_para_estado), esto solo cubre el estado NORMAL. */
-QTreeWidget#tree_publicidad::item, QTreeWidget#tree_reproductor::item {{
+   (_color_para_estado), esto solo cubre el estado NORMAL. El árbol
+   del Programador (`tree_programador`, pedido explícito "utilizá
+   también una paleta con negros y grises") reusa el MISMO tono que
+   V1/V2 en vez de uno propio — es conceptualmente el mismo tipo de
+   lista (bloques + ítems), aunque viva en un QDialog aparte. */
+QTreeWidget#tree_publicidad::item, QTreeWidget#tree_reproductor::item, QTreeWidget#tree_programador::item {{
     padding: 1px;
     color: #e0e0e0;
 }}
 QTreeWidget#tree_publicidad QHeaderView::section,
-QTreeWidget#tree_reproductor QHeaderView::section {{
+QTreeWidget#tree_reproductor QHeaderView::section,
+QTreeWidget#tree_programador QHeaderView::section {{
     background-color: {COLOR_LISTA_V1V2_HEADER_FONDO};
     color: #e0e0e0;
 }}
