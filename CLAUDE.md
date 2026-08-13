@@ -12333,6 +12333,61 @@ soltó de una vez.
     corresponde, y que un ítem cuyo archivo ya no está en la
     biblioteca queda marcado con la X roja al cargar.
 
+    **Ajuste inmediato, pedido explícito en la misma ronda ("¿la
+    columna sigue siendo ajustable como las demás? ¿la puedo correr
+    con el mouse? hablo de la columna de ítem y la del menú")** —
+    revisado y corregido DOS cosas que el rediseño de arriba había
+    dejado sin darse cuenta menos flexibles que antes:
+    - **Columnas del árbol (Título/Duración/Código)**: la primera
+      versión ponía "Título" en modo `Stretch` puro para que
+      aprovechara el ancho nuevo — pero en Qt, una columna en
+      `Stretch` NO admite arrastrar SU PROPIO borde con el mouse (el
+      límite entre Título y Duración quedaba fijo, sin poder tocarlo,
+      aunque Duración/Código sí se podían correr entre sí). Corregido
+      reusando el MISMO helper que ya usa el resto de la app
+      (`gui/common_widgets.py:configurar_columnas_ajustables()`, ya
+      usado en Ventana 3, etc.) — las TRES columnas quedan
+      `Interactive` (arrastrables a mano), con la ÚLTIMA ("Código")
+      en `Stretch` para que nunca quede tapada, igual criterio que en
+      cualquier otro árbol de la app. "Título" arranca con un ancho
+      inicial generoso (400px) para no perder el efecto visual de
+      "más espacio", pero ahora ese ancho es un punto de PARTIDA, no
+      un valor forzado — se puede correr como cualquier columna.
+    - **Límite entre el árbol y la columna de controles**: en la
+      primera versión NO había ningún límite arrastrable ahí — era un
+      `QHBoxLayout` fijo con la columna derecha directamente acotada
+      entre 300 y 340px (`setMinimumWidth`/`setMaximumWidth`), sin
+      ningún handle de mouse entre ambos paneles. Reemplazado por un
+      `QSplitter` horizontal real (`splitter_principal`, mismo widget
+      que ya usa `MainWindow` para las 3 ventanas principales y
+      Ventana 3 para categorías/archivos) — el límite entre el árbol
+      y los controles ahora se arrastra igual que cualquier otro
+      splitter de la app. Se sacó el techo máximo de la columna
+      derecha (`setMaximumWidth`) — solo queda un piso mínimo de
+      300px para que no se aplaste a un tamaño inusable sin querer —
+      y se fijó una proporción de ARRANQUE 3:1 (`setSizes([700,
+      320])`, árbol más ancho) que el operador puede correr apenas
+      abre la ventana, sin que quede clavada ahí.
+
+    Probado extendiendo `test_programador_layout_dias_biblioteca.py`:
+    el árbol y los controles viven en un `QSplitter` real de 2 paneles
+    (no un layout fijo), correr `setSizes()` cambia de verdad el ancho
+    real de cada panel (confirmado comparando el ancho ANTES y
+    DESPUÉS, no solo que el método no tire error), la columna derecha
+    ya no tiene techo de ancho; y las 3 columnas del árbol confirmadas
+    con los `ResizeMode` correctos (Título/Duración `Interactive`,
+    Código `Stretch`) más un cambio real de ancho programático en las
+    dos primeras (mismo mecanismo que un arrastre real del operador
+    dispara internamente) — + regresión de los 7 checks ya existentes
+    de esta misma ronda sin fallos nuevos + `py_compile` completo +
+    smoke test de arranque de `main.py` sin traceback + captura real
+    confirmando que ensanchar la columna derecha (simulando un
+    arrastre) efectivamente cambia su tamaño en pantalla. **Sigue sin
+    poder confirmarse con un mouse/hardware real**: falta que Santiago
+    confirme que puede arrastrar el límite entre el árbol y los
+    controles, y las 3 columnas del árbol, con normalidad en su
+    notebook real.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
