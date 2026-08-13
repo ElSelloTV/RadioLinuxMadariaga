@@ -92,12 +92,12 @@ from datetime import date
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QTreeWidgetItem,
     QPushButton, QLabel, QCheckBox, QDateEdit, QTimeEdit, QLineEdit,
-    QMessageBox, QAbstractItemView, QMenu, QToolButton, QScrollArea, QWidget, QHeaderView,
+    QMessageBox, QAbstractItemView, QMenu, QToolButton, QScrollArea, QWidget, QSplitter,
 )
 from PySide6.QtCore import Qt, QDate, QTime, Signal
 from PySide6.QtGui import QBrush, QColor
 
-from gui.common_widgets import ArbolProgramadorConDrop
+from gui.common_widgets import ArbolProgramadorConDrop, configurar_columnas_ajustables
 from gui.styles import (
     ROL_ANALISIS_AUDIO, ROL_VIGENCIA, ROL_ES_COMANDO, ROL_TIPO_COMANDO, ROL_PARAMETRO_COMANDO, COLOR_COMANDO,
     ROL_ES_ALEATORIO, ROL_CATEGORIA_ALEATORIO, ROL_RECURSIVO_ALEATORIO, COLOR_ALEATORIO, icono_error,
@@ -179,37 +179,44 @@ class VentanaProgramador(QDialog):
     # ------------------------------------------------------------------
     def _construir_ui(self):
         layout = QVBoxLayout(self)
-        fila_principal = QHBoxLayout()
-        layout.addLayout(fila_principal, 1)
+        # Pedido explícito ("¿la puedo correr con el mouse?"): un
+        # QSplitter real (mismo widget que ya usa MainWindow para las
+        # 3 ventanas principales y Ventana 3 para categorías/archivos)
+        # en vez de un QHBoxLayout fijo — así el límite entre el árbol
+        # y la columna de controles también se puede arrastrar a mano,
+        # no solo las columnas del árbol.
+        splitter_principal = QSplitter(Qt.Orientation.Horizontal)
+        layout.addWidget(splitter_principal, 1)
 
         # ============================================================
         # IZQUIERDA: el árbol de bloques/ítems — pedido explícito, "la
         # lista de ítem a la izquierda más larga, para eso le vamos a
-        # dar espacio" — ocupa la mayor parte del ancho (stretch 3
-        # contra 1 de la columna de controles) y usa el mismo fondo
-        # casi negro fijo ya establecido en Ventana 1/2/Auxiliar
-        # ("utilizá también una paleta con negros y grises",
+        # dar espacio" — ocupa la mayor parte del ancho de arranque
+        # (ver setSizes() al final) y usa el mismo fondo casi negro
+        # fijo ya establecido en Ventana 1/2/Auxiliar ("utilizá
+        # también una paleta con negros y grises",
         # `tree_programador` en gui/styles.py).
         # ============================================================
-        panel_izquierdo = QVBoxLayout()
+        contenido_izquierdo = QWidget()
+        panel_izquierdo = QVBoxLayout(contenido_izquierdo)
+        panel_izquierdo.setContentsMargins(0, 0, 0, 0)
         panel_izquierdo.addWidget(QLabel("Bloques horarios e ítems:"))
 
         self.tree = ArbolProgramadorConDrop()
         self.tree.setObjectName("tree_programador")
         self.tree.setColumnCount(3)
         self.tree.setHeaderLabels(["Título", "Duración", "Código"])
-        # "Título" (la columna que de verdad necesita espacio) en modo
-        # Stretch — a diferencia del resto de los árboles de la app,
-        # que estiran su ÚLTIMA columna (configurar_columnas_ajustables),
-        # acá lo importante es leer el título completo, no el código
-        # correlativo. "Duración"/"Código" quedan angostas pero
-        # redimensionables a mano.
-        cabecera = self.tree.header()
-        cabecera.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        cabecera.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        cabecera.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        self.tree.setColumnWidth(1, 90)
-        self.tree.setColumnWidth(2, 80)
+        # Pedido explícito ("¿la columna sigue siendo ajustable... puedo
+        # correrla con el mouse?"): mismo helper que ya usa el resto de
+        # la app (`configurar_columnas_ajustables`, Ventana 3 etc.) —
+        # TODAS las columnas quedan arrastrables a mano (Interactive),
+        # con la ÚLTIMA en Stretch para que nunca quede tapada. "Título"
+        # arranca ancha (400px) para darle espacio de entrada sin
+        # perder la posibilidad de seguir corriéndola con el mouse —
+        # antes estaba forzada a Stretch puro, lo que en Qt bloquea
+        # justamente el arrastre de SU propio borde (el límite entre
+        # Título y Duración quedaba fijo, sin poder tocarlo).
+        configurar_columnas_ajustables(self.tree, [400, 90])
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.archivo_soltado.connect(self._on_archivo_soltado)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -219,7 +226,7 @@ class VentanaProgramador(QDialog):
         self.tree.itemSelectionChanged.connect(self._detener_previo)
         panel_izquierdo.addWidget(self.tree, 1)
 
-        fila_principal.addLayout(panel_izquierdo, 3)
+        splitter_principal.addWidget(contenido_izquierdo)
 
         # ============================================================
         # DERECHA: "todo lo que estaba por ahora abajo, lo vamos a
@@ -227,9 +234,11 @@ class VentanaProgramador(QDialog):
         # niveles de acción de siempre, cada uno en su propio
         # QGroupBox (el borde + título de cada caja ya da la
         # separación visual pedida, sin necesitar más colores) — una
-        # columna angosta, envuelta en QScrollArea por si no entra
-        # entera en una pantalla más baja (mismo patrón ya usado en
-        # Configuración → Diagnóstico).
+        # columna angosta DE ARRANQUE (ver setSizes() al final; el
+        # límite con el árbol se puede correr con el mouse igual que
+        # cualquier splitter de la app), envuelta en QScrollArea por si
+        # no entra entera en una pantalla más baja (mismo patrón ya
+        # usado en Configuración → Diagnóstico).
         # ============================================================
         contenido_derecho = QWidget()
         panel_derecho = QVBoxLayout(contenido_derecho)
@@ -391,9 +400,18 @@ class VentanaProgramador(QDialog):
         scroll_derecho.setWidgetResizable(True)
         scroll_derecho.setWidget(contenido_derecho)
         scroll_derecho.setFrameShape(QScrollArea.Shape.NoFrame)
+        # Piso mínimo para que no se aplaste a un tamaño inusable
+        # arrastrando el splitter — SIN techo máximo, para que se
+        # pueda ensanchar libremente con el mouse si hace falta.
         scroll_derecho.setMinimumWidth(300)
-        scroll_derecho.setMaximumWidth(340)
-        fila_principal.addWidget(scroll_derecho, 1)
+        splitter_principal.addWidget(scroll_derecho)
+
+        # Proporción de ARRANQUE (3:1, árbol más ancho) — el operador
+        # puede correr el límite con el mouse después, este valor solo
+        # define cómo se ve la primera vez que se abre la ventana.
+        splitter_principal.setStretchFactor(0, 3)
+        splitter_principal.setStretchFactor(1, 1)
+        splitter_principal.setSizes([700, 320])
 
     @staticmethod
     def _crear_subtitulo(texto: str) -> QLabel:
