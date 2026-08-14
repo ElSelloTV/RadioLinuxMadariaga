@@ -12526,6 +12526,215 @@ soltó de una vez.
     eleva mientras algo suena, y si eso se nota en los baches de
     milisegundos que reportó.
 
+126. ~~Paridad completa del satélite con Programador/Musicalizador
+    locales + reinicio forzado de la PC desde Configuración~~ —
+    pedido explícito, dos partes en un solo mensaje: "dame todo y las
+    mismas opciones de configuración y programación que el original
+    para Programador y Musicalizador por favor. Todo lo que tiene el
+    principal y este no." + "agregame en Configuraciones, la opción de
+    reiniciar la PC. con un botón... sin importar los procesos o
+    programas abiertos. un reinicio forzado sería".
+
+    **a) Reinicio forzado de la PC** (`core/reinicio_sistema.py`,
+    nuevo): botón "🔁 Reiniciar la PC (forzado)" en Configuración →
+    Diagnóstico, nuevo grupo "🖥 Sistema". Usa `systemctl reboot -i` —
+    elegido a propósito por sobre `reboot`/`shutdown -r now`: la
+    mayoría de los escritorios Linux (Q4OS/TDE incluido) ya autorizan
+    a la sesión gráfica ACTIVA a reiniciar sin sudo vía logind/polkit
+    (política `org.freedesktop.login1.reboot`), mientras que los otros
+    dos comandos SÍ piden privilegios de root — así no hace falta
+    ninguna configuración especial nueva en la PC de Santiago. El flag
+    `-i, --ignore-inhibitors` es el "forzado" real del pedido: ignora
+    cualquier inhibitor lock que otro programa haya puesto ("hay
+    cambios sin guardar", etc.) y reinicia igual, sin esperar a nadie.
+    Si `systemctl` no está disponible o el comando falla (otro init
+    system, falta de permisos), degrada limpio — nunca rompe nada,
+    deja el error real en el log y lo muestra en la UI. Pide
+    confirmación Sí/No con el texto más fuerte posible antes de
+    disparar nada (mismo criterio que cualquier acción irreversible de
+    esta app) — el éxito del comando solo confirma que el SISTEMA
+    ACEPTÓ el pedido, la PC se reinicia sola en los segundos
+    siguientes sin esperar ninguna otra confirmación.
+
+    **b) Paridad completa del Programador y el Musicalizador
+    remotos** — hasta esta ronda, ambos eran deliberadamente un MVP
+    (rondas 118/122, documentado en sus propios docstrings): cubrían
+    el flujo central pero dejaban afuera reordenar, copiar/pegar,
+    duplicar para otro día, Comando HTH, Ítem Aleatorio, Reemplazar,
+    pre-escucha, y el Pisador/columnas ricas del Musicalizador. Esta
+    ronda cierra esa brecha, reusando SIEMPRE los mismos mecanismos ya
+    probados del lado servidor — nunca un camino paralelo de
+    persistencia.
+
+    **Programador remoto** (`satelite/dialogo_programador_remoto.py`,
+    reescrito):
+    - **↑ Subir / ↓ Bajar**: reordena el ítem seleccionado DENTRO de
+      su propio bloque, operando directo sobre `self._bloques` (el
+      modelo) — mismo resultado final que el drag&drop local, un
+      mecanismo más simple para un panel remoto (mismo criterio ya
+      usado por el Musicalizador, que nunca tuvo drag&drop tampoco).
+    - **📋 Copiar / 📌 Pegar en este bloque** (menú contextual, click
+      derecho sobre el árbol): copia UN ítem (dict) al portapapeles en
+      memoria y lo pega como copia independiente en el bloque destino
+      — nunca mueve el original, mismo concepto que la versión local.
+    - **▶ Comando HTH...**: `QInputDialog.getItem` con los 3 tipos
+      fijos (HORA/TEMPERATURA/HUMEDAD, sin necesitar ninguna lista del
+      servidor — a diferencia de FMT, que sí elige de formatos ya
+      creados) — mismo formato de ítem `{"es_comando": True,
+      "tipo_comando": "HTH", "parametro_comando": ...}` que ya soporta
+      toda la cadena de persistencia sin tocar nada más.
+    - **🎲 Ítem Aleatorio...**: nuevo
+      `satelite/dialogo_insertar_item_aleatorio_remoto.py` — combo de
+      categoría (de la lista plana ya traída por RPC) + checkbox
+      recursivo + cantidad a insertar (1-20, mismo pedido "2 o 3 o 4 o
+      5" ya resuelto para el Musicalizador en la ronda 89, ahora
+      también acá).
+    - **🔁 Reemplazar**: sobre un BLOQUE, reabre
+      `DialogoBloqueHorario` (ya existía, reusado ahora también para
+      EDITAR, no solo para alta) precargado con la hora/título
+      actuales y aplica los cambios in-place; sobre un ÍTEM, reabre
+      `DialogoElegirRegistroBiblioteca` y cambia el archivo SIN mover
+      su posición; sobre un Comando/Aleatorio, avisa (se saca y se
+      agrega uno nuevo, mismo criterio que la versión local).
+    - **▶ Previo / ⏹ Detener** (pre-escucha remota, pedido explícito
+      "todo lo que tiene el principal" — el Programador local la tiene
+      desde la ronda 121): nuevas acciones de servidor
+      `programador_previo_reproducir`/`programador_previo_detener`
+      (`gui/main_window.py`) — motor DEDICADO
+      (`MainWindow._motor_previo_remoto`, creado recién al primer
+      pedido), SIEMPRE por la salida de Preescucha configurada del
+      lado servidor (`aplicar_procesador=False`, nunca la Master que
+      va al aire) — mismo criterio de siempre en toda la app. El
+      audio suena en los parlantes de monitoreo de LA RADIO, no en la
+      PC donde corre la satélite (no hay forma de enviar audio por la
+      red en este diseño, y no hacía falta — el operador remoto solo
+      necesita confirmar que la radio va a reproducir lo correcto).
+      Se detiene solo al cambiar de selección en el árbol y al cerrar
+      el diálogo (`closeEvent`/`reject`), mismo patrón que el resto de
+      los "▶ Previo" de la app.
+    - **⧉ Duplicar para otro día...**: reusa `DialogoGuardarProgramacion`
+      (ya existía) y el mismo `programador_guardar` de siempre, bajo
+      un nombre/día nuevos — la programación ORIGINAL nunca se toca
+      (es una clave distinta en `programacion.json`, subsisten las
+      dos, mismo concepto que la versión local).
+    - **Selección preservada entre acciones** (mejora encontrada
+      escribiendo los tests, no pedida explícitamente): el árbol se
+      reconstruye ENTERO ("redraw from model") después de cada
+      cambio — sin nada más, eso dejaba la selección en blanco tras
+      CADA acción, obligando a volver a clickear el bloque antes de
+      la próxima inserción (molesto para encadenar, ej., Comando FMT +
+      Comando HTH + Ítem Aleatorio seguidos en el mismo bloque).
+      `_refrescar_arbol()` ahora recuerda qué `(i_bloque, i_item)`
+      estaba seleccionado ANTES de reconstruir y lo vuelve a
+      seleccionar si sigue existiendo — transparente para el resto del
+      código (`_mover_item()` sigue re-seleccionando la posición nueva
+      a mano después, sin conflicto).
+    - **Bug real corregido de paso, encontrado escribiendo los
+      tests**: "Agregar ítem" y "Reemplazar Item" en el Programador
+      remoto SIEMPRE armaban el ítem con `punto_inicio_ms=0`,
+      `punto_fin_ms=None`, `ganancia_db=0.0` — valores neutros a
+      ciegas, DESCARTANDO el recorte de silencio y el nivelado YA
+      calculados para ese archivo (mismo tipo de bug ya corregido
+      varias veces en este proyecto en otros rincones — "el recorte de
+      silencio nunca se aplicaba al aire"). Causa real:
+      `_listar_registros_categoria_remoto()` (`gui/main_window.py`)
+      nunca incluía esos 3 campos en la respuesta — corregido
+      agregándolos (`punto_inicio_ms`/`punto_fin_ms`/`ganancia_db`,
+      leídos del registro real de la biblioteca), y
+      `_agregar_item()`/`_reemplazar_seleccionado()` ahora arman el
+      ítem con un helper nuevo compartido, `_item_desde_registro()`,
+      que los lee del registro en vez de hardcodearlos — una tanda
+      agregada o reemplazada desde el Programador remoto ahora suena
+      con el mismo recorte/nivelado que si se hubiera hecho desde la
+      app principal.
+
+    **Musicalizador remoto** (`satelite/dialogo_musicalizador_remoto.py`
+    + `satelite/dialogo_item_musicalizador_remoto.py`, reescritos):
+    - **Pisador** (Categoría o Archivo específico, Intro/Outro) en los
+      ítems Específico y Aleatorio — mismo diseño exacto que la
+      versión local (`gui/dialogo_item_musicalizador.py`): checkbox
+      "Agregar Pisador" + radios de tipo + `QStackedWidget` con la
+      página correspondiente, oculto para Subformato (es un
+      contenedor, no aplica). Nuevo diálogo
+      `satelite/dialogo_elegir_pisador_remoto.py` (lista de archivos
+      género "Pisador", por la nueva RPC `listar_registros_por_genero`)
+      y `satelite/dialogo_seleccionar_categoria_remoto.py` (combo
+      simple sobre la lista de categorías ya traída, sin RPC extra —
+      usado tanto para el Pisador de categoría como reutilizable a
+      futuro).
+    - **Columnas CLASE / TÍTULO / TIPO / PISADOR** (antes: un
+      `QListWidget` con un texto resumen único) — mismo criterio que
+      la versión local (ronda 109), resolviendo la biblioteca por RPC
+      en vez de acceso directo: nueva acción de servidor
+      `resolver_registro_por_ruta` (devuelve el registro completo o
+      `None`, usada para el TÍTULO real de un ítem Específico y su
+      género para CLASE) y `listar_registros_categoria` ahora también
+      devuelve el campo `genero` (usado para calcular la "Clase" de un
+      ítem Aleatorio — género único / "(variado)" / "(sin archivos)",
+      mismo criterio que local). Las 4 columnas quedan `Interactive` +
+      movibles, igual que la versión local.
+    - **↑ Subir / ↓ Bajar** (antes solo Añadir/Quitar) — mismo
+      mecanismo simple de intercambio de posiciones en la lista que ya
+      usa la versión local.
+    - **Cantidad a agregar** (pedido "2 o 3 o 4 o 5", ronda 89 local,
+      ahora también remoto): `DialogoItemMusicalizadorRemoto` ganó un
+      `QSpinBox` "Cantidad a agregar:" (solo visible al AGREGAR un
+      ítem Aleatorio, oculto al editar uno existente) +
+      `resultado_cantidad()` — `_agregar_item()` del Musicalizador
+      agrega esa cantidad de copias independientes.
+
+    Probado con 5 scripts dedicados (todos en el mismo bloque de esta
+    ronda, sin commitear como siempre): servidor (las 4 acciones RPC
+    nuevas + `genero`/análisis de audio agregados a
+    `listar_registros_categoria`, contra una `MainWindow` real con
+    categorías Música y Pisadores reales); diálogos sueltos
+    (`DialogoInsertarItemAleatorioRemoto`, `DialogoSeleccionarCategoriaRemoto`,
+    `DialogoElegirPisadorRemoto`, Pisador de categoría y específico en
+    `DialogoItemMusicalizadorRemoto` con sus 2 posiciones, ocultamiento
+    para Subformato, cantidad al agregar vs. editar, resolución de
+    título real al editar un ítem Específico, columnas CLASE/TÍTULO/
+    TIPO/PISADOR del Musicalizador resueltas por RPC, Subir/Bajar,
+    cantidad-a-agregar sumando copias independientes); Programador
+    remoto de punta a punta (Subir/Bajar con límites respetados,
+    Copiar/Pegar con copia independiente confirmada por identidad,
+    Comando HTH, Comando FMT de regresión, Ítem Aleatorio con cantidad,
+    Agregar/Reemplazar arrastrando el análisis de audio real —
+    confirmado el bug encontrado y corregido, Reemplazar sobre un
+    Comando avisa sin romper, Previo/Detener mandando el análisis
+    completo al servidor y cortándose solo al cambiar de selección,
+    Previo sobre un Comando avisa sin mandar nada, Duplicar para otro
+    día sin tocar el original); reinicio forzado (systemctl no
+    instalado, comando exitoso con el flag `-i` confirmado exacto,
+    comando rechazado, timeout/excepción, y el wiring del botón de
+    Configuración pidiendo confirmación siempre antes de llamar al
+    módulo real) — + regresión completa de los 8 scripts de test de
+    rondas anteriores en este mismo bloque de trabajo sin fallos
+    nuevos (un test viejo de la ronda 118,
+    `test_ventana_satelite_reorg.py`, sí quedó desactualizado en su
+    sección del Musicalizador — encodeaba el nombre viejo del método
+    `_elegir_archivo()`, renombrado a `_elegir_archivo_especifico()`
+    en este rediseño; no es una regresión, es el mismo tipo de
+    actualización de fixture ya documentado varias veces en este
+    archivo, superado por los 2 scripts nuevos y más completos de esta
+    ronda) + `py_compile` completo del proyecto + smoke test de
+    arranque limpio de `main.py` Y `satelite_main.py` sin traceback.
+    **Sigue sin poder confirmarse con Chrome Remote Desktop real, dos
+    sesiones de usuario Linux reales, audio/VLC real, ni el propio
+    reinicio del sistema operativo**: falta que Santiago confirme
+    desde la app satélite (1) que puede reordenar/copiar-pegar/insertar
+    HTH/insertar Aleatorio/reemplazar/duplicar en el Programador
+    remoto con la misma soltura que en el programa principal, (2) que
+    la pre-escucha remota efectivamente suena por los parlantes de
+    Preescucha DE LA RADIO (no espera ningún sonido en la PC donde
+    corre la satélite), (3) que el Musicalizador remoto ahora deja
+    armar el Pisador y leer las 4 columnas igual que la versión local,
+    y (4) —el más delicado de probar sin acceso físico— que el botón
+    "Reiniciar la PC (forzado)" de Configuración efectivamente reinicia
+    la máquina sin pedir ninguna contraseña, confirmando que la sesión
+    gráfica de Q4OS/TDE en su PC real tiene la política de polkit
+    esperada (si no la tuviera, el mensaje de error debería quedar
+    claro en el log en vez de fallar en silencio).
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que

@@ -40,7 +40,7 @@ from gui import estado_ui
 
 from core.playlist_manager import GestorPublicidad, GestorExplorador, SchedulerAutomatico
 from core.gestor_emision import GestorPlaylist
-from core.audio_engine import obtener_duracion_formateada
+from core.audio_engine import obtener_duracion_formateada, MotorAudio
 from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
 from core.servidor_control_remoto import ServidorControlRemoto
 from core.musicalizador import validar_formato
@@ -91,6 +91,12 @@ class MainWindow(QMainWindow):
         self._cerrando_por_actualizacion = False
         self._preload_activo = False
         self._servidor_control_remoto = None
+        # Pre-escucha remota (Programador satélite, "▶ Previo"): motor
+        # dedicado, creado recién en el primer pedido -- mismo criterio
+        # que la Preescucha local (`VentanaProgramador._motor_previo`),
+        # SIEMPRE por la salida de Preescucha configurada, nunca la
+        # Master que va al aire.
+        self._motor_previo_remoto = None
 
         self._config = cargar_configuracion()
 
@@ -965,6 +971,14 @@ class MainWindow(QMainWindow):
             return self._alternar_automatico_remoto(bool(params.get("activar")))
         if accion == "listar_registros_categoria":
             return self._listar_registros_categoria_remoto(params)
+        if accion == "listar_registros_por_genero":
+            return self._listar_registros_por_genero_remoto(params)
+        if accion == "resolver_registro_por_ruta":
+            return self._resolver_registro_por_ruta_remoto(params)
+        if accion == "programador_previo_reproducir":
+            return self._programador_previo_reproducir_remoto(params)
+        if accion == "programador_previo_detener":
+            return self._programador_previo_detener_remoto()
         if accion == "programador_listar_guardadas":
             return self._programador_listar_guardadas_remoto()
         if accion == "programador_cargar_guardada":
@@ -1019,19 +1033,101 @@ class MainWindow(QMainWindow):
             {
                 "codigo": r.get("codigo", ""), "titulo": r.get("titulo", ""),
                 "duracion": r.get("duracion", ""), "ruta": r.get("ruta", ""),
+                "genero": r.get("genero", ""),
+                # Bug real corregido de paso, mismo patrón ya documentado
+                # varias veces en este proyecto ("el recorte de silencio
+                # nunca se aplicaba al aire"): sin estos 3 campos, un
+                # ítem agregado/reemplazado desde el Programador remoto
+                # sonaba SIN el recorte de silencio ni el nivelado ya
+                # calculados para ese archivo -- quedaban en 0/None/0.0
+                # a ciegas del lado del diálogo remoto.
+                "punto_inicio_ms": r.get("punto_inicio_ms") or 0,
+                "punto_fin_ms": r.get("punto_fin_ms"),
+                "ganancia_db": r.get("ganancia_db") or 0.0,
             }
             for r in registros
         ]
         return {"ok": True, "datos": {"registros": datos}}
 
+    def _listar_registros_por_genero_remoto(self, params: dict) -> dict:
+        """Usado por el Musicalizador remoto para elegir un Pisador
+        ESPECÍFICO -- mismo filtro que ya usa "Agregar Pisador" en
+        Ventana 2/Auxiliar y el Pisador del Musicalizador local."""
+        genero = params.get("genero") or ""
+        registros = self.ventana_explorador.listar_registros_por_genero(genero)
+        datos = [
+            {
+                "codigo": r.get("codigo", ""), "titulo": r.get("titulo", ""),
+                "duracion": r.get("duracion", ""), "ruta": r.get("ruta", ""),
+            }
+            for r in registros
+        ]
+        return {"ok": True, "datos": {"registros": datos}}
+
+    def _resolver_registro_por_ruta_remoto(self, params: dict) -> dict:
+        """Usado por el Musicalizador remoto para mostrar el TÍTULO
+        real de un ítem Específico (columna "Título", mismo criterio
+        que `_texto_titulo()` de la versión local) y por el
+        Programador remoto para la pre-escucha (análisis de audio del
+        ítem seleccionado)."""
+        ruta = params.get("ruta") or ""
+        registro = self.ventana_explorador.buscar_registro_por_ruta(ruta)
+        if registro is None:
+            return {"ok": True, "datos": {"registro": None}}
+        datos = {
+            "codigo": registro.get("codigo", ""), "titulo": registro.get("titulo", ""),
+            "duracion": registro.get("duracion", ""), "ruta": registro.get("ruta", ""),
+            "genero": registro.get("genero", ""),
+            "punto_inicio_ms": registro.get("punto_inicio_ms") or 0,
+            "punto_fin_ms": registro.get("punto_fin_ms"),
+            "ganancia_db": registro.get("ganancia_db") or 0.0,
+        }
+        return {"ok": True, "datos": {"registro": datos}}
+
+    # ------------------------------------------------------------------
+    # Pre-escucha remota del Programador (pedido explícito: "todo lo
+    # que tiene el principal y este no" -- el Programador local tiene
+    # "▶ Previo"/"⏹ Detener" desde la ronda 121). Motor DEDICADO,
+    # creado recién al primer pedido, SIEMPRE por la salida de
+    # Preescucha configurada (aplicar_procesador=False, nunca la
+    # Master que va al aire) -- mismo criterio que el ▶ Previo local.
+    # ------------------------------------------------------------------
+    def _motor_previo_remoto_o_crear(self) -> MotorAudio:
+        if self._motor_previo_remoto is None:
+            audio_cfg = self._config.get("audio", {})
+            id_dispositivo = audio_cfg.get("dispositivo_preescucha")
+            if id_dispositivo in (None, "default"):
+                id_dispositivo = None
+            self._motor_previo_remoto = MotorAudio(id_dispositivo, aplicar_procesador=False)
+        return self._motor_previo_remoto
+
+    def _programador_previo_reproducir_remoto(self, params: dict) -> dict:
+        ruta = params.get("ruta") or ""
+        if not ruta:
+            return {"ok": False, "error": "Falta la ruta del archivo a pre-escuchar."}
+        motor = self._motor_previo_remoto_o_crear()
+        motor.reproducir(
+            ruta,
+            punto_inicio_ms=int(params.get("punto_inicio_ms") or 0),
+            punto_fin_ms=params.get("punto_fin_ms"),
+            ganancia_db=float(params.get("ganancia_db") or 0.0),
+        )
+        return {"ok": True}
+
+    def _programador_previo_detener_remoto(self) -> dict:
+        if self._motor_previo_remoto is not None:
+            self._motor_previo_remoto.detener()
+        return {"ok": True}
+
     # ------------------------------------------------------------------
     # Programador remoto (pedido explícito: "que pueda mediante otro
-    # botón, programar, igual que en el programa principal") -- MVP
-    # deliberado (documentado en CLAUDE.md): cubre el flujo central
-    # (cargar/armar/guardar/aplicar) reusando los MISMOS métodos que
-    # ya usa VentanaProgramador/config.settings -- quedan afuera de
-    # esta ronda el drag&drop de reordenar, copiar/pegar y "duplicar
-    # para otro día", que sí tiene la versión local.
+    # botón, programar, igual que en el programa principal" -- y,
+    # ronda posterior, "dame todo y las mismas opciones... Todo lo que
+    # tiene el principal y este no"): cubre el flujo central
+    # (cargar/armar/guardar/aplicar), reordenar, copiar/pegar,
+    # duplicar para otro día, Comando FMT/HTH, Ítem Aleatorio,
+    # Reemplazar y pre-escucha -- reusando SIEMPRE los MISMOS métodos
+    # que ya usa VentanaProgramador/config.settings.
     # ------------------------------------------------------------------
     def _programador_listar_guardadas_remoto(self) -> dict:
         datos = [

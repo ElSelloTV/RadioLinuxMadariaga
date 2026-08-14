@@ -124,6 +124,31 @@ class ClienteControlRemoto:
             raise ErrorControlRemoto(respuesta.get("error", "listar_registros_categoria falló"))
         return respuesta["datos"]["registros"]
 
+    def listar_registros_por_genero(self, genero: str) -> list:
+        respuesta = self._pedir("listar_registros_por_genero", {"genero": genero})
+        if not respuesta.get("ok"):
+            raise ErrorControlRemoto(respuesta.get("error", "listar_registros_por_genero falló"))
+        return respuesta["datos"]["registros"]
+
+    def resolver_registro_por_ruta(self, ruta: str):
+        respuesta = self._pedir("resolver_registro_por_ruta", {"ruta": ruta})
+        if not respuesta.get("ok"):
+            raise ErrorControlRemoto(respuesta.get("error", "resolver_registro_por_ruta falló"))
+        return respuesta["datos"]["registro"]
+
+    # ------------------------------------------------------------------
+    # Pre-escucha remota del Programador (▶ Previo / ⏹ Detener, SIEMPRE
+    # por la salida de Preescucha configurada del lado servidor).
+    # ------------------------------------------------------------------
+    def previo_reproducir(self, ruta: str, punto_inicio_ms: int = 0, punto_fin_ms=None, ganancia_db: float = 0.0) -> dict:
+        return self._pedir("programador_previo_reproducir", {
+            "ruta": ruta, "punto_inicio_ms": punto_inicio_ms,
+            "punto_fin_ms": punto_fin_ms, "ganancia_db": ganancia_db,
+        })
+
+    def previo_detener(self) -> dict:
+        return self._pedir("programador_previo_detener")
+
     # ------------------------------------------------------------------
     # Programador remoto
     # ------------------------------------------------------------------
