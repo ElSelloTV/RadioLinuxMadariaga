@@ -37,6 +37,7 @@ from config.settings import (
 )
 from core.audio_engine import MotorAudio
 from core import actualizador
+from core import reinicio_sistema
 from gui.styles import LISTA_GENEROS
 from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 
@@ -747,6 +748,23 @@ class VentanaConfiguracion(QDialog):
             self.btn_buscar_duplicados.setEnabled(False)
 
         layout.addWidget(grupo_biblioteca)
+
+        # ---------- Grupo 4: Sistema (pedido explícito: "agregame la
+        # posibilidad de reiniciar la PC... un reinicio forzado") ----------
+        grupo_sistema = QGroupBox("🖥 Sistema")
+        layout_sistema = QVBoxLayout(grupo_sistema)
+        btn_reiniciar_pc = QPushButton("🔁 Reiniciar la PC (forzado)")
+        btn_reiniciar_pc.setObjectName("btnStop")
+        btn_reiniciar_pc.setToolTip(
+            "Reinicia TODA la PC ya mismo, sin importar qué procesos o\n"
+            "programas estén abiertos (corta la radio al aire de inmediato) —\n"
+            "último recurso cuando la máquina quedó \"colgada\" sin poder\n"
+            "acceder a una terminal."
+        )
+        btn_reiniciar_pc.clicked.connect(self._reiniciar_pc_forzado)
+        layout_sistema.addWidget(btn_reiniciar_pc)
+        layout.addWidget(grupo_sistema)
+
         layout.addStretch()
 
         if not actualizador.es_instalacion_git():
@@ -1008,6 +1026,27 @@ class VentanaConfiguracion(QDialog):
         from gui.dialogo_duplicados import DialogoDuplicados
         dialogo = DialogoDuplicados(self._ventana_explorador, parent=self)
         dialogo.exec()
+
+    def _reiniciar_pc_forzado(self):
+        """Pedido explícito: "reinicio forzado, sin importar los
+        procesos o programas abiertos" — corta la radio al aire de
+        inmediato, así que pide confirmación EXPLÍCITA con el texto
+        más fuerte posible antes de disparar nada (mismo criterio que
+        cualquier acción destructiva/irreversible de esta app)."""
+        respuesta = QMessageBox.question(
+            self, "Reiniciar la PC",
+            "Esto reinicia TODA la computadora YA MISMO, sin importar qué\n"
+            "programas estén abiertos -- corta la radio al aire de inmediato,\n"
+            "sin guardar nada más de lo que ya esté guardado.\n\n"
+            "¿Confirmás el reinicio forzado?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+        exito, mensaje = reinicio_sistema.reiniciar_pc_forzado()
+        if not exito:
+            QMessageBox.warning(self, "Reiniciar la PC", mensaje)
 
     # ------------------------------------------------------------------
     # Tab: Actualizaciones
