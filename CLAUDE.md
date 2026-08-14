@@ -12387,6 +12387,144 @@ soltó de una vez.
     confirme que puede arrastrar el límite entre el árbol y los
     controles, y las 3 columnas del árbol, con normalidad en su
     notebook real.
+125. ~~Investigación + 3 correcciones sobre volumen/nivelado/prioridad:
+    el bug real de "guardar Configuración sube el volumen de golpe",
+    interruptor on/off del nivelado, prioridad de proceso dinámica
+    mientras hay reproducción~~ — surgió de una consulta de Santiago
+    ("cambié el tamaño de letra de Ventana 2 al aire y el volumen
+    subió solo, como corrigiendo — ¿hay algún nivelador en vivo?"),
+    seguida de una segunda consulta sobre baches de milisegundos en la
+    reproducción ("intermitencia, como saltos... ¿puede ser prioridad
+    de la PC?") — las dos se investigaron primero SIN tocar código
+    (pedido explícito "no toques nada sin antes informarme"), y recién
+    en esta ronda Santiago dio el visto bueno a 3 acciones concretas.
+
+    **a) Bug real corregido — guardar Configuración pisaba la ganancia
+    del ítem que está sonando**: la causa real, encontrada en la
+    investigación: el nivelado de volumen (ronda 94, por LOUDNESS) es
+    un cálculo ESTÁTICO hecho una sola vez al importar cada archivo
+    (`ganancia_db`, guardado en la biblioteca) — nunca un proceso en
+    vivo, así que no consume recursos mientras suena. Pero
+    `GestorPlaylist.set_volumen_base()`/`GestorPublicidad.set_volumen_base()`
+    (llamadas SIEMPRE que se guarda Configuración,
+    `MainWindow._aplicar_configuracion_en_vivo()`, sin importar qué se
+    haya cambiado — aunque sea solo el tamaño de letra) llamaban
+    `motor.set_volumen(volumen_master_crudo)` DIRECTO — pisando sin
+    querer la ganancia del ítem en curso: si ese ítem estaba atenuado
+    (ganancia negativa, por ser una grabación "fuerte"), guardar
+    Configuración lo saltaba de largo y lo devolvía de golpe al
+    volumen Master crudo, más fuerte — exactamente el salto "como
+    corrigiendo" que reportó Santiago. Corregido en `core/audio_engine.py`:
+    `MotorAudio` ahora recuerda la ganancia del ítem actual
+    (`_ganancia_db_actual`, seteada en cada `reproducir()`) y expone
+    `actualizar_volumen_base(volumen_base)` — recalcula el volumen
+    FINAL aplicando esa ganancia YA conocida sobre el volumen base
+    NUEVO, en vez de saltar al crudo. Los dos `set_volumen_base()`
+    (Ventana 1, y Ventana 2/Auxiliar — comparten `GestorPlaylist`) se
+    actualizaron para usar este método nuevo en vez de `set_volumen()`
+    directo — cubre las 3 ventanas de una sola vez. `set_volumen()`
+    crudo sigue existiendo tal cual para quien de verdad necesita fijar
+    un volumen sin nivelar (ej. el ducking del Pisador, que ya calcula
+    su propio volumen final aparte). **Nota para el futuro, NO
+    corregida en esta ronda a propósito (fuera del alcance pedido
+    explícito)**: el mismo patrón de "restaurar a `_volumen_base` sin
+    la ganancia" también existe en `_on_pisador_finalizado()`/
+    `_cancelar_pisador_en_curso()` (el fade de vuelta tras un Pisador,
+    `core/gestor_emision.py`) — si Santiago nota el mismo salto al
+    terminar un Pisador sobre un ítem atenuado, es el mismo arreglo,
+    aplicable ahí también.
+
+    **b) Interruptor on/off del nivelado**: nueva clave
+    `reproduccion.nivelado_activado` (`config/settings.py`, default
+    `True` — ninguna instalación existente cambia de comportamiento
+    sola) + checkbox "Nivelado de volumen activado" en Configuración →
+    Reproducción y Automatización, arriba de los dos campos numéricos
+    ya existentes (objetivo LUFS / techo de pico) — deshabilita
+    visualmente esos dos campos cuando está apagado
+    (`_on_toggle_nivelado_activado`). `parametros_nivelado()` pasó de
+    devolver `(objetivo_lufs, techo_pico_dbfs)` a
+    `(activado, objetivo_lufs, techo_pico_dbfs)`, actualizado en los 5
+    puntos que lo usan (`core/reanalizador_batch.py` +
+    4 en `gui/ventana_explorador.py`: alta individual, import masivo,
+    reemplazar/vincular, "Aplicar análisis de silencio"). Apagarlo
+    hace que `analizar_audio()` (`core/analizador_audio.py`, parámetro
+    nuevo `nivelado_activado`) deje `ganancia_db=0.0` sin calcular nada
+    — el recorte de silencio de entrada/salida NO se ve afectado, es
+    independiente. **Mismo criterio de siempre, reafirmado con
+    Santiago en la conversación previa**: NO es retroactivo — apagar
+    el interruptor solo afecta a lo que se analice DE ACÁ EN MÁS
+    (importar, "Aplicar análisis de silencio", "Reanalizar
+    biblioteca"); un archivo ya nivelado antes de apagarlo conserva su
+    ganancia guardada hasta que se lo vuelva a analizar u operar con
+    "Revertir análisis de silencio" (ronda 92, ya existente).
+
+    **c) Prioridad de proceso dinámica**: nuevo
+    `core/prioridad_proceso.py` (sin Qt, mismo espíritu que
+    `core/instancia_unica.py`) — mientras hay audio sonando en
+    CUALQUIERA de las 3 ventanas de reproducción (Publicidad/Emisión/
+    Auxiliar), le pide al sistema operativo una prioridad de
+    scheduling más alta (`os.setpriority(PRIO_PROCESS, 0, -5)`, nice
+    moderado, no extremo); en cuanto no queda nada sonando, vuelve a
+    nice 0 (normal) — "devuelve la prioridad" en el sentido de no
+    quedarse con una ventaja permanente, dejando el mismo terreno
+    parejo para cualquier otro programa (ZaraRadio incluido) el resto
+    del tiempo. **Límite real explicado a Santiago**: este programa NO
+    tiene ninguna forma legítima de tocar la prioridad de OTRO proceso
+    ajeno (ZaraRadio es un programa completamente aparte) — lo único
+    que puede hacer es subir/bajar SU PROPIA prioridad. `MainWindow`
+    ganó un `QTimer` liviano de 2s (`_actualizar_prioridad_proceso()`,
+    arrancado al final de `_inicializar_motores_audio()`) que consulta
+    `esta_reproduciendo()` de los 3 motores PRINCIPALES (no los
+    secundarios como Pisador/previo/HORA-TEMP manual, que son ráfagas
+    cortas, no "reproducción" en el sentido del pedido) y llama a
+    `actualizar_segun_reproduccion()`, que es idempotente — no repite
+    la llamada al sistema operativo si el estado agregado no cambió
+    desde la última vez. **Requiere permiso del sistema operativo para
+    bajar el nice** — un usuario sin privilegios normalmente NO puede
+    hacerlo por defecto en Linux (la app la corre el usuario `radio`
+    sin privilegios especiales, confirmado en el incidente de
+    diagnóstico de una ronda anterior) — si el permiso falta, degrada
+    limpio (se queda en la prioridad normal de siempre, sin romper
+    nada) y deja UN aviso en el log (nunca en loop) explicando qué
+    falta. **Para que esto tenga efecto real en su máquina, Santiago
+    tiene que agregar una regla de sistema una sola vez** (fuera del
+    alcance de este repo, se le pasó el comando en el chat):
+    ```
+    echo "radio  -  nice  -10" | sudo tee /etc/security/limits.d/radio-audio.conf
+    ```
+    y cerrar/reabrir la sesión del usuario `radio` para que tome
+    efecto (los límites de PAM se leen al iniciar sesión, no en
+    caliente). Sin ese paso, el mecanismo queda "armado" pero inerte —
+    el log lo va a dejar bien claro la primera vez que lo intente.
+
+    Probado con `test_a_ganancia_no_pisada.py` (nuevo: un ítem con
+    ganancia negativa, `actualizar_volumen_base()` con el mismo
+    volumen base conserva el volumen nivelado exacto en vez de saltar
+    al crudo — escenario EXACTO reportado por Santiago —, subir el
+    Volumen Master real sí sube el volumen pero sin perder el
+    nivelado, y los dos `set_volumen_base()` confirmados por código
+    fuente usando el método nuevo) + `test_c_prioridad_proceso.py`
+    (nuevo: sube/baja nice según el estado, idempotente en llamadas
+    consecutivas iguales, reacciona a cada transición real, degrada
+    limpio y avisa UNA sola vez sin permiso del SO, integración real
+    con `MainWindow` — el agregado da `True` con que UNA sola de las 3
+    ventanas esté sonando) + regresión de
+    `test_programador_layout_dias_biblioteca.py` (ronda 124) sin
+    fallos nuevos + `py_compile` completo + smoke test de arranque de
+    `main.py` sin traceback. **Confirmado en este mismo sandbox
+    (corriendo como root) que `os.setpriority()` funciona técnicamente
+    sin errores** — pero el sandbox no reproduce el escenario real de
+    permisos del usuario `radio` sin privilegios en la PC de la radio,
+    así que sigue sin poder confirmarse ahí. **Sigue sin poder
+    confirmarse con audio/hardware real**: falta que Santiago (1)
+    confirme que guardar Configuración ya no le sube el volumen de
+    golpe al ítem que está sonando, (2) pruebe apagar/prender el
+    nivelado desde Configuración y confirme que los archivos nuevos
+    importados con el interruptor apagado suenan sin ningún ajuste, y
+    (3) agregue la regla de `limits.d` de arriba y confirme (mirando
+    el log de la app) si la prioridad de proceso efectivamente se
+    eleva mientras algo suena, y si eso se nota en los baches de
+    milisegundos que reportó.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 

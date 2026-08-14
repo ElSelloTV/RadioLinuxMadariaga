@@ -44,6 +44,7 @@ from core.audio_engine import obtener_duracion_formateada
 from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
 from core.servidor_control_remoto import ServidorControlRemoto
 from core.musicalizador import validar_formato
+import core.prioridad_proceso as prioridad_proceso
 from config.settings import (
     cargar_configuracion, registrar_evento, registrar_error, guardar_configuracion,
     guardar_lista_auxiliar, listar_listas_auxiliares,
@@ -892,6 +893,28 @@ class MainWindow(QMainWindow):
                 "(sudo apt install vlc libvlc-dev). La interfaz funciona igual.",
                 8000,
             )
+
+        # Pedido explícito ("prioridad de reproducción, solo cuando
+        # está play en cualquier ventana activo... si no hay
+        # reproductor musical devolver la prioridad a otro, ej.
+        # ZaraRadio"): chequeo liviano cada 2s de los 3 motores
+        # PRINCIPALES (Publicidad/Emisión/Auxiliar -- no los
+        # secundarios como Pisador/previo/HORA-TEMP, que son ráfagas
+        # cortas, no "reproducción" en el sentido que pidió Santiago).
+        # Ver core/prioridad_proceso.py para el detalle completo
+        # (requiere permiso del sistema operativo, degrada limpio si
+        # no lo tiene).
+        self._timer_prioridad_proceso = QTimer(self)
+        self._timer_prioridad_proceso.setInterval(2000)
+        self._timer_prioridad_proceso.timeout.connect(self._actualizar_prioridad_proceso)
+        self._timer_prioridad_proceso.start()
+
+    def _actualizar_prioridad_proceso(self):
+        motores = [self.gestor_publicidad.motor, self.gestor_emision.motor]
+        if self._gestor_auxiliar is not None:
+            motores.append(self._gestor_auxiliar.motor)
+        hay_algo_sonando = any(motor.esta_reproduciendo() for motor in motores)
+        prioridad_proceso.actualizar_segun_reproduccion(hay_algo_sonando)
 
     # ------------------------------------------------------------------
     # Control remoto (app satélite) — pedido explícito: "una app aparte

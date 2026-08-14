@@ -338,6 +338,23 @@ class VentanaConfiguracion(QDialog):
         # importar/analizar?" -- ver core/analizador_audio.py:
         # _calcular_ganancia_db()). NO destructivo: solo cambia el
         # ajuste de volumen calculado, nunca el archivo.
+        #
+        # Interruptor on/off (pedido explícito: "agregá el botón para
+        # apagar el nivelado o volverlo a activar") -- apagarlo NO es
+        # retroactivo (mismo criterio que cambiar el objetivo LUFS):
+        # solo afecta a lo que se analice DE ACÁ EN MÁS (importar,
+        # "Aplicar análisis de silencio", "Reanalizar biblioteca").
+        self.chk_nivelado_activado = QCheckBox("Nivelado de volumen activado")
+        self.chk_nivelado_activado.setToolTip(
+            "Con esto apagado, cualquier archivo que se analice de acá en\n"
+            "más (importar, Aplicar análisis de silencio, Reanalizar\n"
+            "biblioteca) queda sin ningún ajuste de volumen — suena tal cual\n"
+            "está grabado. NO es retroactivo: un archivo YA nivelado antes de\n"
+            "apagarlo conserva su ajuste guardado hasta que se lo vuelva a\n"
+            "analizar u operar con \"Revertir análisis de silencio\"."
+        )
+        self.chk_nivelado_activado.toggled.connect(self._on_toggle_nivelado_activado)
+
         self.spin_objetivo_lufs = QDoubleSpinBox()
         self.spin_objetivo_lufs.setRange(-30.0, -6.0)
         self.spin_objetivo_lufs.setSingleStep(0.5)
@@ -396,6 +413,7 @@ class VentanaConfiguracion(QDialog):
         form.addRow("Tolerancia de silencio estricta (Publicidad/Separadores/HTH):", self.spin_tolerancia_silencio_v1)
         form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
         form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
+        form.addRow(self.chk_nivelado_activado)
         form.addRow("Nivelado de volumen — objetivo de sonoridad:", self.spin_objetivo_lufs)
         form.addRow("Nivelado de volumen — techo de seguridad de pico:", self.spin_techo_pico)
         form.addRow("Buffer de audio (anti-tartamudeo):", self.spin_buffer_caching)
@@ -431,6 +449,14 @@ class VentanaConfiguracion(QDialog):
         form.addRow(nota_nivelado)
 
         return widget
+
+    def _on_toggle_nivelado_activado(self, activo: bool):
+        """Apagar el nivelado no borra los dos números configurados —
+        solo los deja sin efecto (ver analizar_audio/nivelado_activado)
+        — deshabilitarlos visualmente evita que parezca que siguen
+        aplicando algo mientras el interruptor está en OFF."""
+        self.spin_objetivo_lufs.setEnabled(activo)
+        self.spin_techo_pico.setEnabled(activo)
 
     # ------------------------------------------------------------------
     # Tab: General
@@ -1150,8 +1176,10 @@ class VentanaConfiguracion(QDialog):
         self.spin_tolerancia_silencio_v1.setValue(reproduccion["tolerancia_silencio_v1_segundos"])
         self.spin_umbral_silencio.setValue(reproduccion["umbral_silencio_dbfs"])
         self.spin_bajada_pisador.setValue(reproduccion["pisador_bajada_db"])
+        self.chk_nivelado_activado.setChecked(reproduccion.get("nivelado_activado", True))
         self.spin_objetivo_lufs.setValue(reproduccion["nivelado_loudness_lufs_objetivo"])
         self.spin_techo_pico.setValue(reproduccion["nivelado_techo_pico_dbfs"])
+        self._on_toggle_nivelado_activado(self.chk_nivelado_activado.isChecked())
         self.spin_fade_out_v1.setValue(reproduccion["duracion_fade_out_v1_ms"])
         self.spin_fade_in_declick_v1.setValue(reproduccion["duracion_fade_in_declick_v1_ms"])
         self.spin_buffer_caching.setValue(reproduccion["duracion_buffer_caching_ms"])
@@ -1239,6 +1267,7 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["tolerancia_silencio_v1_segundos"] = self.spin_tolerancia_silencio_v1.value()
         self._config["reproduccion"]["umbral_silencio_dbfs"] = self.spin_umbral_silencio.value()
         self._config["reproduccion"]["pisador_bajada_db"] = self.spin_bajada_pisador.value()
+        self._config["reproduccion"]["nivelado_activado"] = self.chk_nivelado_activado.isChecked()
         self._config["reproduccion"]["nivelado_loudness_lufs_objetivo"] = self.spin_objetivo_lufs.value()
         self._config["reproduccion"]["nivelado_techo_pico_dbfs"] = self.spin_techo_pico.value()
         self._config["reproduccion"]["duracion_fade_out_v1_ms"] = self.spin_fade_out_v1.value()

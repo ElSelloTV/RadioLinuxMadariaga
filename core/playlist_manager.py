@@ -235,8 +235,14 @@ class GestorPublicidad:
 
     # ------------------------------------------------------------------
     def set_volumen_base(self, volumen: int):
+        """Bug real corregido ("guardar Configuración pisa la ganancia
+        del ítem en curso"): usa `motor.actualizar_volumen_base()` en
+        vez de `motor.set_volumen()` — recalcula el volumen final
+        respetando la ganancia YA aplicada a la tanda que está sonando
+        (ronda 94, nivelado por loudness), en vez de saltar al volumen
+        Master crudo sin nivelar."""
         self._volumen_base = volumen
-        self.motor.set_volumen(volumen)
+        self.motor.actualizar_volumen_base(volumen)
 
     def _pausar(self):
         self._cancelar_anuncio_manual_en_curso()

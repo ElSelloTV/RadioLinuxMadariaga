@@ -223,6 +223,7 @@ def analizar_audio(
     umbral_silencio_dbfs: float = UMBRAL_SILENCIO_DBFS_DEFECTO,
     objetivo_lufs: float = LOUDNESS_LUFS_OBJETIVO_DEFECTO,
     techo_pico_dbfs: float = TECHO_PICO_DBFS_DEFECTO,
+    nivelado_activado: bool = True,
 ) -> dict:
     """Analiza `ruta` y devuelve:
         {
@@ -248,6 +249,13 @@ def analizar_audio(
     `objetivo_lufs`/`techo_pico_dbfs` (configurables desde
     Configuración → Reproducción y Automatización): ver
     `_calcular_ganancia_db()`.
+
+    `nivelado_activado` (pedido explícito, botón on/off en
+    Configuración): con `False`, se saltea por completo el cálculo de
+    ganancia — `ganancia_db` queda en 0.0 (el archivo suena tal cual
+    está grabado, sin ningún ajuste) — el recorte de silencio de
+    entrada/salida NO se ve afectado, sigue funcionando igual, son dos
+    cosas independientes.
     """
     try:
         from pydub import AudioSegment
@@ -281,7 +289,9 @@ def analizar_audio(
 
         # Nivelado: sonoridad percibida (LUFS) con fallback a promedio
         # dBFS + techo de seguridad de pico — ver _calcular_ganancia_db().
-        ganancia_db = _calcular_ganancia_db(audio, objetivo_lufs, techo_pico_dbfs)
+        # Apagado (nivelado_activado=False): 0.0, sin ningún ajuste —
+        # el recorte de silencio de arriba no se ve afectado.
+        ganancia_db = _calcular_ganancia_db(audio, objetivo_lufs, techo_pico_dbfs) if nivelado_activado else 0.0
 
         return {
             "punto_inicio_ms": punto_inicio_ms,
