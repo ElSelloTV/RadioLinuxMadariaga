@@ -141,6 +141,17 @@ CONFIG_POR_DEFECTO = {
         # justo en el techo -- evita que un nivelado agresivo sature
         # al reproducir un tema con picos altos y promedio bajo.
         "nivelado_techo_pico_dbfs": -1.0,
+        # Interruptor on/off (pedido explícito: "agregá el botón para
+        # apagar el nivelado o volverlo a activar") -- `True` por
+        # defecto, ninguna instalación existente cambia de
+        # comportamiento sola. Apagarlo hace que cualquier análisis
+        # NUEVO (importar, "Aplicar análisis de silencio", "Reanalizar
+        # biblioteca") deje ganancia_db=0.0 -- el archivo suena tal
+        # cual está grabado, sin ningún ajuste. NO es retroactivo (ver
+        # parametros_nivelado()): un archivo YA analizado con el
+        # nivelado activado conserva su ganancia guardada hasta que se
+        # lo vuelva a analizar u operar con "Revertir".
+        "nivelado_activado": True,
     },
     "general": {
         "confirmar_antes_de_eliminar": True,
@@ -332,12 +343,14 @@ def tolerancia_silencio_para_genero(config: dict, genero: str) -> float:
 
 def parametros_nivelado(config: dict) -> tuple:
     """Helper compartido (mismo espíritu que `tolerancia_silencio_para_genero`,
-    reusado en cada punto que llama `analizar_audio()`): lee el
-    objetivo de loudness (LUFS) y el techo de seguridad de pico
-    (dBFS) configurados en Configuración → Reproducción y
-    Automatización. Devuelve `(objetivo_lufs, techo_pico_dbfs)`."""
+    reusado en cada punto que llama `analizar_audio()`): lee si el
+    nivelado está ACTIVADO, el objetivo de loudness (LUFS) y el techo
+    de seguridad de pico (dBFS) configurados en Configuración →
+    Reproducción y Automatización. Devuelve
+    `(activado, objetivo_lufs, techo_pico_dbfs)`."""
     reproduccion = config.get("reproduccion", {})
     return (
+        reproduccion.get("nivelado_activado", True),
         reproduccion.get("nivelado_loudness_lufs_objetivo", -16.0),
         reproduccion.get("nivelado_techo_pico_dbfs", -1.0),
     )

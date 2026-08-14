@@ -91,7 +91,7 @@ def ejecutar_reanalisis(config: dict, callback_progreso=None) -> dict:
     )
     from core.analizador_audio import analizar_audio
 
-    objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
+    nivelado_activado, objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
 
     def _guardar_sin_frenar_el_lote(categorias):
         # Defensivo (mismo criterio ya establecido en el proyecto:
@@ -138,6 +138,7 @@ def ejecutar_reanalisis(config: dict, callback_progreso=None) -> dict:
             analisis = analizar_audio(
                 ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral,
                 objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs,
+                nivelado_activado=nivelado_activado,
             )
 
             stats["total"] += 1

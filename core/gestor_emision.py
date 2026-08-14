@@ -323,10 +323,16 @@ class GestorPlaylist:
     def set_volumen_base(self, volumen: int):
         """Volumen 0-100 "normal" del tema principal, al que se vuelve
         apenas termina un Pisador. Reemplaza a llamar motor.set_volumen()
-        directo para que el Pisador sepa a qué nivel restaurar."""
+        directo para que el Pisador sepa a qué nivel restaurar.
+
+        Bug real corregido ("guardar Configuración pisa la ganancia
+        del ítem en curso"): usa `motor.actualizar_volumen_base()` en
+        vez de `motor.set_volumen()` — recalcula el volumen final
+        respetando la ganancia YA aplicada al ítem que está sonando,
+        en vez de saltar al volumen Master crudo sin nivelar."""
         self._volumen_base = volumen
         if not self._pisador_activo:
-            self.motor.set_volumen(volumen)
+            self.motor.actualizar_volumen_base(volumen)
 
     def _resolver_candidata_verde(self, fila_base: int) -> int:
         """Calcula qué fila debería quedar en VERDE justo después de

@@ -220,6 +220,17 @@ class MotorAudio(QObject):
         # re-aplica solo (en el arranque diferido y en cada tick de
         # posición) hasta que el reproductor lo tome de verdad.
         self._volumen_deseado = 100
+        # Ganancia (dB) del ítem que está sonando AHORA MISMO -- la que
+        # ya se calculó UNA vez al importar/analizar ese archivo
+        # (nivelado por loudness, ronda 94). Bug real corregido
+        # ("guardar Configuración pisa la ganancia del ítem en curso"):
+        # antes, quien quería actualizar el Volumen Master en caliente
+        # (ej. al guardar Configuración) llamaba set_volumen(volumen_base)
+        # directo, con el volumen CRUDO -- perdía el ajuste propio del
+        # ítem que estaba sonando en ESE momento. Ahora se recuerda acá
+        # (ver reproducir()) para que actualizar_volumen_base() pueda
+        # recalcular el volumen final SIN perder ese ajuste.
+        self._ganancia_db_actual = 0.0
         # Diagnóstico (pedido explícito, "sigue sin reproducir por
         # donde lo selecciono"): recuerda el último device por el que
         # se logueó, para no spamear log_aplicacion.txt en cada
@@ -355,6 +366,7 @@ class MotorAudio(QObject):
         # se pierde si no se refuerza acá en cada arranque.
         self._aplicar_dispositivo_salida()
 
+        self._ganancia_db_actual = ganancia_db
         volumen_final = volumen_base
         if ganancia_db:
             from core.analizador_audio import volumen_ajustado_por_ganancia
@@ -439,6 +451,28 @@ class MotorAudio(QObject):
         leerlo inmediatamente después de reproducir() (cuando el
         reproductor real todavía puede devolver 0/-1)."""
         return self._volumen_deseado
+
+    def ganancia_db_actual(self) -> float:
+        """La ganancia (dB) del ítem que está sonando ahora mismo —
+        calculada UNA sola vez al importar/analizar ese archivo
+        (nivelado por loudness). Ver actualizar_volumen_base()."""
+        return self._ganancia_db_actual
+
+    def actualizar_volumen_base(self, volumen_base: int):
+        """Pedido explícito ("corregí el bug puntual que guardar
+        configuración no pise la ganancia"): a diferencia de
+        set_volumen() (fija un volumen 0-100 CRUDO, sin nivelar), este
+        método recalcula el volumen FINAL del ítem que está sonando
+        ahora mismo usando SU ganancia ya calculada
+        (ganancia_db_actual()) sobre el volumen base NUEVO — así
+        cambiar el Volumen Master desde Configuración (por cualquier
+        motivo, aunque no tenga nada que ver con audio — ej. cambiar
+        el tamaño de letra) nunca vuelve a pisar/perder el nivelado
+        del ítem en curso. Quien necesite fijar un volumen crudo sin
+        nivelar (ej. el ducking del Pisador, que ya calcula su propio
+        volumen final) sigue usando set_volumen() directo."""
+        from core.analizador_audio import volumen_ajustado_por_ganancia
+        self.set_volumen(volumen_ajustado_por_ganancia(volumen_base, self._ganancia_db_actual))
 
     def obtener_volumen(self) -> int:
         if not self._disponible:

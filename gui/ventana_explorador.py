@@ -1386,10 +1386,10 @@ class VentanaExplorador(QWidget):
         # config/settings.py:tolerancia_silencio_para_genero().
         tolerancia = tolerancia_silencio_para_genero(config, genero)
         umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
-        objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
+        nivelado_activado, objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
         analisis = analizar_audio(
             ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio,
-            objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs,
+            objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs, nivelado_activado=nivelado_activado,
         )
 
         registro = {
@@ -1457,7 +1457,7 @@ class VentanaExplorador(QWidget):
         config = cargar_configuracion()
         tolerancia = tolerancia_silencio_para_genero(config, genero)
         umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
-        objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
+        nivelado_activado, objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
 
         registros = item_categoria.data(0, ROL_ARCHIVOS) or []
         siguiente_numero = len(registros) + 1
@@ -1489,7 +1489,7 @@ class VentanaExplorador(QWidget):
                 ruta = self._copiar_a_biblioteca(ruta, item_categoria, genero)
                 analisis = analizar_audio(
                     ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio,
-                    objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs,
+                    objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs, nivelado_activado=nivelado_activado,
                 )
                 registro = {
                     "titulo": os.path.splitext(os.path.basename(ruta))[0],
@@ -1827,10 +1827,10 @@ class VentanaExplorador(QWidget):
         config = cargar_configuracion()
         tolerancia = tolerancia_silencio_para_genero(config, registro.get("genero", ""))
         umbral_silencio = config["reproduccion"].get("umbral_silencio_dbfs", -40.0)
-        objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
+        nivelado_activado, objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
         analisis = analizar_audio(
             ruta_nueva, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral_silencio,
-            objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs,
+            objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs, nivelado_activado=nivelado_activado,
         )
 
         registro["ruta"] = ruta_nueva
@@ -1943,7 +1943,7 @@ class VentanaExplorador(QWidget):
             return
         config = cargar_configuracion()
         umbral = config.get("reproduccion", {}).get("umbral_silencio_dbfs", -40.0)
-        objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
+        nivelado_activado, objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
 
         analizados = 0
         preservados = 0
@@ -1971,7 +1971,7 @@ class VentanaExplorador(QWidget):
             tolerancia = tolerancia_silencio_para_genero(config, registro_vivo.get("genero"))
             analisis = analizar_audio(
                 ruta, tolerancia_silencio_segundos=tolerancia, umbral_silencio_dbfs=umbral,
-                objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs,
+                objetivo_lufs=objetivo_lufs, techo_pico_dbfs=techo_pico_dbfs, nivelado_activado=nivelado_activado,
             )
 
             if analisis["analizado"]:
