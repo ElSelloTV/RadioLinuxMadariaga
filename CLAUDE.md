@@ -12742,20 +12742,26 @@ soltó de una vez.
     perderlas de vista, antes de la feature entregada:
 
     - **"Bays" (botón de Ventana 3) — pedido de auto-instalación
-      BLOQUEADO, esperando datos de Santiago**: pidió que, si `bays`
+      DESCARTADO, no es un paquete de sistema**: pidió que, si `bays`
       no está instalado, el botón pregunte Sí/No y lo instale solo.
-      Ni Santiago ni esta sesión saben con certeza QUÉ paquete real
-      instala el binario `bays` — el único rastro en este archivo
-      dice que "reemplaza la descarga de YouTube" como un programa
-      EXTERNO ya instalado, sin origen documentado (no es un paquete
-      apt/flatpak/snap conocido con ese nombre). Instalar a ciegas vía
-      `sudo` un paquete adivinado es un riesgo real que no vale la
-      pena correr — se le pidió a Santiago, en la PC donde `bays` SÍ
-      funciona, el resultado de `which bays` / `dpkg -S "$(which
-      bays)"` / `bays --version`/`--help`, para identificar el
-      paquete real antes de escribir cualquier lógica de instalación.
-      Quedó en "ok, espera que lo tengo en otra pc" — retomar cuando
-      pase esos datos, NO adivinar un paquete mientras tanto.
+      Investigado y CERRADO por Santiago: "Bays por ahora lo dejamos,
+      lo borré de GitHub pero lo tengo en un pendrive" — confirma que
+      NUNCA fue un paquete apt/flatpak/snap instalable por nombre (la
+      sospecha original, documentada arriba, era correcta) sino un
+      programa PROPIO que Santiago tenía en un repo de GitHub y ya
+      borró — hoy solo existe como archivo en un pendrive suyo. Sin un
+      paquete real detrás, no hay nada que un `apt install`/`sudo`
+      pueda instalar solo — un auto-instalador de "Sí/No" no tiene
+      sentido para este caso (sería, como mucho, copiar un binario
+      desde un pendrive a mano, algo que el botón de Ventana 3 no
+      puede hacer por su cuenta). Pedido shelved a pedido explícito de
+      Santiago ("por ahora lo dejamos") — el botón "🎙 Bays" sigue
+      igual que antes (`shutil.which()` + aviso claro si no está
+      instalado, sin instalación automática). Si en algún momento
+      Santiago quiere retomarlo, lo más simple sería un botón nuevo
+      "instalar Bays desde un archivo..." que copie el binario elegido
+      a mano (`QFileDialog`) a una carpeta local (ej. `~/.local/bin`),
+      no un instalador de paquete de sistema.
     - **EasyEffects/Viper4Linux "los efectos no perduran" — analizado
       a fondo, cambio de arquitectura EXPLÍCITAMENTE DESCARTADO por
       Santiago, no tocar**: la sospecha de Santiago (que el mecanismo
