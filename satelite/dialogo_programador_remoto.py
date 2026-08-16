@@ -9,10 +9,11 @@ Cubre TODO el flujo del Programador local (`gui/ventana_programador.py`):
 cargar un punto de partida (guardada / lo actual de Ventana 1 / vacía),
 armar bloques e ítems, reordenar (↑ Subir / ↓ Bajar, en vez de
 drag&drop — mismo resultado, mecanismo más simple para un panel
-remoto), Copiar/Pegar entre bloques, Comando FMT/HTH, Ítem Aleatorio,
-Reemplazar (bloque: hora/título; ítem: cambia el archivo sin mover su
-posición), pre-escucha por la salida de Preescucha del lado servidor,
-Duplicar para otro día, Guardar y Aplicar Ahora en Ventana 1.
+remoto), Copiar/Pegar entre bloques, Comando FMT/HTH/ENLATADO, Ítem
+Aleatorio, Reemplazar (bloque: hora/título; ítem: cambia el archivo
+sin mover su posición), pre-escucha por la salida de Preescucha del
+lado servidor, Duplicar para otro día, Guardar y Aplicar Ahora en
+Ventana 1.
 
 El estado real vive acá, en `self._bloques` (una lista de dicts, el
 MISMO formato que ya usa `cargar_bloques()`/`programacion.json`) — el
@@ -102,13 +103,20 @@ class DialogoProgramadorRemoto(QDialog):
         )
         btn_agregar_hth = QPushButton("▶ Comando HTH...")
         btn_agregar_hth.setToolTip("Anuncia hora/temperatura/humedad concatenando los clips del género \"HTH\".")
+        btn_agregar_enlatado = QPushButton("▶ Comando ENLATADO...")
+        btn_agregar_enlatado.setToolTip(
+            "Reproduce el ÚLTIMO archivo cargado en la categoría configurada\n"
+            "para ese slot (Configuración → Enlatados, lado radio)."
+        )
         btn_agregar_aleatorio = QPushButton("🎲 Ítem Aleatorio...")
         btn_agregar_aleatorio.setToolTip("Elige un archivo al azar de una categoría CADA VEZ que le toca sonar.")
         btn_agregar_fmt.clicked.connect(self._insertar_comando_fmt)
         btn_agregar_hth.clicked.connect(self._insertar_comando_hth)
+        btn_agregar_enlatado.clicked.connect(self._insertar_comando_enlatado)
         btn_agregar_aleatorio.clicked.connect(self._insertar_item_aleatorio)
         fila_especiales.addWidget(btn_agregar_fmt)
         fila_especiales.addWidget(btn_agregar_hth)
+        fila_especiales.addWidget(btn_agregar_enlatado)
         fila_especiales.addWidget(btn_agregar_aleatorio)
         layout.addLayout(fila_especiales)
 
@@ -349,6 +357,33 @@ class DialogoProgramadorRemoto(QDialog):
         if not ok:
             return
         item = {"es_comando": True, "tipo_comando": "HTH", "parametro_comando": elegido}
+        indice = self._indice_insercion(i_bloque)
+        if indice is None:
+            self._bloques[i_bloque]["items"].append(item)
+        else:
+            self._bloques[i_bloque]["items"].insert(indice, item)
+        self._refrescar_arbol()
+
+    def _insertar_comando_enlatado(self):
+        i_bloque = self._bloque_destino()
+        if i_bloque is None:
+            QMessageBox.information(self, "Comando ENLATADO", "Primero creá un bloque horario.")
+            return
+        try:
+            enlatados = self._cliente.listar_enlatados()
+        except ErrorControlRemoto as error:
+            QMessageBox.warning(self, "Control remoto", str(error))
+            return
+        opciones = []
+        for numero in ("1", "2", "3", "4", "5"):
+            ruta = enlatados.get(numero)
+            etiqueta = f"{numero} — " + (" / ".join(ruta) if ruta else "(sin configurar)")
+            opciones.append(etiqueta)
+        elegido, ok = QInputDialog.getItem(self, "Insertar Comando ENLATADO", "Slot:", opciones, editable=False)
+        if not ok:
+            return
+        numero = elegido.split(" — ", 1)[0]
+        item = {"es_comando": True, "tipo_comando": "ENLATADO", "parametro_comando": numero}
         indice = self._indice_insercion(i_bloque)
         if indice is None:
             self._bloques[i_bloque]["items"].append(item)

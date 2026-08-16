@@ -34,7 +34,11 @@ from PySide6.QtGui import QColor, QDesktopServices
 from config.settings import (
     cargar_configuracion, guardar_configuracion, registrar_error,
     ARCHIVO_LOG, ARCHIVO_HISTORIAL_REPRODUCCION,
+    categoria_de_enlatado,
 )
+from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
+
+NUMEROS_ENLATADO = ("1", "2", "3", "4", "5")
 from core.audio_engine import MotorAudio
 from core import actualizador
 from core import reinicio_sistema
@@ -75,6 +79,7 @@ class VentanaConfiguracion(QDialog):
         self.tabs.addTab(self._crear_tab_actualizaciones(), "Actualizaciones")
         self.tabs.addTab(self._crear_tab_diagnostico(), "Diagnóstico")
         self.tabs.addTab(self._crear_tab_control_remoto(), "Control remoto")
+        self.tabs.addTab(self._crear_tab_enlatados(), "Enlatados")
         layout.addWidget(self.tabs)
 
         botones = QDialogButtonBox(
@@ -1190,6 +1195,84 @@ class VentanaConfiguracion(QDialog):
         self.txt_control_remoto_token.setText(secrets.token_hex(16))
 
     # ------------------------------------------------------------------
+    # Tab: Enlatados — Comando ENLATADO 1-5 (pedido explícito:
+    # "programas 'enlatados' que se cargan semanalmente... cada
+    # enlatado (hasta 5) será configurado desde Configuraciones,
+    # eligiendo de un menú desplegable la categoría donde se irán
+    # guardando"). Acá SOLO se elige la categoría de cada slot — el
+    # comando en sí se inserta desde Ventana 1/el Programador/el
+    # Programador remoto (satélite), eligiendo el número (ver
+    # gui/dialogo_insertar_comando_enlatado.py).
+    # ------------------------------------------------------------------
+    def _crear_tab_enlatados(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        lbl_intro = QLabel(
+            "Comando ENLATADO 1 a 5 (Ventana 1 / Programador / Programador "
+            "remoto): al llegar la reproducción a ese comando, reproduce el "
+            "ÚLTIMO archivo cargado en la categoría configurada acá para ese "
+            "slot — pensado para programas \"enlatados\" que se cargan "
+            "semanalmente en una categoría fija del Explorador. Solo la "
+            "categoría exacta (no recorre subcategorías)."
+        )
+        lbl_intro.setWordWrap(True)
+        layout.addWidget(lbl_intro)
+
+        grupo = QGroupBox("📦 Categoría por slot")
+        form = QFormLayout(grupo)
+
+        self._rutas_enlatados = {}
+        self._lbl_enlatado = {}
+        self._btn_elegir_enlatado = {}
+        for numero in NUMEROS_ENLATADO:
+            fila = QHBoxLayout()
+            btn_elegir = QPushButton("Elegir categoría...")
+            btn_elegir.clicked.connect(lambda _checked=False, n=numero: self._elegir_categoria_enlatado(n))
+            lbl = QLabel("(sin configurar)")
+            btn_quitar = QPushButton("✕")
+            btn_quitar.setFixedWidth(28)
+            btn_quitar.setToolTip("Quitar la categoría configurada para este ENLATADO")
+            btn_quitar.clicked.connect(lambda _checked=False, n=numero: self._quitar_categoria_enlatado(n))
+            if self._ventana_explorador is None:
+                btn_elegir.setEnabled(False)
+            fila.addWidget(btn_elegir)
+            fila.addWidget(lbl, 1)
+            fila.addWidget(btn_quitar)
+            self._lbl_enlatado[numero] = lbl
+            self._btn_elegir_enlatado[numero] = btn_elegir
+            form.addRow(f"Enlatado {numero}:", self._envolver_layout(fila))
+
+        layout.addWidget(grupo)
+        if self._ventana_explorador is None:
+            nota = QLabel("No hay acceso al Explorador (Ventana 3) en esta sesión.")
+            nota.setObjectName("lblTituloBloqueActivo")
+            layout.addWidget(nota)
+        layout.addStretch()
+        return widget
+
+    def _elegir_categoria_enlatado(self, numero: str):
+        if self._ventana_explorador is None:
+            return
+        dialogo = DialogoSeleccionarCategoria(
+            self._ventana_explorador.tree_categorias,
+            categoria_inicial=self._rutas_enlatados.get(numero),
+            titulo=f"Categoría para ENLATADO {numero}", parent=self,
+        )
+        if dialogo.exec() != DialogoSeleccionarCategoria.DialogCode.Accepted:
+            return
+        self._rutas_enlatados[numero] = dialogo.ruta_elegida()
+        self._actualizar_etiqueta_enlatado(numero)
+
+    def _quitar_categoria_enlatado(self, numero: str):
+        self._rutas_enlatados[numero] = None
+        self._actualizar_etiqueta_enlatado(numero)
+
+    def _actualizar_etiqueta_enlatado(self, numero: str):
+        ruta = self._rutas_enlatados.get(numero)
+        self._lbl_enlatado[numero].setText(" / ".join(ruta) if ruta else "(sin configurar)")
+
+    # ------------------------------------------------------------------
     def _cargar_valores_en_ui(self):
         audio = self._config["audio"]
         self._seleccionar_en_combo(self.combo_dispositivo_master, audio["dispositivo_master"])
@@ -1255,6 +1338,10 @@ class VentanaConfiguracion(QDialog):
         self.spin_fuente_publicidad.setValue(tamanos_fuente["publicidad"])
         self.spin_fuente_emision.setValue(tamanos_fuente["emision"])
         self.spin_fuente_explorador.setValue(tamanos_fuente["explorador"])
+
+        for numero in NUMEROS_ENLATADO:
+            self._rutas_enlatados[numero] = categoria_de_enlatado(self._config, numero)
+            self._actualizar_etiqueta_enlatado(numero)
 
     def _seleccionar_en_combo(self, combo: QComboBox, valor: str):
         indice = combo.findData(valor)
@@ -1340,6 +1427,10 @@ class VentanaConfiguracion(QDialog):
             "emision": self.spin_fuente_emision.value(),
             "explorador": self.spin_fuente_explorador.value(),
         }
+
+        self._config.setdefault("enlatados", {})
+        for numero in NUMEROS_ENLATADO:
+            self._config["enlatados"][numero] = {"categoria_ruta": self._rutas_enlatados.get(numero)}
 
         guardar_configuracion(self._config)
         self.accept()

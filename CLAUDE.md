@@ -12735,6 +12735,238 @@ soltó de una vez.
     esperada (si no la tuviera, el mensaje de error debería quedar
     claro en el log en vez de fallar en silencio).
 
+127. ~~Comando ENLATADO 1-5 (Ventana 1 + Programador local + Programador
+    remoto) — reproduce el ÚLTIMO archivo cargado en una categoría
+    configurada, sin agregar ningún campo de fecha nuevo~~ — dos
+    consultas paralelas quedaron SIN código, documentadas acá para no
+    perderlas de vista, antes de la feature entregada:
+
+    - **"Bays" (botón de Ventana 3) — pedido de auto-instalación
+      BLOQUEADO, esperando datos de Santiago**: pidió que, si `bays`
+      no está instalado, el botón pregunte Sí/No y lo instale solo.
+      Ni Santiago ni esta sesión saben con certeza QUÉ paquete real
+      instala el binario `bays` — el único rastro en este archivo
+      dice que "reemplaza la descarga de YouTube" como un programa
+      EXTERNO ya instalado, sin origen documentado (no es un paquete
+      apt/flatpak/snap conocido con ese nombre). Instalar a ciegas vía
+      `sudo` un paquete adivinado es un riesgo real que no vale la
+      pena correr — se le pidió a Santiago, en la PC donde `bays` SÍ
+      funciona, el resultado de `which bays` / `dpkg -S "$(which
+      bays)"` / `bays --version`/`--help`, para identificar el
+      paquete real antes de escribir cualquier lógica de instalación.
+      Quedó en "ok, espera que lo tengo en otra pc" — retomar cuando
+      pase esos datos, NO adivinar un paquete mientras tanto.
+    - **EasyEffects/Viper4Linux "los efectos no perduran" — analizado
+      a fondo, cambio de arquitectura EXPLÍCITAMENTE DESCARTADO por
+      Santiago, no tocar**: la sospecha de Santiago (que el mecanismo
+      de "cada tema es un stream nuevo" —el `stop()` antes de cada
+      `play()` en `MotorAudio.reproducir()`, documentado desde hace
+      muchas rondas como fix real de un bug de libVLC— sea la causa
+      de que EasyEffects/Viper4Linux "se cierren solos" o no tomen la
+      placa) es técnicamente plausible: cada `stop()`/`play()`
+      probablemente recrea el stream de PipeWire, y esta app YA tiene
+      un mecanismo parcial para esto
+      (`mover_stream_nuevo_a_sink()`, activo solo si Salida Master
+      apunta a un nombre de sink de pactl literal). Se le explicó esa
+      hipótesis y se ofreció probar apuntando la Salida Master a un
+      sink real. Ante la pregunta de fondo — "¿y si sacamos el
+      mecanismo de stream-por-tema entero, un solo stream 24/7, qué
+      gano y qué pierdo?" — se analizó y se RECOMENDÓ EN CONTRA: (a)
+      reintroduciría un bug de producción ya resuelto (el Pisador
+      reusado quedaba mudo al reproducirse una segunda vez, causa
+      real: el `stop()` fuerza a libVLC a resetear su estado interno
+      "Ended", sin el cual un `play()` simple no revive el
+      reproductor en varias versiones de libVLC); (b) es
+      arquitectónicamente INCOMPATIBLE con el crossfade de Ventana 2
+      (`MotorAudio.crossfade_a()` crea a propósito un `MotorAudio`
+      NUEVO por cada transición — necesita DOS streams simultáneos
+      para mezclar el solapamiento, algo que "un solo stream
+      continuo" no puede ofrecer, y el crossfade es el modo real de
+      producción de Santiago); (c) el ahorro de CPU sería
+      probablemente insignificante. Santiago respondió **"No hagas
+      nada de eso."** — este camino queda cerrado, no se tocó
+      `core/audio_engine.py` ni `core/gestor_emision.py` por esto, y
+      no debe reabrirse salvo que Santiago lo pida de nuevo
+      explícitamente.
+
+    **El pedido real de esta ronda, con la especificación completa de
+    Santiago**: "Hay programas 'enlatados' que se cargan
+    semanalmente. Vamos a probar un sistema usando FMT. Creemos un
+    comando ENLATADO 1, 2, 3, 4 y 5. cada enlatado (hasta 5) será
+    configurado desde Configuraciones, en dicho panel tendremos 5
+    posibilidades de enlatados eligiendo de un menú desplegable la
+    categoría donde se irán guardando los programas en el explorador.
+    Entonces: El comando ENLATADO pondrá solamente en reproducción el
+    último archivo cargado en la categoría ya configurada... Cuando
+    toque su reproducción, reproducirá el último archivo (si registra
+    la fecha de carga) puesto en esa categoría. Terminado seguirá con
+    lo que haya luego del comando, sea separador, etc, u otro FMT."
+    Pedido explícito de preguntar antes de programar — 3 preguntas
+    confirmadas por `AskUserQuestion`:
+    1. **"Fecha de carga"**: la biblioteca NUNCA guardó un campo de
+       fecha de importación (confirmado buscando en todo el esquema
+       de `registro` — no existe ningún campo tipo timestamp).
+       Santiago confirmó que **no hace falta agregar uno**: "podés
+       trabajarlo según el número ID de código... a partir de la
+       semana que viene cuando cargue otro archivo en esa categoría,
+       ya el comando lo tomará como nuevo" — como cada alta nueva se
+       `.append()`-ea SIEMPRE al final de la lista de registros de su
+       categoría (`VentanaExplorador._completar_alta_archivo()`, el
+       mismo choke-point de siempre), el ÚLTIMO elemento de esa lista
+       YA ES, por construcción, el más recientemente cargado — sin
+       necesitar ningún campo nuevo ni migración de datos viejos.
+    2. **Alcance de dónde se puede insertar**: los 3 lugares —
+       "Ventana 1 (menú contextual), Programador (local), Programador
+       remoto (satélite)".
+    3. **Subcategorías**: "Solo la categoría exacta" — nunca
+       recursivo, a diferencia del Ítem Aleatorio (que sí puede
+       incluir subcategorías).
+
+    **Diseño, calcado del blueprint ya existente del Ítem Aleatorio
+    (`_resolver_item_aleatorio`/`_reproducir_item_aleatorio`,
+    `core/playlist_manager.py`) — pero DETERMINISTA, no rotativo**: a
+    diferencia de Aleatorio (que usa `core/rotacion_categoria.py` para
+    nunca repetir hasta agotar la categoría) o FMT (nunca ocupa tiempo
+    de aire, dispara un callback hacia Ventana 2 y sigue directo),
+    ENLATADO reproduce en el motor PRINCIPAL de Ventana 1, como
+    cualquier tanda normal — el avance al próximo ítem del bloque
+    ocurre en el fin NATURAL de esa reproducción (mismo camino de
+    siempre, sin ninguna lógica especial de avance), y siempre resuelve
+    al MISMO archivo (el último) hasta que se cargue uno más nuevo en
+    esa categoría — nunca rota entre varios.
+    - `config/settings.py`: sección nueva `"enlatados"` en
+      `CONFIG_POR_DEFECTO` — 5 slots ("1" a "5"), cada uno
+      `{"categoria_ruta": None}` (camino de nombres de categoría,
+      `None` = sin configurar). Helper nuevo
+      `categoria_de_enlatado(config, numero) -> list | None`,
+      fail-open ante cualquier config vieja/parcial (mismo criterio
+      que `tolerancia_silencio_para_genero`/`parametros_nivelado`).
+    - `core/playlist_manager.py`: constante `TIPO_COMANDO_ENLATADO =
+      "ENLATADO"`; `GestorPublicidad._reproducir_item()` gana una
+      rama nueva `if tipo_comando == TIPO_COMANDO_ENLATADO:
+      self._reproducir_comando_enlatado(item); return` — ubicada al
+      lado de la rama de HTH (ocupa tiempo de aire, a diferencia del
+      fallthrough genérico de FMT que sigue después). Dos métodos
+      nuevos: `_resolver_ultimo_de_enlatado(numero)` (lee la config
+      EN VIVO con `cargar_configuracion()`, resuelve la categoría con
+      `VentanaExplorador.buscar_categoria_por_ruta()`, y toma
+      `listar_registros_de_categoria(item_categoria,
+      recursivo=False)[-1]` — `None` ante cualquier eslabón faltante:
+      sin `_ventana_explorador`, slot sin configurar, categoría
+      renombrada/eliminada, o categoría vacía) y
+      `_reproducir_comando_enlatado(item)` (si `None`, se saltea sin
+      sonar nada y avanza al próximo ítem VÁLIDO del bloque, mismo
+      patrón ya usado por el Ítem Aleatorio de categoría vacía; si
+      hay registro, reproduce por `self.motor.reproducir()` con el
+      análisis completo —recorte de silencio + nivelado ya
+      calculados—, marca el ícono "ya reproducido"
+      —`marcar_icono_reproducido_item()`, no
+      `marcar_realmente_reproducido_item()`, porque el ítem del árbol
+      es un placeholder sin ruta propia, mismo criterio que
+      Aleatorio— y registra el historial con los datos del archivo
+      REAL resuelto). `_item_valido()` ya trataba CUALQUIER Comando
+      como estructuralmente válido (`if self.ventana.es_comando(item):
+      return True`) — sin cambios, ENLATADO queda cubierto gratis.
+    - `gui/dialogo_insertar_comando_enlatado.py` (nuevo): a diferencia
+      de HTH (3 tipos fijos sin más contexto) o FMT (lista formatos ya
+      creados), acá los 5 slots son siempre los mismos números —el
+      diálogo solo elige CUÁL insertar, mostrando de un vistazo la
+      categoría YA configurada para cada uno (o el aviso de que falta
+      configurarla en Configuración → Enlatados) para que el operador
+      no tenga que adivinar ni ir a mirar otra pantalla antes.
+    - `gui/ventana_publicidad.py`: entrada nueva "▶ Insertar Comando
+      ENLATADO..." en el menú contextual (junto a FMT/HTH), handler
+      `_insertar_comando_enlatado()` calcado de
+      `_insertar_comando_hth()`; el aviso de "Reemplazar" sobre un
+      Comando se actualizó a "(FMT/HTH/ENLATADO)" con las 3
+      instrucciones de inserción.
+    - `gui/ventana_configuracion.py`: pestaña nueva **"Enlatados"**
+      (`_crear_tab_enlatados()`) — un `QGroupBox` con 5 filas
+      "Enlatado N:" + botón "Elegir categoría..." (abre
+      `DialogoSeleccionarCategoria`, YA existente, reusado tal cual —
+      mismo patrón que el selector de categoría del Ítem Aleatorio) +
+      etiqueta con la ruta elegida + botón "✕" para desconfigurar el
+      slot. Deshabilitado limpio si `ventana_explorador` no está
+      disponible en la sesión (mismo criterio que el resto de botones
+      de Diagnóstico que dependen del Explorador). Cableado en
+      `_cargar_valores_en_ui()`/`_guardar_y_cerrar()` con el mismo
+      patrón ya usado para `colores_genero`/`tamano_fuente_ventanas`.
+    - `gui/ventana_programador.py` (Programador local): botón nuevo
+      "▶ Comando ENLATADO..." en el grupo "INSERTAR ÍTEM ESPECIAL",
+      handler `_insertar_comando_enlatado()` calcado de
+      `_insertar_comando_hth()`; mismo ajuste del aviso de
+      "Reemplazar" que en Ventana 1.
+    - **Satélite (paridad completa, pedido explícito punto 2)**:
+      `gui/main_window.py` gana la acción RPC `listar_enlatados`
+      (`_listar_enlatados_remoto()`, delega en
+      `categoria_de_enlatado()` sobre `cargar_configuracion()`, mismo
+      criterio de "nunca escribir JSON por su cuenta, reusar SIEMPRE
+      lo que ya usa la GUI principal" ya establecido para todas las
+      acciones remotas) — devuelve el camino de categoría de los 5
+      slots de una vez, para que el Programador remoto pueda armar la
+      MISMA etiqueta "N — categoría" que ya muestra el diálogo local,
+      sin necesitar 5 pedidos RPC sueltos.
+      `satelite/cliente_control_remoto.py` gana
+      `listar_enlatados()`. `satelite/dialogo_programador_remoto.py`
+      gana el botón "▶ Comando ENLATADO..." en la fila de ítems
+      especiales, `_insertar_comando_enlatado()` (arma las 5 opciones
+      con `QInputDialog.getItem`, mismo patrón liviano que ya usa HTH
+      ahí, pero con la categoría de cada slot visible en la etiqueta)
+      — el ítem insertado es el MISMO dict genérico
+      (`{"es_comando": True, "tipo_comando": "ENLATADO",
+      "parametro_comando": numero}`) que ya viaja sin cambios por
+      TODA la persistencia existente (`programador_guardar`,
+      `programador_aplicar_ahora`, `_texto_item()` — renderiza
+      automático "▶ ENLATADO: 1" sin ningún caso especial).
+
+    **Persistencia end-to-end sin tocar nada más**: como el mecanismo
+    de Comando (`ROL_ES_COMANDO`/`ROL_TIPO_COMANDO`/
+    `ROL_PARAMETRO_COMANDO`, y su contraparte en dict
+    `es_comando`/`tipo_comando`/`parametro_comando`) siempre fue
+    genérico desde que se creó para FMT — confirmado que NINGÚN punto
+    de la app tiene una lista blanca de tipos permitidos
+    (`"FMT"`/`"HTH"` hardcodeados) — toda la cadena de
+    `cargar_bloques()`/`_guardar_estado_ahora()`/
+    `_restaurar_desde_disco()` (Ventana 1) y
+    `_serializar_bloques()`/`_cargar_programacion_existente()`
+    (Programador, local y remoto) ya soportaba ENLATADO sin ningún
+    cambio adicional — el mismo criterio de diseño de siempre en este
+    proyecto (extender por generalidad, no por casos especiales) pagó
+    de una sola vez acá.
+
+    Probado con dos scripts dedicados (scratch, no commiteados, según
+    convención de este proyecto): el primero, contra una
+    `VentanaExplorador`/`VentanaPublicidad`/`GestorPublicidad`/
+    `VentanaConfiguracion` REALES (biblioteca aislada en un directorio
+    temporal) — la pestaña Enlatados carga y guarda los 5 slots con
+    round-trip a disco confirmado, el diálogo de inserción muestra la
+    categoría configurada, el comando se inserta y renderiza
+    correctamente en el árbol de Ventana 1, `_resolver_ultimo_de_enlatado()`
+    devuelve el ÚLTIMO archivo cargado (confirmado con 2 registros
+    reales en la misma categoría, eligiendo el segundo/más nuevo), un
+    motor VLC falso confirma que `_reproducir_comando_enlatado()`
+    reproduce exactamente ese archivo con su análisis completo, y un
+    slot sin configurar se resuelve a `None` sin romper nada; el
+    segundo, contra una `MainWindow` real (acción RPC `listar_enlatados`
+    devuelve exactamente lo configurado) y un `DialogoProgramadorRemoto`
+    real con un cliente falso (las 5 opciones se arman con la etiqueta
+    correcta —incluida una subcategoría de 2 niveles—, el ítem
+    insertado en el modelo es el dict genérico esperado, y el
+    renderizado en el árbol es correcto) — + `py_compile` de los 9
+    archivos tocados/nuevos + smoke test de arranque completo de
+    `main.py` sin traceback (solo los avisos esperados de libVLC
+    ausente en este sandbox). **Sigue sin poder probarse con
+    audio/VLC real ni con la biblioteca real de Santiago**: falta que
+    (1) configure al menos un slot en Configuración → Enlatados
+    apuntando a una categoría real con programas semanales (ej.
+    "Amanzor"), (2) inserte el Comando ENLATADO correspondiente en un
+    bloque de Ventana 1 (local o desde cualquiera de los dos
+    Programadores), y confirme que al llegarle el turno reproduce el
+    ÚLTIMO archivo cargado en esa categoría y sigue solo con lo que
+    haya después en el bloque, y (3) confirme que cargar un archivo
+    NUEVO en esa categoría la semana siguiente hace que el comando
+    "tome" ese archivo nuevo automáticamente, sin tocar nada más.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
