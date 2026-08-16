@@ -208,3 +208,13 @@ class ClienteControlRemoto:
         cargado en Ventana 2/Emisión (nunca la limpia) — mismo motor
         que el botón local "🎵 Agregar ciclo FMT por tiempo..."."""
         return self._pedir("emision_agregar_ciclo_fmt", {"nombre_formato": nombre_formato, "minutos": minutos})
+
+    def listar_enlatados(self) -> dict:
+        """Camino de categoría configurado para cada slot ENLATADO
+        1-5 (Configuración → Enlatados, lado servidor) — usado por el
+        Programador remoto para mostrar de un vistazo qué categoría
+        le corresponde a cada número al insertar el comando."""
+        respuesta = self._pedir("listar_enlatados")
+        if not respuesta.get("ok"):
+            raise ErrorControlRemoto(respuesta.get("error", "listar_enlatados falló"))
+        return respuesta["datos"]["enlatados"]

@@ -208,6 +208,26 @@ CONFIG_POR_DEFECTO = {
         "puerto": 8765,
         "token": "",
     },
+    # Comando ENLATADO 1-5 (pedido explícito: "programas 'enlatados'
+    # que se cargan semanalmente... el comando ENLATADO pondrá
+    # solamente en reproducción el último archivo cargado en la
+    # categoría ya configurada"). Cada slot guarda el CAMINO de
+    # nombres de UNA categoría exacta (nunca recursivo a
+    # subcategorías, confirmado con Santiago) — `None` = sin
+    # configurar todavía, el comando se saltea sin sonar nada (ver
+    # GestorPublicidad._resolver_ultimo_de_enlatado en
+    # core/playlist_manager.py). "Último archivo cargado" se resuelve
+    # por ORDEN de alta (el último `registro` de la lista de esa
+    # categoría, no una fecha guardada aparte — confirmado con
+    # Santiago que el código correlativo/orden de alta ya alcanza,
+    # sin necesitar un campo de fecha nuevo en la biblioteca).
+    "enlatados": {
+        "1": {"categoria_ruta": None},
+        "2": {"categoria_ruta": None},
+        "3": {"categoria_ruta": None},
+        "4": {"categoria_ruta": None},
+        "5": {"categoria_ruta": None},
+    },
 }
 
 
@@ -354,6 +374,19 @@ def parametros_nivelado(config: dict) -> tuple:
         reproduccion.get("nivelado_loudness_lufs_objetivo", -16.0),
         reproduccion.get("nivelado_techo_pico_dbfs", -1.0),
     )
+
+
+def categoria_de_enlatado(config: dict, numero) -> list | None:
+    """Camino de categoría configurado para el slot ENLATADO `numero`
+    ("1" a "5", ver Configuración → Enlatados) — `None` si ese slot
+    todavía no se configuró, o si el config guardado es viejo/parcial
+    (fail-open, mismo criterio que el resto de estos helpers: nunca
+    romper por una clave faltante, el comando simplemente se saltea
+    sin sonar nada)."""
+    enlatados = config.get("enlatados") or {}
+    slot = enlatados.get(str(numero)) or {}
+    ruta = slot.get("categoria_ruta")
+    return list(ruta) if ruta else None
 
 
 def _rotar_archivo_si_corresponde(ruta: str):

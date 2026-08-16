@@ -53,6 +53,7 @@ from config.settings import (
     listar_programaciones, obtener_programacion, guardar_programacion,
     cargar_musicalizador, listar_formatos, obtener_formato,
     guardar_formato, eliminar_formato, renombrar_formato,
+    categoria_de_enlatado,
 )
 
 
@@ -1003,7 +1004,18 @@ class MainWindow(QMainWindow):
             return self._musicalizador_renombrar_formato_remoto(params)
         if accion == "emision_agregar_ciclo_fmt":
             return self._emision_agregar_ciclo_fmt_remoto(params)
+        if accion == "listar_enlatados":
+            return {"ok": True, "datos": {"enlatados": self._listar_enlatados_remoto()}}
         return {"ok": False, "error": f"Acción desconocida: {accion}"}
+
+    def _listar_enlatados_remoto(self) -> dict:
+        """Camino de categoría configurado para cada slot ENLATADO
+        1-5 (Configuración → Enlatados), para que el Programador
+        remoto pueda mostrar de un vistazo qué categoría le
+        corresponde a cada número — mismo criterio que ya usa
+        `gui/dialogo_insertar_comando_enlatado.py` del lado local."""
+        config = cargar_configuracion()
+        return {numero: categoria_de_enlatado(config, numero) for numero in ("1", "2", "3", "4", "5")}
 
     def _alternar_automatico_remoto(self, activar: bool) -> dict:
         """Prende/apaga el Automático de Ventana 1 -- mismo mecanismo

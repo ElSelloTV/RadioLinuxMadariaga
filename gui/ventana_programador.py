@@ -108,6 +108,7 @@ from gui.dialogo_programaciones_guardadas import DialogoProgramacionesGuardadas
 from gui.dialogo_duplicar_programacion import DialogoDuplicarProgramacion
 from gui.dialogo_insertar_comando_fmt import DialogoInsertarComandoFMT
 from gui.dialogo_insertar_comando_hth import DialogoInsertarComandoHTH
+from gui.dialogo_insertar_comando_enlatado import DialogoInsertarComandoEnlatado
 from gui.dialogo_insertar_item_aleatorio import DialogoInsertarItemAleatorio
 from gui import estado_ui
 from core.audio_engine import obtener_duracion_formateada, MotorAudio
@@ -341,6 +342,13 @@ class VentanaProgramador(QDialog):
             "humedad concatenando los clips de voz del género \"HTH\"."
         )
         self.btn_insertar_hth.clicked.connect(self._insertar_comando_hth)
+        self.btn_insertar_enlatado = QPushButton("▶ Comando ENLATADO...")
+        self.btn_insertar_enlatado.setToolTip(
+            "Al pasar la reproducción por este ítem, reproduce el ÚLTIMO\n"
+            "archivo cargado en la categoría configurada para ese\n"
+            "ENLATADO (Configuración → Enlatados)."
+        )
+        self.btn_insertar_enlatado.clicked.connect(self._insertar_comando_enlatado)
         self.btn_insertar_aleatorio = QPushButton("🎲 Ítem Aleatorio...")
         self.btn_insertar_aleatorio.setToolTip(
             "Elige un archivo al azar de una categoría/subcategoría CADA VEZ que\n"
@@ -349,6 +357,7 @@ class VentanaProgramador(QDialog):
         self.btn_insertar_aleatorio.clicked.connect(self._insertar_item_aleatorio)
         layout_especial.addWidget(self.btn_insertar_fmt)
         layout_especial.addWidget(self.btn_insertar_hth)
+        layout_especial.addWidget(self.btn_insertar_enlatado)
         layout_especial.addWidget(self.btn_insertar_aleatorio)
         panel_derecho.addWidget(grupo_especial)
 
@@ -665,6 +674,18 @@ class VentanaProgramador(QDialog):
         if parametro:
             self._agregar_comando_a_bloque(bloque, "HTH", parametro, self._indice_insercion_actual(bloque))
 
+    def _insertar_comando_enlatado(self):
+        bloque = self._bloque_destino_actual()
+        if bloque is None:
+            QMessageBox.information(self, "Insertar Comando ENLATADO", "Primero creá un bloque horario.")
+            return
+        dialogo = DialogoInsertarComandoEnlatado(parent=self)
+        if dialogo.exec() != DialogoInsertarComandoEnlatado.DialogCode.Accepted:
+            return
+        parametro = dialogo.parametro_elegido()
+        if parametro:
+            self._agregar_comando_a_bloque(bloque, "ENLATADO", parametro, self._indice_insercion_actual(bloque))
+
     # ==================================================================
     # Copiar / Pegar (pedido explícito, menú contextual): en la
     # selección múltiple ya existente, copiar uno o más ítems y
@@ -820,9 +841,10 @@ class VentanaProgramador(QDialog):
         if item.data(0, ROL_ES_COMANDO):
             QMessageBox.information(
                 self, "Reemplazar",
-                "Un Comando (FMT/HTH) no se \"reemplaza\" — quitalo (botón ✕ Quitar)\n"
-                "y agregá uno nuevo con \"▶ Comando FMT...\" o \"▶ Comando HTH...\"\n"
-                "si querés cambiar el comando.",
+                "Un Comando (FMT/HTH/ENLATADO) no se \"reemplaza\" — quitalo\n"
+                "(botón ✕ Quitar) y agregá uno nuevo con \"▶ Comando FMT...\",\n"
+                "\"▶ Comando HTH...\" o \"▶ Comando ENLATADO...\" si querés\n"
+                "cambiar el comando.",
             )
             return
 

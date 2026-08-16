@@ -47,6 +47,7 @@ from core.rotacion_categoria import elegir_por_rotacion, marcar_reproducido_por_
 from config.settings import (
     cargar_playlist_publicidad, guardar_playlist_publicidad, registrar_error, registrar_evento,
     titulo_bloque_sin_prefijo_hora, vigencia_activa, registrar_reproduccion,
+    cargar_configuracion, categoria_de_enlatado,
 )
 
 DEBOUNCE_GUARDADO_PUBLICIDAD_MS = 500
@@ -54,6 +55,13 @@ DEBOUNCE_GUARDADO_PUBLICIDAD_MS = 500
 # con algo sonando, y Fade-Stop apaga con fundido en vez de corte
 # seco — duración corta a propósito, es una acción manual.
 DURACION_FUNDIDO_MANUAL_SEGUNDOS = 1.2
+# Comando ENLATADO 1-5 (pedido explícito: "programas 'enlatados' que
+# se cargan semanalmente... reproducirá el último archivo cargado en
+# la categoría ya configurada, terminado seguirá con lo que haya
+# luego del comando"). El parámetro guardado en el ítem es el número
+# de slot ("1".."5", ver Configuración → Enlatados) — ver
+# GestorPublicidad._reproducir_comando_enlatado más abajo.
+TIPO_COMANDO_ENLATADO = "ENLATADO"
 
 
 class GestorPublicidad:
@@ -532,6 +540,9 @@ class GestorPublicidad:
             if tipo_comando == TIPO_COMANDO_HTH:
                 self._reproducir_comando_hth(item)
                 return
+            if tipo_comando == TIPO_COMANDO_ENLATADO:
+                self._reproducir_comando_enlatado(item)
+                return
             # Bug real corregido: antes esto llamaba a self._avanzar()
             # sin actualizar item_reproduciendo()/item_siguiente() —
             # la próxima vuelta de _avanzar() volvía a resolver este
@@ -689,6 +700,92 @@ class GestorPublicidad:
             self.ventana.recursivo_aleatorio_de_item(item),
         )
         registrar_evento(f"Publicidad: ítem aleatorio '{item.text(0)}' -> '{registro.get('titulo', '')}'")
+
+    # ------------------------------------------------------------------
+    # Comando ENLATADO 1-5 (pedido explícito): "programas 'enlatados'
+    # que se cargan semanalmente... El comando ENLATADO pondrá
+    # solamente en reproducción el último archivo cargado en la
+    # categoría ya configurada... Terminado seguirá con lo que haya
+    # luego del comando, sea separador, etc, u otro FMT."
+    #
+    # A diferencia del Comando FMT (nunca ocupa tiempo de aire — solo
+    # dispara un callback y sigue directo) y a diferencia de HTH (cola
+    # de varios clips en un motor dedicado), ENLATADO es más parecido
+    # al Ítem Aleatorio: resuelve UN archivo real de una categoría
+    # configurada y lo reproduce con el motor PRINCIPAL, exactamente
+    # como cualquier tanda normal — el avance al próximo ítem del
+    # bloque ocurre solo, en el fin NATURAL de esa reproducción (mismo
+    # camino de siempre: motor.finalizo_item -> _on_fin_de_item ->
+    # _avanzar()), sin ninguna lógica especial acá.
+    #
+    # "Último archivo cargado" se resuelve por ORDEN DE ALTA (el
+    # último registro de la categoría, nunca recursivo a
+    # subcategorías — confirmado con Santiago: "podés trabajarlo según
+    # el número ID de código... a partir de la semana que viene cuando
+    # cargue otro archivo, el comando lo tomará como nuevo"), sin
+    # necesitar agregar ningún campo de fecha nuevo a la biblioteca —
+    # cada alta nueva se `.append()`-ea al final de la lista de su
+    # categoría (ver VentanaExplorador._completar_alta_archivo), así
+    # que el último elemento SIEMPRE es el más reciente.
+    # ------------------------------------------------------------------
+    def _resolver_ultimo_de_enlatado(self, numero):
+        """Último registro cargado en la categoría configurada para el
+        slot ENLATADO `numero` (Configuración → Enlatados). `None` si
+        el slot no está configurado, la categoría ya no existe (fue
+        renombrada/eliminada), o está vacía — el comando se saltea sin
+        romper la emisión, mismo criterio que un ítem Aleatorio de
+        categoría vacía."""
+        if self._ventana_explorador is None:
+            return None
+        ruta_categoria = categoria_de_enlatado(cargar_configuracion(), numero)
+        if not ruta_categoria:
+            return None
+        item_categoria = self._ventana_explorador.buscar_categoria_por_ruta(ruta_categoria)
+        if item_categoria is None:
+            return None
+        registros = self._ventana_explorador.listar_registros_de_categoria(item_categoria, recursivo=False)
+        return registros[-1] if registros else None
+
+    def _reproducir_comando_enlatado(self, item):
+        numero = self.ventana.parametro_comando_de_item(item)
+        registro = self._resolver_ultimo_de_enlatado(numero)
+        if registro is None:
+            # Sin categoría configurada, categoría inexistente, o
+            # vacía: nunca romper la emisión, se saltea sin sonar nada
+            # y sigue directo con el próximo ítem real del bloque.
+            registrar_evento(
+                f"Publicidad: Comando ENLATADO {numero} salteado "
+                "(sin categoría configurada, o categoría vacía/inexistente)"
+            )
+            self.ventana.marcar_reproduciendo_item(item)
+            siguiente = self.ventana.tree.itemBelow(item)
+            while siguiente is not None and not self._item_valido(siguiente):
+                siguiente = self.ventana.tree.itemBelow(siguiente)
+            self.ventana.marcar_siguiente_item(siguiente)
+            self._avanzar()
+            return
+
+        self.ventana.tree.setCurrentItem(item)
+        self.ventana.marcar_reproduciendo_item(item)
+        self._item_fade_out_v1_disparado = None
+        self.motor.reproducir(
+            registro.get("ruta", ""),
+            punto_inicio_ms=registro.get("punto_inicio_ms") or 0,
+            punto_fin_ms=registro.get("punto_fin_ms"),
+            ganancia_db=registro.get("ganancia_db") or 0.0,
+            volumen_base=self._volumen_base,
+            duracion_declick_ms=self.duracion_fade_in_declick_ms,
+        )
+        self.ventana.set_indicador_en_vivo(True)
+        # Ícono "ya reproducido" solo, sin tocar el historial acá —
+        # el ítem del árbol es un placeholder sin ruta propia (mismo
+        # criterio que el Ítem Aleatorio), el historial se registra a
+        # mano con los datos del archivo REAL resuelto, abajo.
+        self.ventana.marcar_icono_reproducido_item(item)
+        registrar_reproduccion(
+            "Publicidad", registro.get("titulo", ""), registro.get("codigo", ""), registro.get("ruta", ""),
+        )
+        registrar_evento(f"Publicidad: Comando ENLATADO {numero} -> '{registro.get('titulo', '')}'")
 
     # ------------------------------------------------------------------
     # Comando HTH (Hora-Temperatura-Humedad) — pedido explícito,
