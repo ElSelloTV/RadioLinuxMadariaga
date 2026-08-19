@@ -21,10 +21,9 @@ en vez de lanzar una excepción no controlada.
 """
 
 import subprocess
-import time
 
 import vlc
-from PySide6.QtCore import QObject, Signal, QTimer
+from PySide6.QtCore import QObject, Signal, QTimer, QProcess
 
 from config.settings import registrar_evento, cargar_configuracion
 
@@ -43,72 +42,162 @@ def _es_nombre_pactl_directo(id_dispositivo) -> bool:
     PipeWire específico — con PipeWire manejando la placa de forma
     exclusiva, un dispositivo ALSA "crudo" (`hw:CARD=...`) elegido de
     la lista no hace nada, en silencio. Escribiendo el nombre real del
-    sink a mano en el combo de Configuración -> Audio (es editable)
-    se activa `mover_stream_nuevo_a_sink()` en su lugar — ver
+    sink a mano en el combo de Configuración -> Audio (es editable) —
+    o eligiéndolo de la lista simplificada de `listar_dispositivos_pactl()`,
+    que SIEMPRE devuelve nombres en este formato — activa
+    `_enrutador_pactl().reclamar()` en su lugar, ver
     `MotorAudio.reproducir()`."""
     return bool(id_dispositivo) and id_dispositivo != "default" and "||" not in id_dispositivo
 
 
-def _ids_sink_inputs_actuales() -> set:
-    """[IDs de pactl] de los sink-inputs (streams de audio) que existen
-    AHORA MISMO — snapshot usado por `mover_stream_nuevo_a_sink()` para
-    detectar cuál es NUEVO después de arrancar una reproducción."""
-    try:
-        salida = subprocess.run(
-            ["pactl", "list", "sink-inputs", "short"],
-            capture_output=True, text=True, timeout=2,
-        )
-        if salida.returncode != 0:
-            return set()
-        return {
+class EnrutadorPactl(QObject):
+    """Mueve, vía `pactl move-sink-input`, el stream de audio recién
+    arrancado al sink real que corresponde (Master -> consola/USB,
+    Preescucha -> parlantes de monitoreo, NUNCA al revés) — necesario
+    porque libVLC, sin el módulo "pulse" compilado, no tiene forma de
+    apuntar directo a un sink de PipeWire (ver `_es_nombre_pactl_directo`).
+
+    Reemplaza el mecanismo viejo (`mover_stream_nuevo_a_sink()`,
+    función suelta con `subprocess.run()`/`time.sleep()` BLOQUEANTES,
+    llamada directo desde el hilo principal de Qt en cada
+    `reproducir()`) por dos correcciones de fondo, pedidas explícitas
+    tras un reporte real de la operadora (cortes de audio "como cuando
+    saltaban los CDs", cortinas mudas, y Preescucha filtrándose al
+    aire):
+
+    (1) NUNCA bloquea el hilo principal — cada consulta/movimiento a
+    `pactl` corre por `QProcess` (asíncrono, con señal `finished`) y
+    cada reintento se agenda con `QTimer.singleShot()`, jamás
+    `subprocess.run()`/`time.sleep()` síncronos. Antes, CADA
+    reproducción (tema, tanda, cortina, Pisador, previo, clip de HTH)
+    podía congelar la app entera —botones, timers, avance
+    automático, medidor de nivel— durante hasta ~1.2s por reintento,
+    en el peor caso varios segundos si `pactl`/PipeWire respondía
+    lento, o más todavía si varias reproducciones lo disparaban
+    seguidas (los bloqueos se sumaban, uno detrás del otro, todo en
+    el mismo hilo).
+
+    (2) NUNCA puede confundir a qué reproducción pertenece un stream
+    nuevo — el mecanismo viejo comparaba una foto de
+    `pactl list sink-inputs` de ANTES contra la de DESPUÉS y asumía
+    que "el que apareció nuevo" era el propio; si DOS reproducciones
+    arrancaban casi al mismo tiempo (el crossfade de Ventana 2 usa
+    DOS motores en paralelo a propósito, el Pisador es un segundo
+    motor, y sobre todo: previsualizar algo en el Explorador mientras
+    algo cambia al aire, un flujo de trabajo constante), no había
+    forma de saber cuál "nuevo" le pertenecía a cuál — podía terminar
+    moviendo el stream de la Preescucha al sink del aire, o viceversa.
+    Acá se SERIALIZA: solo hay UN pedido "cazando su propio stream
+    nuevo" activo a la vez en TODA la app — la foto de "qué ya
+    existía" se toma recién cuando le toca el turno a ESE pedido
+    puntual, `MotorAudio.play()` se dispara SOLO después de tener esa
+    foto (nunca antes), y solo entonces se busca qué apareció — así
+    cualquier stream nuevo que se encuentre durante esa ventana
+    SIEMPRE es el correcto, sin importar cuántas otras reproducciones
+    estén encoladas esperando su turno. El costo real: si dos
+    reproducciones piden ruta casi juntas, la segunda espera a que la
+    primera quede confirmada (normalmente milisegundos, como mucho un
+    par de segundos si `pactl` responde lento) antes de arrancar de
+    verdad — un retraso acotado y siempre mejor que el aire
+    silenciado o cruzado."""
+
+    MAX_INTENTOS = 20
+    ESPERA_REINTENTO_MS = 150
+
+    def __init__(self):
+        super().__init__()
+        self._cola = []
+        self._procesando = False
+
+    def reclamar(self, nombre_sink: str, al_listo_para_reproducir):
+        """Encola un pedido para el sink `nombre_sink`. Cuando le
+        toca el turno (nunca antes de que el pedido anterior haya
+        terminado), toma la foto de "qué ya existía" y RECIÉN AHÍ
+        llama a `al_listo_para_reproducir()` — es responsabilidad de
+        quien llama hacer el `self._player.play()` real DENTRO de ese
+        callback, nunca antes de encolar."""
+        self._cola.append({"sink": nombre_sink, "al_listo": al_listo_para_reproducir,
+                            "intento": 0, "ids_previos": None})
+        self._procesar_siguiente_si_libre()
+
+    def _procesar_siguiente_si_libre(self):
+        if self._procesando or not self._cola:
+            return
+        self._procesando = True
+        self._listar_sink_inputs(self._al_tener_snapshot_inicial)
+
+    def _listar_sink_inputs(self, callback):
+        proceso = QProcess(self)
+        proceso.finished.connect(lambda *_args: self._al_terminar_listado(proceso, callback))
+        proceso.start("pactl", ["list", "sink-inputs", "short"])
+
+    def _al_terminar_listado(self, proceso: QProcess, callback):
+        salida = bytes(proceso.readAllStandardOutput()).decode("utf-8", errors="ignore")
+        proceso.deleteLater()
+        ids = {
             linea.split("\t")[0].strip()
-            for linea in salida.stdout.splitlines() if linea.strip()
+            for linea in salida.splitlines() if linea.strip()
         }
-    except Exception:
-        return set()
+        callback(ids)
 
+    def _al_tener_snapshot_inicial(self, ids_previos: set):
+        job = self._cola[0]
+        job["ids_previos"] = ids_previos
+        # Recién ACÁ arranca la reproducción real -- con la foto de
+        # "antes" ya en mano, cualquier sink-input nuevo que aparezca
+        # de acá en más pertenece SIN AMBIGÜEDAD a este pedido, porque
+        # ningún otro pedido de la cola puede estar reproduciendo
+        # todavía (están esperando su turno).
+        job["al_listo"]()
+        self._listar_sink_inputs(self._al_buscar_stream_nuevo)
 
-def mover_stream_nuevo_a_sink(ids_previos: set, nombre_sink: str,
-                                intentos: int = 8, espera_seg: float = 0.15) -> bool:
-    """Busca, entre los sink-inputs actuales, el que NO estaba en
-    `ids_previos` (el que acaba de aparecer al arrancar a reproducir) y
-    lo mueve al sink indicado con `pactl move-sink-input` — mismo
-    mecanismo ya confirmado funcionando a mano en producción
-    (`pactl set-default-sink`/`move-sink-input`) para cuando libVLC no
-    puede targetear un sink de PipeWire específico por su cuenta (ver
-    `_es_nombre_pactl_directo`). Reintenta un ratito porque el
-    sink-input puede tardar unos milisegundos en registrarse tras
-    play(). Devuelve True si encontró y movió algo."""
-    for _ in range(intentos):
-        try:
-            salida = subprocess.run(
-                ["pactl", "list", "sink-inputs", "short"],
-                capture_output=True, text=True, timeout=2,
+    def _al_buscar_stream_nuevo(self, ids_actuales: set):
+        job = self._cola[0]
+        id_nuevo = next((i for i in ids_actuales if i and i not in job["ids_previos"]), None)
+        if id_nuevo is not None:
+            self._mover(id_nuevo, job["sink"])
+            return
+        job["intento"] += 1
+        if job["intento"] >= self.MAX_INTENTOS:
+            registrar_evento(
+                f"MotorAudio: EnrutadorPactl no encontró ningún sink-input "
+                f"nuevo tras {job['intento']} intentos (target: '{job['sink']}')"
             )
-            if salida.returncode == 0:
-                for linea in salida.stdout.splitlines():
-                    if not linea.strip():
-                        continue
-                    id_actual = linea.split("\t")[0].strip()
-                    if id_actual and id_actual not in ids_previos:
-                        subprocess.run(
-                            ["pactl", "move-sink-input", id_actual, nombre_sink],
-                            capture_output=True, text=True, timeout=2,
-                        )
-                        registrar_evento(
-                            f"MotorAudio: movido sink-input {id_actual} -> "
-                            f"'{nombre_sink}' vía pactl (fallback sin módulo "
-                            f"'pulse' en libVLC)"
-                        )
-                        return True
-        except Exception:
-            pass
-        time.sleep(espera_seg)
-    registrar_evento(
-        f"MotorAudio: mover_stream_nuevo_a_sink() no encontró ningún "
-        f"sink-input nuevo tras {intentos} intentos (target: '{nombre_sink}')"
-    )
-    return False
+            self._terminar_job_actual()
+            return
+        QTimer.singleShot(self.ESPERA_REINTENTO_MS, lambda: self._listar_sink_inputs(self._al_buscar_stream_nuevo))
+
+    def _mover(self, id_stream: str, nombre_sink: str):
+        proceso = QProcess(self)
+        proceso.finished.connect(lambda *_args: self._al_terminar_movida(proceso, id_stream, nombre_sink))
+        proceso.start("pactl", ["move-sink-input", id_stream, nombre_sink])
+
+    def _al_terminar_movida(self, proceso: QProcess, id_stream: str, nombre_sink: str):
+        proceso.deleteLater()
+        registrar_evento(
+            f"MotorAudio: movido sink-input {id_stream} -> '{nombre_sink}' "
+            f"vía pactl (fallback sin módulo 'pulse' en libVLC, serializado)"
+        )
+        self._terminar_job_actual()
+
+    def _terminar_job_actual(self):
+        if self._cola:
+            self._cola.pop(0)
+        self._procesando = False
+        self._procesar_siguiente_si_libre()
+
+
+_instancia_enrutador_pactl = None
+
+
+def _enrutador_pactl() -> EnrutadorPactl:
+    """Singleton perezoso -- se crea recién al primer uso real, ya con
+    QApplication corriendo (nunca antes, un QObject con QTimer/QProcess
+    necesita el event loop de Qt ya activo)."""
+    global _instancia_enrutador_pactl
+    if _instancia_enrutador_pactl is None:
+        _instancia_enrutador_pactl = EnrutadorPactl()
+    return _instancia_enrutador_pactl
 
 MENSAJE_VLC_NO_DISPONIBLE = (
     "VLC no está instalado o no se encontró libvlc. "
@@ -347,75 +436,89 @@ class MotorAudio(QObject):
         if self._timer_fade_volumen is not None:
             self._timer_fade_volumen.stop()
 
-        # Ver _es_nombre_pactl_directo() -- si el dispositivo configurado
-        # es un nombre de sink de pactl escrito directo (no un ID de
-        # módulo de libVLC), la snapshot se toma ACÁ, antes de play(),
-        # para que mover_stream_nuevo_a_sink() (llamado más abajo, ya
-        # con la reproducción arrancada) pueda distinguir el sink-input
-        # que recién aparece de los que ya existían.
-        ids_previos_pactl = None
-        if _es_nombre_pactl_directo(self._id_dispositivo):
-            ids_previos_pactl = _ids_sink_inputs_actuales()
-
-        self._player.play()
-        self._timer_posicion.start()
-
-        # Re-aplica el dispositivo de salida elegido — ver
-        # _aplicar_dispositivo_salida(): el stop() de arriba desarma la
-        # salida de audio, así que la selección hecha en Configuración
-        # se pierde si no se refuerza acá en cada arranque.
-        self._aplicar_dispositivo_salida()
-
-        self._ganancia_db_actual = ganancia_db
-        volumen_final = volumen_base
-        if ganancia_db:
-            from core.analizador_audio import volumen_ajustado_por_ganancia
-            volumen_final = volumen_ajustado_por_ganancia(volumen_base, ganancia_db)
-        if duracion_declick_ms > 0:
-            self.set_volumen(0)
-            self.fade_volumen_a(volumen_final, duracion_declick_ms / 1000.0)
-        else:
-            self.set_volumen(volumen_final)
-
-        # El seek necesita que el media ya haya arrancado a
-        # reproducirse; libvlc lo tolera con un pequeño retardo.
-        # En el mismo diferido se RE-APLICA el volumen deseado: el
-        # set_volumen() de arriba corre justo después de play(), y en
-        # ese instante libVLC puede descartarlo en silencio porque la
-        # salida de audio del reproductor todavía no existe (sobre
-        # todo tras el stop() de arriba, que la desarma) — el síntoma
-        # real era un Pisador o un tema reproduciéndose entero pero
-        # MUDO. La red de seguridad final es _emitir_posicion(), que
-        # re-aplica el volumen deseado en cada tick de posición.
-        #
-        # Bug real corregido — "repite muy breve el inicio" (Pisadores
-        # en Ventana 2/Auxiliar, y algunos ítems de Ventana 1): el seek
-        # de acá SIEMPRE se hacía, incluso a 0ms — pero el stop() de
-        # arriba YA garantiza que un play() nuevo arranca desde la
-        # posición 0 (es justo el fix del bug de "el Pisador reusado
-        # deja de sonar", documentado arriba). Con punto_inicio_ms en 0
-        # (frecuente en Pisadores/stings cortos sin silencio de cabeza,
-        # y en cualquier ítem donde el análisis de silencio no encontró
-        # nada para recortar), el archivo YA estaba sonando de forma
-        # correcta desde el instante 0 durante los `retardo_arranque_ms`
-        # (150ms por defecto) que tarda en dispararse este diferido —
-        # el `set_time(0)` de acá, en vez de ser un no-op, REBOBINABA
-        # ese contenido YA reproducido de vuelta al principio, sonando
-        # como si el inicio se repitiera. Corregido: el seek SOLO se
-        # hace si `punto_inicio_ms` es un offset real (> 0) — no hay
-        # nada que "reiniciar" si ya está sonando desde el principio.
-        def _tras_arranque():
-            if not self._disponible:
-                return
+        # Bug real corregido — "se corta la música como cuando saltaban
+        # los CDs... una cortina se reproduce pero sin audio... lo que
+        # tiro en previo vuelve a salir al aire" (reporte real de la
+        # operadora): el mecanismo viejo tomaba la foto de "qué ya
+        # existía" y llamaba a play() TODO en el mismo instante
+        # síncrono, así que el pedido a `EnrutadorPactl` (que corre
+        # play() recién cuando tiene su propia foto confirmada, sin
+        # pisarse con otra reproducción que arranque casi al mismo
+        # tiempo) es quien decide CUÁNDO dispara el player.play() real
+        # — ver `_arrancar_reproduccion_real()` más abajo. Con un
+        # dispositivo normal (id de módulo de libVLC, o "default") el
+        # comportamiento es IDÉNTICO a como era antes: arranca ya
+        # mismo, sin ninguna cola de por medio.
+        def _arrancar_reproduccion_real():
             if self._generacion_reproduccion != generacion_de_esta_reproduccion:
-                return  # una reproducción MÁS NUEVA ya arrancó en este motor
-            if punto_inicio_ms > 0:
-                self._player.set_time(punto_inicio_ms)
-            self._player.audio_set_volume(self._volumen_deseado)
+                return  # una reproducción MÁS NUEVA ya canceló esta (ver más abajo)
+            self._player.play()
+            self._timer_posicion.start()
+
+            # Re-aplica el dispositivo de salida elegido — ver
+            # _aplicar_dispositivo_salida(): el stop() de arriba desarma
+            # la salida de audio, así que la selección hecha en
+            # Configuración se pierde si no se refuerza acá en cada
+            # arranque.
             self._aplicar_dispositivo_salida()
-            if ids_previos_pactl is not None:
-                mover_stream_nuevo_a_sink(ids_previos_pactl, self._id_dispositivo)
-        QTimer.singleShot(self._retardo_arranque_ms, _tras_arranque)
+
+            self._ganancia_db_actual = ganancia_db
+            volumen_final = volumen_base
+            if ganancia_db:
+                from core.analizador_audio import volumen_ajustado_por_ganancia
+                volumen_final = volumen_ajustado_por_ganancia(volumen_base, ganancia_db)
+            if duracion_declick_ms > 0:
+                self.set_volumen(0)
+                self.fade_volumen_a(volumen_final, duracion_declick_ms / 1000.0)
+            else:
+                self.set_volumen(volumen_final)
+
+            # El seek necesita que el media ya haya arrancado a
+            # reproducirse; libvlc lo tolera con un pequeño retardo.
+            # En el mismo diferido se RE-APLICA el volumen deseado: el
+            # set_volumen() de arriba corre justo después de play(), y en
+            # ese instante libVLC puede descartarlo en silencio porque la
+            # salida de audio del reproductor todavía no existe (sobre
+            # todo tras el stop() de arriba, que la desarma) — el síntoma
+            # real era un Pisador o un tema reproduciéndose entero pero
+            # MUDO. La red de seguridad final es _emitir_posicion(), que
+            # re-aplica el volumen deseado en cada tick de posición.
+            #
+            # Bug real corregido — "repite muy breve el inicio" (Pisadores
+            # en Ventana 2/Auxiliar, y algunos ítems de Ventana 1): el seek
+            # de acá SIEMPRE se hacía, incluso a 0ms — pero el stop() de
+            # arriba YA garantiza que un play() nuevo arranca desde la
+            # posición 0 (es justo el fix del bug de "el Pisador reusado
+            # deja de sonar", documentado arriba). Con punto_inicio_ms en 0
+            # (frecuente en Pisadores/stings cortos sin silencio de cabeza,
+            # y en cualquier ítem donde el análisis de silencio no encontró
+            # nada para recortar), el archivo YA estaba sonando de forma
+            # correcta desde el instante 0 durante los `retardo_arranque_ms`
+            # (150ms por defecto) que tarda en dispararse este diferido —
+            # el `set_time(0)` de acá, en vez de ser un no-op, REBOBINABA
+            # ese contenido YA reproducido de vuelta al principio, sonando
+            # como si el inicio se repitiera. Corregido: el seek SOLO se
+            # hace si `punto_inicio_ms` es un offset real (> 0) — no hay
+            # nada que "reiniciar" si ya está sonando desde el principio.
+            def _tras_arranque():
+                if not self._disponible:
+                    return
+                if self._generacion_reproduccion != generacion_de_esta_reproduccion:
+                    return  # una reproducción MÁS NUEVA ya arrancó en este motor
+                if punto_inicio_ms > 0:
+                    self._player.set_time(punto_inicio_ms)
+                self._player.audio_set_volume(self._volumen_deseado)
+                self._aplicar_dispositivo_salida()
+            QTimer.singleShot(self._retardo_arranque_ms, _tras_arranque)
+
+        # Ver _es_nombre_pactl_directo()/EnrutadorPactl más arriba —
+        # NUNCA bloquea el hilo principal, y serializa para que dos
+        # reproducciones que arrancan casi juntas nunca se confundan
+        # sobre cuál sink-input le pertenece a cuál.
+        if _es_nombre_pactl_directo(self._id_dispositivo):
+            _enrutador_pactl().reclamar(self._id_dispositivo, _arrancar_reproduccion_real)
+        else:
+            _arrancar_reproduccion_real()
 
     def pausar(self):
         if not self._disponible:
@@ -429,6 +532,17 @@ class MotorAudio(QObject):
         self._timer_posicion.stop()
         self._punto_fin_ms = None
         self.posicion_cambiada.emit("00:00:00", "00:00:00")
+        # Invalida cualquier play() que hubiera quedado ENCOLADO
+        # esperando su turno en EnrutadorPactl (dispositivo de salida
+        # por pactl directo) sin haber arrancado a sonar todavía —
+        # sin este bump, un Stop/Cut mientras ese pedido sigue en
+        # cola no lo cancelaba de verdad: el play() diferido terminaba
+        # arrancando igual un rato después, resucitando una
+        # reproducción que el operador ya había cortado a mano. Mismo
+        # mecanismo ya usado para invalidar el diferido de
+        # `_tras_arranque()` -- acá se extiende a `reproducir()`
+        # entero, no solo a su remate.
+        self._generacion_reproduccion += 1
 
     def esta_reproduciendo(self) -> bool:
         if not self._disponible:
@@ -818,7 +932,7 @@ def listar_dispositivos_pactl():
     `pactl` es la MISMA fuente de verdad que ya usa KMix (y
     Viper4Linux) — el nombre de sink que devuelve acá NUNCA tiene el
     separador "||" que usaba el formato viejo, así que activa SIEMPRE
-    el fallback de `mover_stream_nuevo_a_sink()` al reproducir (ver
+    el fallback de `EnrutadorPactl` al reproducir (ver
     `_es_nombre_pactl_directo`) — cualquier opción de esta lista nueva
     enruta de forma confiable, no solo la escrita a mano."""
     try:
