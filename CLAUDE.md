@@ -12973,6 +12973,151 @@ soltó de una vez.
     NUEVO en esa categoría la semana siguiente hace que el comando
     "tome" ese archivo nuevo automáticamente, sin tocar nada más.
 
+128. ~~Bug real de fondo, reportado por la operadora Aida por WhatsApp:
+    cortes de audio "como cuando saltaban los CDs", cortinas mudas,
+    y la Preescucha filtrándose al aire — el mecanismo de enrutado
+    por pactl bloqueaba el hilo principal y podía confundir streams~~
+    — Santiago pidió "revisá y analizá si es un error de la operadora
+    o del programa" pasando el chat textual de Aida: "la música se
+    corta, el domingo se cortaba en previo y al aire, como cuando
+    saltaban los CDs... se cortan los audios de las publicidades...
+    algunas salen en un solo canal y una sola luz, no se escucha nada
+    al aire... las cortinas tampoco salen al aire, se reproducen pero
+    sin audio... lo que tiro en previo vuelve a salir al aire otra
+    vez... cuando tiro un separado no corre a la cortina, se detiene
+    el audio, tengo que darle OK manual... termina la música, va un
+    separado, se detiene el audio y no pasa al siguiente ni siquiera
+    manual". Diagnóstico entregado primero (sin tocar código) — 100%
+    error del programa, no de Aida.
+
+    **Causa raíz, encontrada en el propio código con fecha exacta
+    (8/8, confirmada con `git log`)**: `mover_stream_nuevo_a_sink()`
+    (`core/audio_engine.py`) es el mecanismo de respaldo que existe
+    porque libVLC en esta instalación NO tiene compilado el módulo de
+    salida "pulse" — sin él, no hay forma de apuntar directo a un sink
+    de PipeWire, así que el truco es: arrancar a reproducir, y DESPUÉS
+    buscar con `pactl` cuál stream nuevo apareció y moverlo a mano al
+    sink correcto (Master → consola/USB, Preescucha → parlantes de
+    monitoreo — deliberado, confirmado con Santiago: "lo habíamos
+    puesto porque el aire siempre tiene que salir por consola... antes
+    no era así y teníamos problema", así que el mecanismo en sí es
+    necesario, el bug estaba en CÓMO quedó implementado). Dos fallas
+    de fondo, apiladas:
+    - **(a) Bloqueaba el hilo principal de Qt, en CADA reproducción**:
+      `subprocess.run()`/`time.sleep()` SÍNCRONOS, en un bucle de
+      hasta 8 reintentos, llamados desde dentro de un
+      `QTimer.singleShot()` — es decir, en el hilo principal. El
+      commit del mismo día ("Simplificar la lista de salidas de audio
+      a las 3 reales... como en KMix") hizo que CUALQUIER salida
+      elegida en Configuración → Audio disparara esto siempre (antes
+      solo si se tipeaba un nombre de pactl a mano). Resultado: cada
+      tema, tanda, cortina, Pisador o previo que arranca podía
+      congelar la app ENTERA —botones, timers, avance automático,
+      medidor de nivel— desde una fracción de segundo hasta varios
+      segundos (peor caso, o si varias reproducciones lo disparaban
+      seguidas: los bloqueos se sumaban, uno atrás del otro, todo en
+      el mismo hilo). Esto explica los cortes tipo "como cuando
+      saltaban los CDs" y el "se detiene, no pasa al siguiente ni con
+      play manual" (clicks que quedan en cola durante el freeze).
+    - **(b) El truco de identificar "cuál stream es el mío" podía
+      confundirse entre Master y Preescucha**: comparaba una foto de
+      `pactl list sink-inputs` de ANTES contra la de DESPUÉS y asumía
+      que "el que apareció nuevo" era el propio — pero si DOS
+      reproducciones arrancaban casi al mismo tiempo (el crossfade de
+      Ventana 2 usa dos motores en paralelo A PROPÓSITO, el Pisador es
+      un segundo motor, y sobre todo: previsualizar algo en el
+      Explorador mientras algo cambia al aire, un flujo de trabajo
+      constante), no había forma de saber cuál "nuevo" pertenecía a
+      cuál — podía terminar moviendo el stream de la Preescucha al
+      sink del aire, o viceversa. Explica, con mucha más fuerza que
+      "la carpeta de Daniel" o "la ventana Auxiliar del viernes", el
+      "lo que tiro en previo vuelve a salir al aire otra vez", y
+      también "sale en un solo canal, una sola luz, no se escucha
+      nada al aire" / "la cortina se reproduce pero sin audio" (el
+      stream quedó en el sink equivocado, o no se encontró dentro del
+      presupuesto de reintentos y siguió sonando en la salida por
+      defecto del sistema, no en la consola).
+
+    **Arreglo: `EnrutadorPactl` (`core/audio_engine.py`), reemplaza
+    por completo `mover_stream_nuevo_a_sink()`/`_ids_sink_inputs_actuales()`**
+    — nueva `QObject` con una cola de "reclamos" (uno por sink target)
+    procesados DE A UNO, resolviendo los dos problemas de raíz a la
+    vez:
+    - **NUNCA bloquea el hilo principal**: cada consulta/movimiento a
+      `pactl` corre por `QProcess` (async, señal `finished`) y cada
+      reintento se agenda con `QTimer.singleShot()` — cero
+      `subprocess.run()`/`time.sleep()` síncronos, mismo criterio ya
+      establecido en el resto del proyecto para cualquier llamada
+      externa que no debe congelar la UI (ej. `core/actualizador.py`).
+    - **NUNCA confunde a qué reproducción pertenece un stream nuevo**:
+      se invirtió el orden de control — `MotorAudio.reproducir()` ya
+      NO llama a `self._player.play()` de una si el dispositivo es un
+      nombre de pactl directo; en cambio, encola un pedido
+      (`_enrutador_pactl().reclamar(sink, callback)`) y es el
+      ENRUTADOR quien, recién cuando le toca el turno a ESE pedido
+      puntual (nunca dos "cazando su propio stream nuevo" a la vez en
+      toda la app), toma la foto de "qué ya existía" y RECIÉN AHÍ
+      llama al callback — que es quien de verdad dispara
+      `self._player.play()`. Con esa garantía, cualquier sink-input
+      nuevo que aparezca durante esa ventana SIEMPRE es el correcto,
+      sin importar cuántas otras reproducciones estén esperando su
+      turno en la cola. Con un dispositivo NORMAL (id de módulo de
+      libVLC, o "default" — el caso sin este fallback) el
+      comportamiento queda IDÉNTICO a como era antes: `play()`
+      inmediato, sin ninguna cola de por medio.
+    - **Costo real, explicado a Santiago antes de implementar**: si
+      dos reproducciones arrancan casi juntas, la segunda espera a que
+      la primera quede confirmada (normalmente milisegundos, como
+      mucho un par de segundos si `pactl` responde lento) antes de
+      sonar de verdad — un retraso acotado, siempre preferible a aire
+      silenciado o cruzado entre Master y Preescucha.
+    - **Bug real de una segunda capa, encontrado y corregido en el
+      mismo cambio**: `MotorAudio.detener()` no invalidaba un pedido
+      que hubiera quedado ENCOLADO sin haber arrancado a sonar
+      todavía — sin este fix, un Stop/Cut mientras ese pedido seguía
+      en cola no lo cancelaba de verdad: el `play()` diferido
+      terminaba arrancando igual un rato después, "resucitando" una
+      reproducción que el operador ya había cortado a mano. Corregido
+      sumando `self._generacion_reproduccion += 1` también en
+      `detener()` — mismo guard de generación ya usado en todo el
+      archivo para invalidar callbacks diferidos que quedaron
+      obsoletos.
+
+    Probado con 2 scripts dedicados (scratch, no commiteados, con un
+    `pactl` FALSO —script Python en PATH, estado en un JSON
+    compartido— ya que este sandbox no tiene pactl/PipeWire reales):
+    el primero, contra `EnrutadorPactl` aislado — confirma que el
+    hilo principal NUNCA se bloquea (un timer de prueba independiente
+    sigue tickeando decenas de veces mientras el enrutador "espera"
+    que aparezca un stream, algo IMPOSIBLE con el mecanismo bloqueante
+    viejo) y que dos pedidos casi simultáneos (Master + Preescucha) se
+    mueven cada uno a su sink correcto, sin cruzarse jamás; el
+    segundo, contra un `MotorAudio` real con un player VLC FALSO
+    (mismo patrón ya usado en otros tests de este proyecto) — confirma
+    que con un dispositivo normal el comportamiento es IDÉNTICO a
+    siempre (play inmediato), que con un dispositivo de pactl directo
+    `reproducir()` NO dispara play() de una (queda encolado) y el
+    play() diferido arranca solo al confirmarse el turno, y que
+    `detener()` mientras el pedido sigue en cola cancela de verdad el
+    play() diferido — + regresión del smoke test de ENLATADO (ronda
+    127, que también pasa por `motor.reproducir()`) sin fallos nuevos
+    + `py_compile` completo del proyecto + smoke test de arranque de
+    `main.py` sin traceback. **Sigue sin poder confirmarse con
+    audio/pactl/PipeWire reales** (como todo lo que toca este
+    mecanismo — el sandbox no tiene ninguno de los tres): falta que
+    Santiago actualice la radio real y confirme con Aida que (1) ya no
+    se sienten los cortes tipo "CD saltando", (2) las cortinas vuelven
+    a sonar siempre al aire, (3) previsualizar algo en el Explorador
+    mientras algo suena al aire ya nunca se filtra a la consola, y (4)
+    revisar el log (`Configuración → Diagnóstico → Ver log`) después
+    de un rato de uso real — debería verse casi siempre "MotorAudio:
+    movido sink-input... vía pactl (fallback sin módulo 'pulse' en
+    libVLC, serializado)" y muy pocas o ninguna línea de "no encontró
+    ningún sink-input nuevo" (si aparecen muchas de estas últimas,
+    indicaría que `pactl`/PipeWire tarda más de los ~3s de reintentos
+    en registrar el stream en esa PC puntual, y habría que subir
+    `MAX_INTENTOS`/`ESPERA_REINTENTO_MS` en `EnrutadorPactl`).
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
@@ -12988,6 +13133,40 @@ soltó de una vez.
   después hay que "empezar de cero" (no reanudar la MISMA posición),
   usar SIEMPRE `detener()` de verdad, nunca `pausar()` — aunque
   pausar parezca más elegante/menos disruptivo a primera vista.
+- **Cualquier llamada a un binario externo desde dentro de un
+  `QTimer.singleShot()`/slot de Qt tiene que ser asíncrona (QProcess),
+  NUNCA `subprocess.run()`/`time.sleep()` — aunque el timeout
+  individual parezca chico** (bug real de producción, ronda 128,
+  reportado como "se corta la música como cuando saltaban los CDs"):
+  `mover_stream_nuevo_a_sink()` corría hasta 8 reintentos de
+  `subprocess.run(pactl, timeout=2)` + `time.sleep()` DENTRO de un
+  `QTimer.singleShot()` — como eso corre en el hilo principal de Qt,
+  cada reproducción podía congelar la app ENTERA (botones, timers,
+  avance automático) por hasta varios segundos, en cascada si varias
+  reproducciones lo disparaban seguidas. Regla: cualquier llamada a un
+  proceso externo desde código que corre en el hilo principal de Qt
+  (directo o desde un timer/señal) tiene que ser `QProcess` con
+  reintentos vía `QTimer.singleShot()`, nunca bloqueante — mismo
+  criterio ya establecido para git/EasyEffects/wmctrl en este
+  proyecto, que acá no se había aplicado a este mecanismo puntual.
+- **Un mecanismo de "identificar el recurso recién creado" por
+  diff de snapshot (antes/después) es una carrera si DOS operaciones
+  pueden crear ese tipo de recurso casi al mismo tiempo — hay que
+  serializar, no solo diferenciar por timestamp/orden**
+  (ronda 128, mismo bug): comparar una foto de
+  `pactl list sink-inputs` de antes contra la de después y asumir
+  "el que apareció nuevo es el mío" se rompe en cuanto DOS
+  reproducciones arrancan casi juntas (el crossfade de Ventana 2 usa
+  dos motores en paralelo A PROPÓSITO, o el operador previsualiza
+  algo en el Explorador mientras algo cambia al aire) — no hay forma
+  de saber cuál "nuevo" pertenece a cuál, y el mecanismo puede mover
+  el recurso equivocado al destino equivocado (acá: la Preescucha
+  filtrándose al aire). Regla: si el recurso no trae ninguna
+  propiedad propia que permita identificarlo sin ambigüedad, la
+  única forma robusta es SERIALIZAR — nunca dejar que dos operaciones
+  "cacen su propio recurso nuevo" al mismo tiempo, aunque eso implique
+  encolar la segunda unos milisegundos detrás de la primera (ver
+  `EnrutadorPactl` en `core/audio_engine.py`).
 - **Un guard de "generación" solo protege si el valor comparado se
   CAPTURA en el momento del despacho, no si se relee "en vivo" dentro
   del propio callback asíncrono** (bug evitado antes de llegar a
