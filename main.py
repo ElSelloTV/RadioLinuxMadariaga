@@ -26,6 +26,9 @@ from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 from gui.styles import qss_para_tema
 from config.settings import cargar_configuracion, registrar_error, registrar_evento
 from core.instancia_unica import adquirir_bloqueo_instancia_unica
+from core.sesion_display import (
+    es_sesion_fisica_esperada, descripcion_sesion_actual, DISPLAY_FISICO_ESPERADO,
+)
 from core.actualizador import asegurar_lanzadores_escritorio
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
@@ -53,6 +56,34 @@ def main():
     app.setApplicationDisplayName("Auto-Radio Tuyú")
     if os.path.exists(RUTA_ICONO):
         app.setWindowIcon(QIcon(RUTA_ICONO))
+
+    # Pedido explícito ("necesito aislar la sesión remota y centrar
+    # todo en esta sesión Default"): Chrome Remote Desktop, en modo
+    # desatendido, crea en Linux una sesión X VIRTUAL propia, distinta
+    # de la física de la PC (ver core/sesion_display.py) — si la radio
+    # llegara a arrancar ahí, el audio quedaría atado al PipeWire/
+    # PulseAudio de esa sesión, sin llegar nunca a la consola real.
+    # Este chequeo corre ANTES de competir por el lock de instancia
+    # única — así el arranque legítimo (sesión física) nunca depende
+    # de "ganarle de mano" a nada, porque el otro nunca llega a
+    # intentarlo. iniciar.sh ya hace este mismo chequeo antes, en
+    # bash, para no gastar ni el arranque de Qt — esto es la segunda
+    # capa, por si algo lanzó main.py sin pasar por ese script.
+    if not es_sesion_fisica_esperada():
+        registrar_evento(
+            "Arranque bloqueado: sesión gráfica distinta de la física esperada "
+            f"({DISPLAY_FISICO_ESPERADO}) -- DISPLAY actual: {descripcion_sesion_actual()}"
+        )
+        QMessageBox.warning(
+            None, "Auto-Radio Tuyú — sesión incorrecta",
+            "Esta sesión gráfica no es la física de la radio "
+            f"(esperada: {DISPLAY_FISICO_ESPERADO}, actual: {descripcion_sesion_actual()}).\n\n"
+            "La radio solo puede correr en la sesión física de la PC — abrirla\n"
+            "desde acá haría que el audio nunca llegue al aire.\n\n"
+            "Si estás en el escritorio remoto (Chrome Remote Desktop), usá la\n"
+            "app satélite en vez de esto.",
+        )
+        sys.exit(0)
 
     # Instancia única (pedido explícito, caso real: un operador clickeó
     # el ícono de escritorio varias veces y terminó con 3 instancias

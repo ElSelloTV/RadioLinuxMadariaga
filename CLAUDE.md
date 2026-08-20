@@ -13118,6 +13118,111 @@ soltó de una vez.
     en registrar el stream en esa PC puntual, y habría que subir
     `MAX_INTENTOS`/`ESPERA_REINTENTO_MS` en `EnrutadorPactl`).
 
+129. ~~Bug real de fondo: la radio podía arrancar dentro de la sesión
+    VIRTUAL de Chrome Remote Desktop en vez de la sesión física de la
+    PC — "algunas cosas le gana de mano la sesión del remoto... se
+    abre y reproduce en otra sesión y no sale al aire"~~ — Santiago
+    mandó una foto real del selector de sesiones de TDE de la PC de la
+    radio (`radio: default (:0, vt7)`, la sesión física) y describió
+    dos síntomas: "(a) La app de radio se abre 1 sola vez y eso es
+    correcto... pero algunas cosas le gana de mano la sesión del
+    remoto y la principal... Se abre y reproduce en otra sesión y no
+    sale al aire. (b) algunas veces cuando programo o hago operaciones
+    desde el satélite, termina pasando eso de que hay ítem que no sale
+    al aire, tal vez buscando su salida. En definitiva necesito aislar
+    la sesión remota y centrar todo en esta sesión Default. También
+    revisar lo del sonido si esto tiene que ver o no."
+
+    **Causa raíz, conectando con un incidente ya documentado en este
+    mismo archivo ("Incidente real — PC de la radio se congeló con
+    Chrome Remote Desktop", más arriba)**: el modo DESATENDIDO de
+    Chrome Remote Desktop en Linux, a diferencia de Windows/Mac, NO se
+    conecta a la sesión gráfica física ya corriendo — crea una sesión
+    X VIRTUAL propia, con su propio `$DISPLAY` (`:0` es la física,
+    confirmado con la foto de Santiago; la virtual de CRD usa otro
+    número). El lock de instancia única (`core/instancia_unica.py`,
+    ronda 107) es un archivo `flock` compartido — mismo camino de
+    filesystem para CUALQUIER sesión del mismo usuario, sin ninguna
+    noción de "cuál sesión es la correcta" — así que si ALGO intenta
+    lanzar la radio DESDE la sesión virtual (un autostart, o el mismo
+    ícono del Escritorio, que es la MISMA carpeta para las dos
+    sesiones ya que comparten usuario/home) casi al mismo tiempo que
+    el arranque legítimo de la sesión física, CUALQUIERA de las dos
+    que gane la carrera por el lock se queda con el único proceso —
+    "le gana de mano". Si gana la sesión virtual, la radio entera
+    (audio incluido) queda atada al PipeWire/PulseAudio de ESA sesión,
+    que nunca llega a la consola real — "no sale al aire" mientras la
+    app, desde adentro, funciona perfecto, sin ningún error visible.
+
+    **Respuesta a "revisar lo del sonido si esto tiene que ver o
+    no"**: si este bug está pasando de verdad, es una causa MÁS
+    FUNDAMENTAL que la corregida en la ronda anterior (`EnrutadorPactl`)
+    — esa ronda arregla "mover el stream CORRECTO al sink correcto,
+    dentro de la sesión correcta"; esta acá es "asegurarse de que la
+    app ni siquiera termine corriendo en la sesión equivocada" — si el
+    audio de la app queda atado al PipeWire de la sesión virtual de
+    CRD, NINGÚN arreglo de enrutado dentro de esa sesión puede
+    solucionarlo, porque todo el subsistema de audio al que la app
+    está hablando está desconectado del hardware real. Las dos cosas
+    no son excluyentes — pueden estar pasando ambas a la vez — pero
+    esta es la más severa y la que corta el problema de raíz, antes de
+    que el audio siquiera entre en juego.
+
+    **Arreglo — `core/sesion_display.py` (nuevo)**: la radio se NIEGA
+    a arrancar si `$DISPLAY` no coincide con la sesión física conocida
+    (`:0`, confirmado con la foto de Santiago — único valor a cambiar
+    si otra instalación tuviera un número distinto) — nunca entra
+    siquiera a competir por el lock de instancia única, así el
+    arranque legítimo de la sesión física nunca depende de "ganarle de
+    mano" a nada, porque el otro directamente nunca llega a
+    intentarlo. `es_sesion_fisica_esperada()` compara contra
+    `DISPLAY_FISICO_ESPERADO`, separando primero cualquier sufijo de
+    pantalla (`":0.0"` -> `":0"`, por si el sistema lo reporta así) —
+    evita un falso bloqueo por esa sola diferencia de formato, no por
+    exactitud de más. Aplicado en DOS capas (mismo criterio de siempre
+    en este proyecto, "nunca confiar en una sola protección"):
+    - `iniciar.sh` (la PRIMERA, la que de verdad importa — se ejecuta
+      ANTES de gastar el arranque de Python/Qt): mismo chequeo en
+      bash, con el mismo aviso gráfico (zenity/kdialog/notify-send,
+      refactorizado a un helper `mostrar_aviso()` reusado también por
+      el aviso de error de siempre, que antes tenía el bloque
+      duplicado) y una línea en `log_lanzador.txt`.
+    - `main.py`: segunda capa, por si algo lanza `main.py` sin pasar
+      por `iniciar.sh` — corre ANTES del chequeo de instancia única
+      existente, con el mismo `QMessageBox.warning` + `sys.exit(0)`
+      que ya usa ese mecanismo, y deja constancia en
+      `log_aplicacion.txt` (`registrar_evento`).
+    A propósito, esta restricción es EXCLUSIVA del programa principal
+    — la app satélite (`satelite_main.py`/`iniciar_satelite.sh`) NO se
+    tocó: está diseñada justamente para correr desde cualquier sesión
+    remota, sin salida de audio propia, es el camino correcto para
+    operar desde el escritorio remoto (mensaje del propio aviso se lo
+    recuerda al operador: "usá la app satélite en vez de esto").
+
+    Probado con `main.py` real (offscreen) en 3 escenarios: `DISPLAY=
+    ":20"` (simula la sesión virtual de CRD) bloquea ANTES de
+    construir `MainWindow` — confirmado que nunca aparece ningún
+    mensaje de inicialización de `MotorAudio`, y que
+    `log_aplicacion.txt` deja la línea exacta "Arranque bloqueado:
+    sesión gráfica distinta de la física esperada (:0) -- DISPLAY
+    actual: :20"; `DISPLAY=":0"` (la física) arranca exactamente
+    igual que siempre, sin ningún cambio de comportamiento; y sin
+    `$DISPLAY` definido, también bloquea (nunca un "false negative"
+    que deje pasar un caso ambiguo). La lógica de recorte del sufijo
+    de pantalla (`:0.0` -> `:0`) confirmada en bash con los 3 casos
+    (con sufijo, sesión remota, sin definir) — + `py_compile` completo
+    del proyecto + `bash -n` de `iniciar.sh`. **Sigue sin poder
+    probarse contra una sesión REAL de Chrome Remote Desktop ni contra
+    TDE real** (el sandbox no tiene ninguno de los dos): falta que
+    Santiago actualice la radio, confirme que arranca normal desde el
+    ícono de la sesión física de siempre, y — el caso que de verdad
+    importa — confirme que si algo intentara abrirla desde la sesión
+    remota, ahora avisa con claridad en vez de "robarse" el arranque en
+    silencio. Si el aviso llegara a aparecer alguna vez desde la
+    sesión FÍSICA por error (falso positivo), es señal de que su
+    `$DISPLAY` real no es exactamente `:0`/`:0.0` — avisar para ajustar
+    `DISPLAY_FISICO_ESPERADO` en los dos archivos.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
