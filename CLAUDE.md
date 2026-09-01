@@ -13223,6 +13223,62 @@ soltó de una vez.
     `$DISPLAY` real no es exactamente `:0`/`:0.0` — avisar para ajustar
     `DISPLAY_FISICO_ESPERADO` en los dos archivos.
 
+130. ~~Bug real: "Añadir Bloque Horario" en el Programador (local y
+    remoto/satélite) siempre mandaba el bloque nuevo al final, sin
+    importar la hora elegida~~ — pedido explícito, con un caso real:
+    "sobre una programación guardada de rotativa a cada hora, quiero
+    agregar un bloque a las 11.50 y en vez de ubicarlo luego del
+    bloque de las 11 y antes de las 12, lo crea y manda al final."
+
+    **Causa real**: `VentanaProgramador._agregar_bloque()`
+    (`gui/ventana_programador.py`) armaba el nodo con la hora elegida
+    pero lo insertaba con `self.tree.addTopLevelItem(nodo)` — SIEMPRE
+    al final del árbol, sin comparar contra las horas de los bloques
+    ya existentes. Mismo bug, mismo patrón, en el Programador remoto
+    (`satelite/dialogo_programador_remoto.py:_agregar_bloque()`), que
+    hacía `self._bloques.append({...})` sobre la lista en vez de
+    insertarlo en la posición correcta.
+
+    **Corregido con un helper nuevo compartido por las dos versiones**
+    (misma lógica, adaptada a cada estructura de datos — `QTreeWidget`
+    en la local, `list[dict]` en la remota):
+    `_indice_insercion_para_hora(hora, excluir=...)` recorre los
+    bloques ya presentes y devuelve la posición donde el nuevo bloque
+    mantiene el árbol/lista ordenado cronológicamente — comparación
+    lexicográfica sobre "HH:MM:SS" (zero-padded), equivalente al orden
+    cronológico real. Con horas empatadas, el nuevo bloque queda
+    DESPUÉS de los existentes con esa misma hora (orden estable, nunca
+    se cuelan antes). `_agregar_bloque()` en ambas versiones ahora usa
+    `insertTopLevelItem(indice, nodo)` / `self._bloques.insert(indice,
+    {...})` en vez de agregar siempre al final.
+
+    **Extendido, mismo criterio, a "Reemplazar" (editar la hora de un
+    bloque ya existente)**: si cambiar la hora de un bloque lo saca de
+    su posición cronológica, ahora se reubica solo — sin esto,
+    quedaba la misma inconsistencia por otra puerta (agregar quedaba
+    ordenado, pero editar la hora de un bloque ya cargado seguía
+    dejando el árbol desordenado). `_editar_bloque()` (local) y la
+    rama de bloque de `_reemplazar_seleccionado()` (remoto) ahora
+    recalculan la posición correcta con el mismo helper (`excluir` se
+    usa acá para no comparar el bloque contra sí mismo) y lo mueven
+    con `takeTopLevelItem`/`insertTopLevelItem` (local) o
+    `pop`/`insert` sobre la lista (remoto) si corresponde, preservando
+    la selección/expansión.
+
+    Probado con un script dedicado (local + remoto, sin commitear):
+    una rotativa de 24 bloques (00 a 23hs) + agregar uno a las 11:50
+    lo deja EXACTO entre el de las 11:00 y el de las 12:00, tanto en
+    el Programador local como en el remoto; el caso de empate (dos
+    bloques a la misma hora) no desordena el resto; agregar uno
+    después del último bloque existente sigue quedando al final,
+    como corresponde; y editar la hora de un bloque ya cargado
+    (Reemplazar) lo reubica solo, en las dos versiones — + smoke test
+    de arranque completo de `main.py` sin traceback. **Sigue sin
+    poder confirmarse con la biblioteca/programación real de
+    Santiago**: falta que confirme que agregar un bloque a mitad de
+    su rotativa horaria ya cae en la posición correcta, tanto desde
+    la app principal como desde la app satélite.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
