@@ -506,6 +506,26 @@ class VentanaProgramador(QDialog):
     # ==================================================================
     # Nivel 2a: BLOQUES horarios — Añadir / Reemplazar (editar) / Quitar
     # ==================================================================
+    def _indice_insercion_para_hora(self, hora: str, excluir: QTreeWidgetItem = None) -> int:
+        """Posición donde debe insertarse un bloque con esta hora para
+        que el árbol quede SIEMPRE ordenado cronológicamente — bug
+        real corregido (pedido explícito: "agrego un bloque a las
+        11:50... y en vez de ubicarlo entre las 11 y las 12, lo manda
+        al final"). Comparación lexicográfica sobre "HH:MM:SS"
+        (zero-padded) alcanza, es equivalente al orden cronológico
+        real. Con horas empatadas, el nuevo bloque queda DESPUÉS de
+        los existentes con esa misma hora (orden estable). `excluir`
+        (usado al reposicionar un bloque ya existente tras editarlo)
+        se saltea para no comparar el bloque contra sí mismo."""
+        for i in range(self.tree.topLevelItemCount()):
+            existente = self.tree.topLevelItem(i)
+            if existente is excluir:
+                continue
+            hora_existente = existente.data(0, ROL_HORA_BLOQUE) or "00:00:00"
+            if hora_existente > hora:
+                return i
+        return self.tree.topLevelItemCount()
+
     def _agregar_bloque(self):
         # Pedido explícito: si el operador no tipea un título, el
         # default ya no dice "Bloque" — dice "TANDA - Rotativa".
@@ -517,7 +537,8 @@ class VentanaProgramador(QDialog):
         nodo.setFont(0, fuente)
         nodo.setData(0, ROL_HORA_BLOQUE, hora)
         nodo.setData(0, ROL_TITULO_BLOQUE, titulo)
-        self.tree.addTopLevelItem(nodo)
+        indice = self._indice_insercion_para_hora(hora)
+        self.tree.insertTopLevelItem(indice, nodo)
         nodo.setExpanded(True)
         self.tree.setCurrentItem(nodo)
         self.txt_titulo_bloque.clear()
@@ -533,6 +554,20 @@ class VentanaProgramador(QDialog):
         bloque.setData(0, ROL_HORA_BLOQUE, hora_nueva)
         bloque.setData(0, ROL_TITULO_BLOQUE, titulo_nuevo)
         bloque.setText(0, f"{hora_nueva} - {titulo_nuevo}")
+        # Mismo criterio que al agregar: si cambiar la hora saca al
+        # bloque de su posición cronológica, se reubica solo — sin
+        # esto, "Reemplazar" sobre un bloque podía dejar el árbol
+        # desordenado tal como pasaba al agregar uno nuevo.
+        indice_actual = self.tree.indexOfTopLevelItem(bloque)
+        indice_correcto = self._indice_insercion_para_hora(hora_nueva, excluir=bloque)
+        if indice_correcto != indice_actual and indice_correcto != indice_actual + 1:
+            estaba_expandido = bloque.isExpanded()
+            self.tree.takeTopLevelItem(indice_actual)
+            if indice_correcto > indice_actual:
+                indice_correcto -= 1
+            self.tree.insertTopLevelItem(indice_correcto, bloque)
+            bloque.setExpanded(estaba_expandido)
+            self.tree.setCurrentItem(bloque)
 
     # ==================================================================
     # Nivel 2b: ÍTEMS (tandas) — Añadir / Reemplazar / Quitar

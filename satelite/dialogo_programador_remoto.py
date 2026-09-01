@@ -274,13 +274,31 @@ class DialogoProgramadorRemoto(QDialog):
             return i_item_sel + 1
         return None
 
+    def _indice_insercion_para_hora(self, hora: str, excluir_indice: int = None) -> int:
+        """Mismo criterio que la versión local (gui/ventana_programador.py):
+        posición donde insertar/reubicar un bloque con esta hora para
+        que la lista quede SIEMPRE ordenada cronológicamente — bug
+        real corregido (pedido explícito: "agrego un bloque a las
+        11:50... y en vez de ubicarlo entre las 11 y las 12, lo manda
+        al final"). Comparación lexicográfica sobre "HH:MM:SS"
+        (zero-padded) alcanza. `excluir_indice` se saltea para no
+        comparar un bloque ya existente contra sí mismo al reubicarlo."""
+        for i, bloque in enumerate(self._bloques):
+            if i == excluir_indice:
+                continue
+            if (bloque.get("hora") or "00:00:00") > hora:
+                return i
+        return len(self._bloques)
+
     def _agregar_bloque(self):
         dialogo = DialogoBloqueHorario(datetime.datetime.now().strftime("%H:%M:%S"), parent=self)
         if dialogo.exec() != QDialog.DialogCode.Accepted:
             return
         datos = dialogo.resultado()
-        self._bloques.append({"hora": datos["hora"], "titulo": datos["titulo"], "items": []})
+        indice = self._indice_insercion_para_hora(datos["hora"])
+        self._bloques.insert(indice, {"hora": datos["hora"], "titulo": datos["titulo"], "items": []})
         self._refrescar_arbol()
+        self.tree.setCurrentItem(self.tree.topLevelItem(indice))
 
     def _quitar_seleccionado(self):
         item = self.tree.currentItem()
@@ -439,7 +457,17 @@ class DialogoProgramadorRemoto(QDialog):
             datos = dialogo.resultado()
             self._bloques[i_bloque]["hora"] = datos["hora"]
             self._bloques[i_bloque]["titulo"] = datos["titulo"]
+            # Mismo criterio que al agregar: si cambiar la hora saca al
+            # bloque de su posición cronológica, se reubica solo.
+            indice_correcto = self._indice_insercion_para_hora(datos["hora"], excluir_indice=i_bloque)
+            if indice_correcto != i_bloque and indice_correcto != i_bloque + 1:
+                bloque_movido = self._bloques.pop(i_bloque)
+                if indice_correcto > i_bloque:
+                    indice_correcto -= 1
+                self._bloques.insert(indice_correcto, bloque_movido)
+                i_bloque = indice_correcto
             self._refrescar_arbol()
+            self.tree.setCurrentItem(self.tree.topLevelItem(i_bloque))
             return
 
         item_actual = self._bloques[i_bloque]["items"][i_item]
