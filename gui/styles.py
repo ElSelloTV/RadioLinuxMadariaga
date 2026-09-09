@@ -23,6 +23,13 @@ PALETA_CLARA y aplicados vía _generar_qss(paleta).
 --------------------------------------------------------
 """
 
+import os
+
+# Carpeta assets/ del repo, calculada relativa a este archivo (mismo
+# patrón ya usado en main.py/satelite_main.py para RUTA_ICONO) — así
+# funciona sin importar desde dónde se lance la app.
+_RUTA_ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+
 # Colores de ESTADO/SEMÁNTICOS — iguales en cualquier tema, ver nota
 # arriba. Referenciados directo por nombre en _generar_qss() (no van
 # en las paletas de superficie) y por el resto de gui/*.py (import
@@ -328,23 +335,44 @@ QLineEdit#txtBusqueda {{
     padding: 3px 6px;
 }}
 
-/* Ventana 3, árbol de categorías: NADA de QSS custom sobre ::branch a
-   propósito (bug real de la ronda anterior, corregido acá) — las
-   líneas de conexión que se habían agregado ahí ("hasta 5 niveles...
-   colores, negrita, líneas") tienen un efecto secundario real de Qt:
-   en cuanto un stylesheet toca CUALQUIER pseudo-estado de ::branch,
-   Qt deja de dibujar el triángulo NATIVO de expandir/colapsar para
-   los estados que ese QSS no cubre explícitamente (acá nunca se
-   cubrieron :closed/:open) — el triángulo quedaba invisible en la
-   práctica, justo la señal que hace falta para saber que una
-   categoría tiene más niveles debajo. Corregido sacando el override
-   por completo: `tree_categorias` vuelve a usar el triángulo nativo
-   del estilo activo (Fusion), que SIEMPRE se dibuja solo en cualquier
-   ítem con hijos, sin depender de assets propios. La jerarquía visual
-   sigue viva vía negrita/cursiva/color por nivel
-   (_aplicar_estilo_por_nivel, gui/ventana_explorador.py) y
-   setRootIsDecorated(True) (mismo archivo) asegura que el triángulo
-   se vea también en las categorías de nivel 1. */
+/* Ventana 3, árbol de categorías — triángulo de expandir/colapsar con
+   color de resalte (pedido explícito: "el triángulo es negro, no se
+   distingue... dale un color de resalte"). El triángulo NATIVO de
+   Fusion (ver nota de la ronda anterior, más abajo) es oscuro — sobre
+   el fondo casi negro fijo de esta lista queda invisible, justo la
+   señal que hace falta para saber que una categoría tiene más niveles
+   debajo. Reemplazado por dos PNG propios en assets/ (celeste,
+   `COLOR_SELECCION` — mismo tono ya usado en la app para "resaltar/
+   seleccionar", nunca compite con el rojo/verde de estado).
+
+   OJO — dos trampas reales encontradas armando esto, las dos
+   confirmadas con una captura real (offscreen) antes de dar por
+   terminado:
+   (1) en cuanto un stylesheet toca CUALQUIER pseudo-estado de
+   ::branch, Qt deja de dibujar el triángulo nativo para los estados
+   que ese QSS NO cubre explícitamente — la ronda anterior solo había
+   agregado líneas de conexión, sin :closed/:open, y el triángulo
+   entero desapareció. Acá se cubren los 2 estados reales (cerrado ->
+   flecha a la derecha, abierto -> flecha hacia abajo).
+   (2) el `url(...)` de QSS de Qt NO soporta `data:` URIs (probado:
+   un `image: url(data:image/png;base64,...)` no tira ningún error
+   pero tampoco dibuja NADA, silenciosamente, dejando el mismo hueco
+   invisible que el bug (1)) — necesita SIEMPRE una ruta de archivo
+   real (o un recurso Qt `:/...`, que este proyecto no usa). Por eso
+   los 2 triángulos son archivos PNG reales en `assets/`, referenciados
+   por ruta absoluta calculada en tiempo de ejecución (`_RUTA_ASSETS`),
+   no un ícono inline.
+   Una categoría SIN hijos no tiene ninguna de las dos condiciones
+   `:has-children`, así que no dibuja nada — correcto, no hay nada
+   para desplegar. La jerarquía visual por nivel (negrita/cursiva/
+   color, `_aplicar_estilo_por_nivel`, `gui/ventana_explorador.py`) y
+   `setRootIsDecorated(True)` (mismo archivo) no se tocaron. */
+QTreeWidget#tree_categorias::branch:closed:has-children {{
+    image: url({_RUTA_ASSETS}/flecha_categoria_cerrada.png);
+}}
+QTreeWidget#tree_categorias::branch:open:has-children {{
+    image: url({_RUTA_ASSETS}/flecha_categoria_abierta.png);
+}}
 
 /* ---------- Modo compacto: Ventana 1 (Publicidad) y Ventana 2 /
    Auxiliar (Emisión) — fuente y relleno más chicos para poder

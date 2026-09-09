@@ -13279,6 +13279,63 @@ soltó de una vez.
     su rotativa horaria ya cae en la posición correcta, tanto desde
     la app principal como desde la app satélite.
 
+131. ~~El triángulo de expandir/colapsar de Ventana 3 (Categorías) era
+    negro sobre el fondo casi negro de esa lista — invisible~~ —
+    pedido explícito, corto: "el icono o triángulo es negro, y no se
+    distingue en la ventana 3 para desplegar el árbol. dale un color
+    de resalte."
+
+    **Causa**: la ronda 110 forzó fondo casi negro fijo en
+    `tree_categorias` — el triángulo NATIVO de expandir/colapsar
+    (heredado del estilo Fusion, ver la nota ya documentada de la
+    ronda 97 sobre por qué `tree_categorias` no tiene ningún override
+    de `::branch`) es oscuro por defecto, así que sobre ese fondo
+    quedaba prácticamente invisible.
+
+    **Corregido con dos PNG propios (celeste, `COLOR_SELECCION`,
+    `#5dade2` — mismo tono ya usado en la app para "resaltar")**,
+    nuevos en `assets/flecha_categoria_cerrada.png` (apunta a la
+    derecha) y `assets/flecha_categoria_abierta.png` (apunta hacia
+    abajo), referenciados por ruta absoluta calculada en
+    `gui/styles.py` (`_RUTA_ASSETS`, mismo patrón ya usado en
+    `main.py`/`satelite_main.py` para `RUTA_ICONO`) desde
+    `QTreeWidget#tree_categorias::branch:closed:has-children` /
+    `:open:has-children`.
+
+    **Dos trampas reales, encontradas armando esto — las dos
+    confirmadas con una captura real (offscreen) antes de dar por
+    terminado, nunca solo "debería andar"**:
+    1. La misma de la ronda 97 (tocar CUALQUIER pseudo-estado de
+       `::branch` apaga el triángulo nativo para los estados no
+       cubiertos) — cubierta cubriendo los DOS estados reales
+       (`:closed`/`:open`), no solo uno.
+    2. **Nueva, no documentada antes en este proyecto**: el `url(...)`
+       de QSS de Qt **no soporta `data:` URIs** — un primer intento
+       con el ícono embebido inline (SVG y después PNG en base64,
+       `image: url(data:image/png;base64,...)`) no tiraba NINGÚN
+       error pero tampoco dibujaba nada — el mismo hueco invisible
+       que la trampa (1), por una causa completamente distinta.
+       Confirmado el diagnóstico con un archivo PNG real en disco:
+       con una ruta de archivo de verdad, el triángulo aparece al
+       instante. **Regla para el futuro**: cualquier ícono nuevo
+       referenciado desde un `image:`/`border-image:` de QSS en este
+       proyecto tiene que ser un archivo real en `assets/`, con su
+       ruta resuelta en tiempo de ejecución — nunca un data URI
+       embebido, aunque parezca más prolijo no depender de un
+       archivo aparte.
+
+    Probado con un script dedicado (offscreen, sin commitear):
+    confirma por código que el QSS generado (`QSS_APLICACION`) cubre
+    los 2 estados y apunta a los 2 PNG reales (existentes en disco) —
+    y con una captura real de un árbol con una categoría COLAPSADA (T
+    de Publicidad, sin hijos visibles) y otra EXPANDIDA (Amanzor, con
+    "Archivos" debajo) confirmando visualmente los dos triángulos
+    celestes, y que una categoría SIN hijos ("Sin subcategorías") no
+    dibuja ninguno — + `py_compile` completo del proyecto + smoke test
+    de arranque de `main.py` sin traceback. Falta que Santiago
+    confirme en su pantalla real que el triángulo celeste ahora se ve
+    bien contra el fondo oscuro de Categorías.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
