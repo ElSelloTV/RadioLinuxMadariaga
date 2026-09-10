@@ -103,6 +103,43 @@ LIMITE_RECORTE_SILENCIO_SEGUNDOS = 20.0      # techo duro: nunca recorta más qu
 # audible un poco más allá de donde el detector marca "silencio".
 MARGEN_MAXIMO_SALIDA_MS = 400
 
+# Piso de seguridad de la VENTANA REPRODUCIBLE (punto_fin_ms -
+# punto_inicio_ms) -- bug real encontrado con un caso de producción
+# reportado por Santiago: "los separadores y artísticas hay veces que
+# no las reproduce... el siguiente tampoco lo hace y saltea al
+# próximo". Causa de fondo: `detect_leading_silence` escanea desde
+# CADA extremo hacia adentro y se detiene en la primera muestra
+# audible -- si un archivo tiene su único contenido audible real
+# SANDWICHEADO entre tramos largos de casi-silencio en LOS DOS
+# extremos (típico de una artística/separador con fade-in Y fade-out
+# musicales, algo que un archivo de voz seca como los del Comando HTH
+# casi nunca tiene), el recorte de entrada Y el de salida pueden
+# comerse la MAYOR PARTE de un archivo corto (15-30s) a la vez --
+# dejando una "ventana reproducible" de apenas unos cientos de
+# milisegundos. Con una ventana así de chica, el próximo tick de
+# posición de MotorAudio (cada 500ms) corta el ítem casi al instante
+# de haber arrancado -- indistinguible, para el operador, de "no
+# reprodujo nada". Si eso le toca a DOS ítems short seguidos en el
+# mismo bloque (ej. "separador, separador, canción" -- un patrón común
+# de programación), el resultado es exactamente el reporte real: los
+# dos se saltean en cascada y la reproducción "aterriza" en la
+# canción. Esto explica también por qué el género "Artística" (que NO
+# está en GENEROS_CORTE_ESTRICTO, usa la tolerancia general más laxa)
+# puede sufrir lo mismo que "Separador" (que sí está, con la
+# tolerancia estricta más agresiva): el problema no es la tolerancia
+# en sí, es que el contenido audible real quede comprimido a casi nada
+# quedando SANDWICHEADO entre silencio real en ambos extremos.
+#
+# Corrección: si la ventana calculada (ver más abajo, en
+# analizar_audio()) queda por debajo de este piso -- relativo al
+# propio archivo, nunca más grande que su duración total -- se
+# DESCARTA el recorte por completo para ESE archivo puntual (vuelve a
+# punto_inicio_ms=0 / punto_fin_ms=duracion_total_ms, el archivo suena
+# completo) en vez de arriesgar una reproducción casi inaudible. Mismo
+# criterio de siempre en este archivo: ante la duda, priorizar NO
+# CORTAR contenido real por sobre una prolijidad estética de más.
+VENTANA_MINIMA_REPRODUCIBLE_MS = 3000
+
 
 def _cargar_audio(ruta: str):
     """`AudioSegment.from_file(ruta)` con un fallback real para WAV
@@ -286,6 +323,26 @@ def analizar_audio(
 
         punto_inicio_ms = min(silencio_inicio_ms, max(0, duracion_total_ms - 1))
         punto_fin_ms = max(punto_inicio_ms + 1, duracion_total_ms - silencio_fin_ms)
+
+        # Piso de seguridad de ventana reproducible (ver
+        # VENTANA_MINIMA_REPRODUCIBLE_MS más arriba) -- si el recorte de
+        # ENTRADA y de SALIDA combinados dejan casi nada reproducible
+        # (contenido real sandwicheado entre silencio en ambos
+        # extremos), se descarta el recorte por completo para este
+        # archivo en vez de arriesgar una reproducción casi inaudible.
+        piso_ms = min(duracion_total_ms, VENTANA_MINIMA_REPRODUCIBLE_MS)
+        if (punto_fin_ms - punto_inicio_ms) < piso_ms:
+            try:
+                from config.settings import registrar_evento
+                registrar_evento(
+                    f"analizador_audio: ventana reproducible sospechosamente chica "
+                    f"({punto_fin_ms - punto_inicio_ms}ms de {duracion_total_ms}ms) en '{ruta}' "
+                    "-- se descarta el recorte de silencio para este archivo, suena completo."
+                )
+            except Exception:
+                pass
+            punto_inicio_ms = 0
+            punto_fin_ms = duracion_total_ms
 
         # Nivelado: sonoridad percibida (LUFS) con fallback a promedio
         # dBFS + techo de seguridad de pico — ver _calcular_ganancia_db().

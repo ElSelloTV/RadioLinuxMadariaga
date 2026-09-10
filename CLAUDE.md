@@ -13335,6 +13335,151 @@ soltó de una vez.
     de arranque de `main.py` sin traceback. Falta que Santiago
     confirme en su pantalla real que el triángulo celeste ahora se ve
     bien contra el fondo oscuro de Categorías.
+132. ~~Bug real de fondo — "los separadores y artísticas hay veces que
+    no las reproduce, y el siguiente tampoco, saltea al próximo"~~ —
+    pedido explícito, con un reporte real de la propia experiencia de
+    Santiago operando la radio, dos veces en el mismo día: "Lo común
+    en esta categoría es el tiempo, pueden durar entre 15 a 30
+    segundos. Lo llamativo que la hora minutos HTH si los reproduce.
+    Cuando no reproduce estos ítem, el siguiente tampoco lo hace y
+    saltea al próximo, el siguiente muchas veces es una canción. Esto
+    me sucedió tanto en la ventana 1, 2 y auxiliar. Revisa todo, su
+    implicancia con el recorte de silencios, fade, motor de
+    reproducción etc." Investigación amplia, como pidió Santiago —
+    releídos de punta a punta `core/audio_engine.py`,
+    `core/playlist_manager.py` y `core/analizador_audio.py` antes de
+    tocar nada — hasta encontrar la causa raíz en el motor de
+    análisis, no en el motor de reproducción ni en el fade.
+
+    **Causa de fondo, confirmada reproduciendo el bug con audio
+    sintético real (no adivinada)**: `detect_leading_silence`
+    (`core/analizador_audio.py`) escanea desde CADA extremo del audio
+    hacia adentro y se detiene en la primera muestra que ya no es
+    silencio — mismo mecanismo, sin cambios, que garantiza desde hace
+    muchas rondas "nunca cortar un silencio del medio del tema". El
+    problema real aparece cuando el ÚNICO contenido genuinamente
+    audible de un archivo queda SANDWICHEADO entre tramos largos de
+    casi-silencio en LOS DOS extremos a la vez — típico de una
+    artística/separador PRODUCIDO con fade-in y fade-out musicales
+    (una intro que sube de a poco, un cuerpo audible, una salida que
+    baja de a poco) — ahí el escaneo desde el principio Y el escaneo
+    desde el final (invertido) devuelven, cada uno, un valor de
+    "silencio" GRANDE, porque cada uno se detiene recién al llegar al
+    mismo pasaje audible del medio desde su propio lado. Para un
+    archivo CORTO (15-30s, el rango exacto que describió Santiago),
+    ese "silencio" detectado desde ambos lados puede comerse la
+    inmensa mayoría del archivo, dejando una ventana reproducible real
+    (`punto_fin_ms - punto_inicio_ms`) de apenas unos cientos de
+    milisegundos — reproducido en un test con audio sintético real:
+    un archivo de 20 segundos con 9s de casi-silencio + 2s de
+    contenido audible + 9s de casi-silencio quedaba, con el cálculo
+    VIEJO, en una ventana de solo 2320ms. Con una ventana tan chica,
+    el próximo tick de posición de `MotorAudio` (cada 500ms,
+    `_emitir_posicion()`) corta el ítem casi al instante de haber
+    arrancado — indistinguible, para el operador, de "no reprodujo
+    nada". Si eso le toca a DOS ítems cortos seguidos en el mismo
+    bloque (un patrón de programación común: "separador, separador,
+    canción"), el resultado es EXACTAMENTE el reporte real: los dos se
+    saltean en cascada (cada uno dispara su propio `_avanzar()` casi
+    de inmediato) y la reproducción "aterriza" en la canción de
+    después.
+
+    **Por qué el HTH sí funciona, a pesar de ser todavía más corto**
+    (el dato más llamativo del reporte, y la clave que permitió aislar
+    la causa real): los clips de voz del Comando HTH son grabaciones
+    SECAS, con onset/offset abruptos (la voz arranca y termina sin
+    ningún fade musical) — `detect_leading_silence` casi siempre
+    devuelve un valor cercano a CERO desde los dos extremos para este
+    tipo de archivo, sin importar que HTH también esté en
+    `GENEROS_CORTE_ESTRICTO` (tolerancia agresiva, 0.15s) igual que
+    Separador. El problema nunca fue la tolerancia en sí — es que el
+    contenido audible real quede comprimido a casi nada, algo que un
+    archivo de voz seca casi nunca produce, pero que un archivo
+    musical con fades sí. Esto también explica por qué "Artística"
+    (que NO está en `GENEROS_CORTE_ESTRICTO`, usa la tolerancia
+    general más laxa de 2s) puede sufrir el mismo problema que
+    "Separador" (que sí está, con tolerancia estricta) — el margen de
+    SALIDA de los dos géneros converge igual en la práctica
+    (`MARGEN_MAXIMO_SALIDA_MS = 400ms`, tope duro sin importar la
+    tolerancia configurada), y el de ENTRADA, aunque más generoso para
+    Artística, no alcanza a compensar un fade-in de varios segundos.
+
+    **Corregido en DOS capas, nunca confiar en una sola (mismo
+    criterio de siempre en este proyecto)**:
+    - **Capa 1, la corrección de fondo real —
+      `VENTANA_MINIMA_REPRODUCIBLE_MS = 3000` en
+      `core/analizador_audio.py`**: después de calcular
+      `punto_inicio_ms`/`punto_fin_ms` con la fórmula de siempre (sin
+      tocarla), si la ventana resultante queda por debajo de
+      `min(duracion_total_ms, 3000)` — nunca se exige una ventana más
+      grande que el propio archivo — se DESCARTA el recorte por
+      completo para ESE archivo puntual (`punto_inicio_ms=0`,
+      `punto_fin_ms=duracion_total_ms`, suena completo) en vez de
+      arriesgar una reproducción casi inaudible. Deja constancia en
+      `log_aplicacion.txt` (con la ruta y la ventana calculada) para
+      poder ubicar a mano qué archivos de la biblioteca real de
+      Santiago están cayendo en este caso. Confirmado que NO afecta
+      casos normales (un separador con silencio real y corto en los
+      extremos sigue recortando igual que siempre) ni a clips tipo HTH
+      (siguen sin perder contenido, el piso `min(duracion, 3000)` para
+      un clip de ~2s es el propio clip entero, que ya se conserva casi
+      completo de por sí).
+    - **Capa 2, defensa en el motor de reproducción —
+      `VENTANA_MINIMA_SEGURA_MS = 500` en `MotorAudio.reproducir()`
+      (`core/audio_engine.py`)**: si `punto_fin_ms - punto_inicio_ms`
+      llega con una ventana claramente rota (menor a 500ms), sin
+      importar de dónde vino ese dato — protege también contra
+      entradas VIEJAS de `biblioteca.json`, calculadas con el código
+      de ANTES de esta ronda, que no se corrigen solas hasta que
+      Santiago las reanalice — se ignora el recorte para esa
+      reproducción puntual (reproduce el archivo completo) en vez de
+      terminar en un corte casi instantáneo. Umbral bajo a propósito
+      (muy por debajo del piso de la Capa 1): esta capa solo atrapa
+      casos claramente rotos, nunca cuestiona un recorte legítimo ya
+      validado más arriba.
+
+    **Importante — NO es retroactivo por sí solo para archivos YA
+    importados con el código viejo**: como con cualquier cambio a
+    `analizar_audio()`, un archivo de Separador/Artística ya en la
+    biblioteca con una ventana pathológica calculada ANTES de esta
+    ronda sigue teniendo esos valores guardados hasta que se
+    reanalice — la Capa 2 (MotorAudio) ya evita el síntoma más grave
+    (el "flash" casi inaudible) incluso sin reanalizar, pero para que
+    el recorte de silencio vuelva a aplicarse CORRECTAMENTE (en vez de
+    reproducir el archivo entero, sin recorte) sobre esos archivos
+    puntuales hace falta correr **Configuración → Diagnóstico →
+    "🔄 Reanalizar biblioteca (Música)"** (si son género Música) o, más
+    probable para Separador/Artística, **"🔈 Aplicar análisis de
+    silencio..."** desde el menú contextual de Ventana 3 (individual o
+    en lote, ronda 92 — el botón masivo de Configuración está acotado
+    a Música desde esa misma ronda).
+
+    Probado con `test_separador_no_reproduce.py` (nuevo, dedicado, con
+    audio SINTÉTICO real vía pydub+ffmpeg reales, sin mockear
+    `detect_leading_silence` — instalado `ffmpeg` en este sandbox para
+    esta ronda): (1) el caso patológico (9s+2s+9s) queda con el
+    recorte descartado, archivo completo; (1b) confirmado, calculando
+    a mano con la fórmula VIEJA sin el piso, que ese mismo archivo
+    hubiera quedado con una ventana de apenas 2320ms — confirma que el
+    test reproduce el bug real, no un caso inventado; (2) un separador
+    NORMAL (silencio real y corto en los extremos) conserva su recorte
+    legítimo intacto, sin regresión; (3) un clip tipo HTH (voz seca,
+    sin fades, 1.9s) sigue recortando con normalidad, sin ningún falso
+    positivo del piso nuevo; (4) `MotorAudio.reproducir()` con un
+    player VLC falso confirma que una ventana rota (100ms) se
+    descarta (sin seek, sin `punto_fin_ms`) y que una ventana legítima
+    (5000ms) queda intacta — + `py_compile` de los 2 archivos tocados
+    + smoke test de arranque de `main.py` sin traceback. **No se pudo
+    correr la suite de regresión de scripts de rondas anteriores**
+    (ninguno está commiteado al repo, ver ronda 90). **Sigue sin
+    poder confirmarse con la biblioteca/hardware real de Santiago**:
+    falta que (1) confirme que, tras esta actualización, los
+    separadores/artísticas problemáticos empiezan a sonar (aunque sea
+    completos, sin el recorte fino, hasta que se reanalicen), y (2)
+    corra "Aplicar análisis de silencio" sobre esas categorías para
+    que vuelvan a tener un recorte ajustado — y confirme si, después
+    de eso, el "flash silencioso" desaparece del todo tanto en Ventana
+    1 como en Ventana 2 y la Auxiliar.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
@@ -13611,3 +13756,30 @@ soltó de una vez.
   concatenar `.tmp` a secas) — el costo es cero y evita esta clase
   entera de bug de raíz, incluso si hoy parece "imposible" que dos
   escritores coincidan.
+- **Un recorte de silencio "solo mira los extremos" puede igual
+  comerse casi todo un archivo CORTO, si el único contenido audible
+  real queda sandwicheado entre silencio en LOS DOS extremos a la
+  vez** (bug real, ronda 132, "los separadores y artísticas hay veces
+  que no las reproduce"): `detect_leading_silence` escanea desde cada
+  extremo hacia adentro y se detiene en la primera muestra audible —
+  esa garantía ("nunca corta el medio del tema") sigue siendo cierta,
+  pero NO protege contra el caso donde el contenido real está muy
+  cerca del centro y AMBOS extremos tienen tramos largos de
+  casi-silencio (típico de música/jingles con fade-in y fade-out,
+  nunca de voz seca con onset/offset abrupto como los clips de HTH):
+  ahí el recorte de ENTRADA y el de SALIDA, cada uno por su cuenta
+  "correcto", pueden combinarse y dejar una ventana reproducible de
+  apenas unos cientos de milisegundos — indistinguible para el
+  operador de "no reprodujo nada", sobre todo en un archivo de 15-30s
+  donde esa ventana chica es una fracción grande del total (en una
+  canción de varios minutos, el mismo patrón pasa desapercibido).
+  **Regla**: cualquier recorte/trim calculado por SEPARADO en cada
+  extremo de un archivo necesita, además, un chequeo sobre el
+  RESULTADO COMBINADO (acá, un piso mínimo de ventana reproducible
+  relativo a la duración total) — no alcanza con que cada mitad de la
+  lógica sea individualmente segura. Ver
+  `VENTANA_MINIMA_REPRODUCIBLE_MS` en `core/analizador_audio.py` (la
+  corrección de fondo) y `VENTANA_MINIMA_SEGURA_MS` en
+  `core/audio_engine.py` (la segunda capa de defensa en
+  `MotorAudio.reproducir()`, para datos viejos ya guardados antes de
+  este fix).
