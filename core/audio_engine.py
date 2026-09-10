@@ -209,6 +209,15 @@ MENSAJE_VLC_NO_DISPONIBLE = (
 BUFFER_CACHING_MS_POR_DEFECTO = 1000
 RETARDO_ARRANQUE_MS_POR_DEFECTO = 150
 
+# Piso mínimo (defensivo, segunda capa) para la ventana reproducible
+# punto_fin_ms - punto_inicio_ms -- ver el guard en reproducir() y la
+# corrección de fondo real en core/analizador_audio.py:
+# VENTANA_MINIMA_REPRODUCIBLE_MS (mucho más generoso, 3000ms). Este
+# valor acá es a propósito CHICO: solo atrapa casos claramente rotos
+# (datos viejos/corruptos), nunca cuestiona un recorte legítimo que ya
+# pasó por esa capa.
+VENTANA_MINIMA_SEGURA_MS = 500
+
 
 def _argumentos_vlc(duracion_buffer_caching_ms: int, audio_cfg: dict = None) -> list:
     """Argumentos de la instancia de libVLC (pedido explícito, "para
@@ -395,6 +404,27 @@ class MotorAudio(QObject):
         if not self._disponible:
             self.error_reproduccion.emit(MENSAJE_VLC_NO_DISPONIBLE)
             return
+
+        # Red de seguridad — segunda capa, nunca confiar en una sola
+        # (mismo criterio de siempre en este archivo): si
+        # punto_inicio_ms/punto_fin_ms llegan con una ventana
+        # reproducible sospechosamente chica (bug real: "los
+        # separadores y artísticas hay veces que no las reproduce...
+        # el siguiente tampoco" — ver VENTANA_MINIMA_REPRODUCIBLE_MS en
+        # core/analizador_audio.py, la corrección de fondo), sin
+        # importar de dónde vinieron esos valores (análisis roto, o un
+        # dato VIEJO en biblioteca.json calculado antes de ese fix —
+        # esto no es retroactivo hasta que se reanalice), se ignoran y
+        # se reproduce el archivo completo en vez de arriesgar una
+        # reproducción casi instantánea que se lea como "no reprodujo
+        # nada". Un umbral chico a propósito (VENTANA_MINIMA_SEGURA_MS,
+        # muy por debajo del piso real de analizador_audio.py): acá
+        # solo se atrapan casos claramente rotos, nunca se segunda-
+        # adivina un recorte legítimo ya validado por esa capa.
+        if punto_fin_ms is not None and (punto_fin_ms - punto_inicio_ms) < VENTANA_MINIMA_SEGURA_MS:
+            punto_inicio_ms = 0
+            punto_fin_ms = None
+
         if ruta and ruta != self._ruta_actual:
             self.cargar(ruta)
 
