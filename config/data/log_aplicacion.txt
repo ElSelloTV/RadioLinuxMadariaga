@@ -2524,3 +2524,4 @@ Error opening output files: Encoder not found
 [2026-07-27 00:07:43] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 8, 'humedad': 96})
 [2026-07-27 00:22:43] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 8, 'humedad': 96})
 [2026-07-27 00:37:43] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 8, 'humedad': 95})
+[2026-09-11 00:58:40] [INFO] Arranque bloqueado: sesión gráfica distinta de la física esperada (:0) -- DISPLAY actual: (sin $DISPLAY)
