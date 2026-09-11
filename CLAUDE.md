@@ -13618,6 +13618,45 @@ soltó de una vez.
     `MotorAudio()` nuevos de forma repetida sin liberar (no encontrado
     en esta auditoría, pero el crossfade era, por lejos, el candidato
     con más repeticiones por hora de todos).
+
+    **Primer dato real de campo, post-fix**: Santiago mandó un log de
+    ~40 minutos de emisión real (varios crossfades + Pisadores) y
+    reportó `pactl list clients | wc -l` subiendo de 17 a 21 y
+    volviendo a 20 solo tras otro fade más, preguntando si era normal.
+    Respuesta dada: SÍ, es el patrón esperado del fix — cada crossfade
+    crea un motor nuevo (el entrante) y recién LIBERA el saliente al
+    terminar la rampa (`_liberar_crossfade()`), así que un conteo de
+    clientes que sube un poco y BAJA SOLO poco después (sin reiniciar
+    nada) es la firma de que la liberación funciona — todo lo
+    contrario al bug viejo, que solo subía sin bajar nunca hasta un
+    reinicio del proceso. El indicador real a seguir mirando NO es el
+    conteo crudo de `pactl list clients` (puede moverse un poco para
+    los dos lados sin significar nada) sino la frecuencia de
+    "EnrutadorPactl no encontró ningún sink-input nuevo tras 20
+    intentos" — en este log de 40 minutos apareció UNA sola vez y se
+    resolvió sola en el intento siguiente, muy distinto del día malo
+    original (de "ocasional a la mañana" a "casi siempre" de noche).
+    Pendiente: que Santiago deje correr un día COMPLETO (como el día
+    malo) y confirme si esa línea se mantiene rara/ocasional toda la
+    jornada, o si vuelve a escalar hacia la noche — esa sigue siendo
+    la prueba definitiva, no el conteo de `pactl list clients`.
+
+    **Dato de contexto para leer el log de mañana**: Santiago aclaró
+    que la PC de la radio tiene un reinicio automático programado
+    TODOS los días a las 5am (ya documentado desde el incidente de
+    Chrome Remote Desktop, más arriba en este archivo, como parte del
+    monitoreo `~/monitor_radio/`) — "precisamente para liberar la PC y
+    empezar de 0 todos los días". Esto es relevante para interpretar
+    el próximo log: como el proceso se reinicia solo cada 24hs, CUALQUIER
+    fuga de recursos (esta u otra) nunca tiene más de un día para
+    acumularse antes de resetearse sola — así que la prueba real de
+    esta ronda es si "EnrutadorPactl no encontró ningún sink-input
+    nuevo" se mantiene ocasional durante TODA la ventana de 5am a 5am
+    del día siguiente, sin escalar hacia el final de esa ventana como
+    pasaba antes del fix (que a las ~21hs ya fallaba casi siempre) —
+    con el reinicio diario ya en su lugar, un evento "malo" solo se
+    hubiera notado recién sobre el final de cada jornada, coherente con
+    que el reporte original llegó de noche.
 134. ~~Toggle "Viper4Linux" en Configuración → Audio — enruta TODOS
     los streams de aire a un sink único~~ — pedido explícito, tras
     explicarle a Santiago que Viper4Linux (motor liviano, ~18MB RAM,
