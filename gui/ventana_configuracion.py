@@ -126,7 +126,62 @@ class VentanaConfiguracion(QDialog):
         nota.setObjectName("lblTituloBloqueActivo")
         form.addRow(nota)
 
+        form.addRow(self._crear_grupo_viper4linux(dispositivos))
+
         return widget
+
+    def _crear_grupo_viper4linux(self, dispositivos) -> QGroupBox:
+        """Pedido explícito: "un botón que yo desde configuración pueda
+        activar o desactivar el procesamiento por Viper4Linux, es
+        decir, todos los stream que va creando que los envíe a un solo
+        skin y de ahi lo tomo con Viper4Linux". Con esto activado,
+        TODOS los motores "de aire" (Publicidad/Emisión/Auxiliar,
+        Pisador y HORA/TEMP manual incluidos) enrutan al mismo sink acá
+        elegido en vez de a la Salida Master de arriba — ver
+        `config.settings.dispositivo_master_efectivo()`, el único punto
+        que resuelve esto. Reversible al instante: apagar el checkbox
+        (o vaciar el nombre del sink) vuelve a la Salida Master de
+        siempre, sin tocar ese valor para nada.
+
+        El combo es editable y reusa la MISMA lista de sinks reales ya
+        traída para Master/Preescucha (sin volver a consultar
+        `pactl`) — a propósito SIN un ítem "default": acá no hay
+        "salida del sistema", es el nombre de un sink VIRTUAL que
+        Santiago crea aparte (ej. `pactl load-module module-null-sink
+        sink_name=viper_input`) y apunta Viper4Linux a leer de su
+        `.monitor` (ver extras/procesador_fm_viper4linux/README.md) —
+        puede no existir todavía la primera vez que se configura esto,
+        así que se puede tipear un nombre nuevo igual que ya se puede
+        en los combos de arriba."""
+        grupo = QGroupBox("Viper4Linux (procesador externo, opcional)")
+        layout = QVBoxLayout(grupo)
+
+        self.chk_viper4linux_activado = QCheckBox(
+            "Enrutar todos los streams a un sink único para Viper4Linux"
+        )
+        layout.addWidget(self.chk_viper4linux_activado)
+
+        form_sink = QFormLayout()
+        self.combo_viper4linux_sink = QComboBox()
+        self.combo_viper4linux_sink.setEditable(True)
+        for id_dispositivo, descripcion in dispositivos:
+            self.combo_viper4linux_sink.addItem(f"{descripcion} ({id_dispositivo})", id_dispositivo)
+        form_sink.addRow("Sink de destino:", self.combo_viper4linux_sink)
+        layout.addLayout(form_sink)
+
+        nota_viper = QLabel(
+            "Reemplaza la Salida Master de arriba SOLO mientras esto\n"
+            "esté activo (Publicidad, Emisión, Auxiliar, Pisador y\n"
+            "HORA/TEMP manual incluidos) — apagarlo vuelve a la Salida\n"
+            "Master de siempre al instante, sin perder nada. La\n"
+            "Preescucha (▶ Previo de Ventana 3) nunca pasa por acá.\n"
+            "El sink es uno virtual que creás vos aparte y del que\n"
+            "Viper4Linux lee (viper4linux/README.md en extras/)."
+        )
+        nota_viper.setObjectName("lblTituloBloqueActivo")
+        layout.addWidget(nota_viper)
+
+        return grupo
 
     def _crear_slider_volumen(self) -> QSlider:
         slider = QSlider(Qt.Orientation.Horizontal)
@@ -1279,6 +1334,8 @@ class VentanaConfiguracion(QDialog):
         self._seleccionar_en_combo(self.combo_dispositivo_preescucha, audio["dispositivo_preescucha"])
         self.slider_volumen_master.setValue(audio["volumen_master"])
         self.slider_volumen_preescucha.setValue(audio["volumen_preescucha"])
+        self.chk_viper4linux_activado.setChecked(audio.get("viper4linux_activado", False))
+        self._seleccionar_en_combo(self.combo_viper4linux_sink, audio.get("viper4linux_sink", ""))
 
         fade = self._config["fade"]
         self.chk_crossfade.setChecked(fade["crossfade_activado"])
@@ -1377,6 +1434,8 @@ class VentanaConfiguracion(QDialog):
         self._config["audio"]["dispositivo_preescucha"] = self._valor_dispositivo_combo(self.combo_dispositivo_preescucha)
         self._config["audio"]["volumen_master"] = self.slider_volumen_master.value()
         self._config["audio"]["volumen_preescucha"] = self.slider_volumen_preescucha.value()
+        self._config["audio"]["viper4linux_activado"] = self.chk_viper4linux_activado.isChecked()
+        self._config["audio"]["viper4linux_sink"] = self._valor_dispositivo_combo(self.combo_viper4linux_sink)
 
         self._config["fade"]["crossfade_activado"] = self.chk_crossfade.isChecked()
         self._config["fade"]["duracion_fade_in_v2_ms"] = self.spin_fade_in_v2.value()

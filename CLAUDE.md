@@ -13618,6 +13618,100 @@ soltó de una vez.
     `MotorAudio()` nuevos de forma repetida sin liberar (no encontrado
     en esta auditoría, pero el crossfade era, por lejos, el candidato
     con más repeticiones por hora de todos).
+134. ~~Toggle "Viper4Linux" en Configuración → Audio — enruta TODOS
+    los streams de aire a un sink único~~ — pedido explícito, tras
+    explicarle a Santiago que Viper4Linux (motor liviano, ~18MB RAM,
+    `extras/procesador_fm_viper4linux/`) usa la MISMA arquitectura de
+    "sink fijo" que ya funcionó con el filter-chain de PipeWire de la
+    ronda 52 (a diferencia de EasyEffects, que necesita "seguir" un
+    stream específico — incompatible con el diseño de esta app, que
+    crea un `MotorAudio`/`vlc.Instance()` nuevo en cada transición de
+    Ventana 2): "activá o desactivá el procesamiento por Viper4Linux,
+    es decir, todos los stream que va creando que los envíe a un solo
+    skin y de ahi lo tomo con Viper4Linux... antes que nada, que no
+    rompa nada de lo que está, solo que ese botón cambie de un sistema
+    a otro, que mantenga los pisadores y demás funcionando bien como
+    hasta ahora."
+
+    **Diseño, con el criterio ya establecido de "single choke point"
+    (mismo patrón que `tolerancia_silencio_para_genero`/
+    `parametros_nivelado`/`categoria_de_enlatado`)**: nuevo
+    `config/settings.py:dispositivo_master_efectivo(audio) -> str |
+    None` — con `viper4linux_activado=True` Y `viper4linux_sink` no
+    vacío, devuelve SIEMPRE ese nombre de sink (nunca muta
+    `dispositivo_master`, así apagar el checkbox vuelve a lo de
+    siempre al instante — "que ese botón cambie de un sistema a
+    otro"); si no, resuelve exactamente igual que antes
+    (`"default"` → `None`). Nuevas claves en
+    `CONFIG_POR_DEFECTO["audio"]`: `viper4linux_activado` (default
+    `False`) y `viper4linux_sink` (default `""`) — una instalación
+    existente nunca cambia de comportamiento sola.
+
+    **`gui/main_window.py`**: los 3 puntos que antes computaban
+    `id_dispositivo_master` a mano (`_inicializar_motores_audio()`,
+    `_aplicar_configuracion_en_vivo()`, `abrir_ventana_auxiliar()`)
+    ahora llaman al helper — cubre de una sola vez Publicidad (V1),
+    Emisión (V2) y el Auxiliar, ya que los tres construyen `MotorAudio`
+    con el MISMO `id_dispositivo_master`. **Bug preexistente,
+    encontrado y corregido de paso en la misma ronda** (relevante para
+    "que mantenga los pisadores... funcionando bien"): el re-aplicado
+    en vivo (`_aplicar_configuracion_en_vivo()`) actualizaba
+    `motor`/`motor_pisador` de cada gestor pero se OLVIDABA de
+    `motor_anuncio_manual` (el motor del botón HORA/TEMP manual,
+    ronda 102/104) — un cambio de Salida Master (o de este toggle
+    nuevo) en caliente nunca le llegaba a ese motor puntual hasta
+    reiniciar la app. Corregido sumándolo a los dos bucles (V1 y
+    V2/Auxiliar) — ahora los 3 motores de cada ventana (principal,
+    Pisador, HORA/TEMP-manual) se actualizan siempre juntos.
+
+    **`gui/ventana_configuracion.py`**: nuevo `QGroupBox`
+    "Viper4Linux (procesador externo, opcional)" DENTRO de la pestaña
+    Audio ya existente (a propósito NO una pestaña "Procesador"
+    nueva — esa se sacó por completo en la ronda 75, decisión de
+    Santiago de mantener el procesamiento 100% externo a la app, y
+    este toggle sigue sin controlar Viper4Linux para nada, solo
+    enruta) — checkbox + combo editable para el nombre del sink
+    (reusa la MISMA lista de sinks reales ya traída para Master/
+    Preescucha, sin volver a consultar `pactl`; a propósito SIN un
+    ítem "default", ya que acá el valor es el nombre de un sink
+    VIRTUAL que Santiago crea aparte con `pactl load-module
+    module-null-sink`, apuntando después a Viper4Linux para que lea
+    de su `.monitor` — puede no existir todavía la primera vez que se
+    configura esto, así que se puede tipear un nombre nuevo, igual
+    que ya se puede en los combos de Master/Preescucha). Reusa
+    `_valor_dispositivo_combo()`/`_seleccionar_en_combo()` ya
+    existentes (mismo fix de la trampa real de `QComboBox` editable
+    ya documentado ahí) — sin duplicar esa lógica.
+
+    **Preescucha deliberadamente afuera**: `dispositivo_preescucha`
+    (▶ Previo de Ventana 3, previos de diálogos) sigue leyendo la
+    config directo, sin pasar nunca por el helper nuevo — el pedido
+    es sobre "el aire" de la FM, no sobre la salida de monitoreo de
+    la PC (separación ya deliberada de una ronda anterior, ronda 57).
+
+    Probado con un script dedicado (scratch, sin commitear, ver ronda
+    90): `dispositivo_master_efectivo()` en sus 5 casos (default sin
+    Viper, master normal, activado sin sink configurado —fail-open,
+    vuelve a lo de siempre—, activado con sink —gana siempre, sin
+    mutar `dispositivo_master`—, y desactivado con un sink que había
+    quedado guardado de antes —vuelve a lo de siempre igual—);
+    confirmado por código fuente que los 3 call sites de
+    `gui/main_window.py` usan el helper y que los dos bucles de
+    re-aplicado en vivo ahora incluyen `motor_anuncio_manual`; y
+    `VentanaConfiguracion` real (offscreen) con round-trip completo
+    del checkbox+combo nuevo sin tocar `dispositivo_master` — + smoke
+    test de arranque de `main.py` sin traceback. **Sigue sin poder
+    probarse con Viper4Linux/PipeWire/hardware real** (el sandbox no
+    tiene ninguno de los tres): falta que Santiago (1) instale
+    Viper4Linux (`extras/procesador_fm_viper4linux/instalar_procesador_fm.sh`),
+    (2) cree un sink virtual (`pactl load-module module-null-sink
+    sink_name=viper_input`) y configure `~/.config/viper4linux/audio.conf`
+    para leer de `viper_input.monitor` y escribir al hardware real,
+    (3) tipee `viper_input` en el campo nuevo de Configuración →
+    Audio y active el checkbox, y (4) confirme que el aire (incluidos
+    Pisadores y el botón HORA/TEMP) pasa a sonar procesado por
+    Viper4Linux, y que apagar el checkbox vuelve a la Salida Master
+    de siempre sin reiniciar la app.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
