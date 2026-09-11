@@ -53,7 +53,7 @@ from config.settings import (
     listar_programaciones, obtener_programacion, guardar_programacion,
     cargar_musicalizador, listar_formatos, obtener_formato,
     guardar_formato, eliminar_formato, renombrar_formato,
-    categoria_de_enlatado,
+    categoria_de_enlatado, dispositivo_master_efectivo,
 )
 
 
@@ -807,7 +807,7 @@ class MainWindow(QMainWindow):
         reproduccion = self._config["reproduccion"]
         fade = self._config["fade"]
 
-        id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
+        id_dispositivo_master = dispositivo_master_efectivo(audio)
         id_dispositivo_preescucha = audio["dispositivo_preescucha"] if audio["dispositivo_preescucha"] != "default" else None
 
         self.gestor_emision = GestorPlaylist(
@@ -1371,7 +1371,7 @@ class MainWindow(QMainWindow):
         audio = self._config["audio"]
         reproduccion = self._config["reproduccion"]
         fade = self._config["fade"]
-        id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
+        id_dispositivo_master = dispositivo_master_efectivo(audio)
         id_dispositivo_preescucha = audio["dispositivo_preescucha"] if audio["dispositivo_preescucha"] != "default" else None
 
         for gestor in (self.gestor_emision, self._gestor_auxiliar):
@@ -1384,7 +1384,7 @@ class MainWindow(QMainWindow):
             gestor.crossfade_activado = fade["crossfade_activado"]
             gestor.duracion_fade_segundos = fade["duracion_fade_out_v2_ms"] / 1000.0
             gestor.duracion_fade_in_segundos = fade["duracion_fade_in_v2_ms"] / 1000.0
-            for motor in (gestor.motor, gestor.motor_pisador):
+            for motor in (gestor.motor, gestor.motor_pisador, gestor.motor_anuncio_manual):
                 if motor.id_dispositivo() != id_dispositivo_master:
                     motor.set_dispositivo_salida(id_dispositivo_master)
 
@@ -1396,8 +1396,9 @@ class MainWindow(QMainWindow):
         self.gestor_publicidad.reintentos_maximos = max(1, reproduccion["reintentos_antes_de_detener"])
         self.gestor_publicidad.duracion_fade_out_v1_ms = reproduccion["duracion_fade_out_v1_ms"]
         self.gestor_publicidad.duracion_fade_in_declick_ms = reproduccion["duracion_fade_in_declick_v1_ms"]
-        if self.gestor_publicidad.motor.id_dispositivo() != id_dispositivo_master:
-            self.gestor_publicidad.motor.set_dispositivo_salida(id_dispositivo_master)
+        for motor in (self.gestor_publicidad.motor, self.gestor_publicidad.motor_anuncio_manual):
+            if motor.id_dispositivo() != id_dispositivo_master:
+                motor.set_dispositivo_salida(id_dispositivo_master)
         self.gestor_publicidad.set_volumen_base(audio["volumen_master"])
 
         if self.gestor_explorador.motor.id_dispositivo() != id_dispositivo_preescucha:
@@ -1446,7 +1447,7 @@ class MainWindow(QMainWindow):
             audio = self._config["audio"]
             reproduccion = self._config["reproduccion"]
             fade = self._config["fade"]
-            id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
+            id_dispositivo_master = dispositivo_master_efectivo(audio)
 
             self._ventana_auxiliar = VentanaAuxiliar(self)
             # Ventana Auxiliar arma sus propias columnas de ajuste LIBRE
