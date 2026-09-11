@@ -99,10 +99,44 @@ class EnrutadorPactl(QObject):
     primera quede confirmada (normalmente milisegundos, como mucho un
     par de segundos si `pactl` responde lento) antes de arrancar de
     verdad — un retraso acotado y siempre mejor que el aire
-    silenciado o cruzado."""
+    silenciado o cruzado.
+
+    (3) Bug real corregido tras un reporte de campo (Santiago: la
+    rotativa de Ventana 1 sonaba intermitente y el ítem 1 de Ventana 2
+    no salía al aire tras el pase automático, ni reiniciando la app
+    entera -- y ni siquiera podía correr `pactl` a mano, "traba la
+    barra del explorador de q4os"): ninguna de las dos llamadas a
+    `pactl` (`_listar_sink_inputs`/`_mover`) tenía NINGÚN timeout --
+    si PipeWire quedaba colgado/degradado (el mismo estado que hace
+    que un `pactl` manual tampoco responda, y que puede colgar
+    cualquier otro elemento del escritorio que hable con PipeWire,
+    como la barra de tareas de TDE), el `QProcess.finished` de ESE
+    pedido puntual NUNCA se disparaba -- `self._procesando` quedaba
+    en `True` para siempre, y la cola ENTERA de rutas pendientes
+    (cualquier reproducción futura, en cualquier ventana) se
+    bloqueaba de por vida, sin ningún error visible más que la
+    música/publicidad que simplemente no llega a sonar. Como el
+    problema vive en PipeWire, no en el proceso de Python, ni
+    siquiera reiniciar la app lo resolvía -- el `EnrutadorPactl`
+    nuevo volvía a intentar `pactl` contra el mismo PipeWire colgado
+    y se trababa de nuevo. Corregido con un timeout duro
+    (`TIMEOUT_PROCESO_MS`) sobre CADA invocación de `pactl`: si no
+    responde a tiempo, se mata el proceso (`kill()`) y se lo trata
+    como una respuesta vacía/fallida -- el job sigue su curso normal
+    de reintentos (o se da por vencido tras `MAX_INTENTOS`, dejando
+    sonar igual el ítem sin re-rutear, en vez de silenciar la cola
+    entera para siempre). Esto NO arregla un PipeWire genuinamente
+    colgado a nivel del sistema operativo (eso requiere reiniciar
+    PipeWire/la PC), pero evita que un solo `pactl` colgado deje a
+    esta app entera muda de por vida hasta el próximo reinicio."""
 
     MAX_INTENTOS = 20
     ESPERA_REINTENTO_MS = 150
+    # Tope duro por invocación de `pactl` -- ver punto (3) más arriba.
+    # Un `pactl` sano responde en milisegundos; 3s ya es una demora
+    # anormal (PipeWire degradado/colgado), y esperar más solo demora
+    # la detección sin ganar nada.
+    TIMEOUT_PROCESO_MS = 3000
 
     def __init__(self):
         super().__init__()
@@ -126,19 +160,56 @@ class EnrutadorPactl(QObject):
         self._procesando = True
         self._listar_sink_inputs(self._al_tener_snapshot_inicial)
 
-    def _listar_sink_inputs(self, callback):
+    def _ejecutar_pactl_con_timeout(self, argumentos: list, callback_salida):
+        """Corre `pactl argumentos` async, con un watchdog de
+        `TIMEOUT_PROCESO_MS` -- si no responde a tiempo, lo mata y
+        llama `callback_salida(None)` (nunca `""`, que es una salida
+        vacía LEGÍTIMA) en vez de dejar la cola trabada para siempre
+        (ver punto (3) del docstring de la clase)."""
         proceso = QProcess(self)
-        proceso.finished.connect(lambda *_args: self._al_terminar_listado(proceso, callback))
-        proceso.start("pactl", ["list", "sink-inputs", "short"])
+        estado = {"resuelto": False}
 
-    def _al_terminar_listado(self, proceso: QProcess, callback):
-        salida = bytes(proceso.readAllStandardOutput()).decode("utf-8", errors="ignore")
-        proceso.deleteLater()
-        ids = {
-            linea.split("\t")[0].strip()
-            for linea in salida.splitlines() if linea.strip()
-        }
-        callback(ids)
+        def resolver(salida: str):
+            if estado["resuelto"]:
+                return
+            estado["resuelto"] = True
+            callback_salida(salida)
+
+        def al_terminar(*_args):
+            salida = bytes(proceso.readAllStandardOutput()).decode("utf-8", errors="ignore")
+            proceso.deleteLater()
+            resolver(salida)
+
+        def al_agotarse_tiempo():
+            if estado["resuelto"]:
+                return
+            registrar_evento(
+                f"MotorAudio: EnrutadorPactl -- 'pactl {' '.join(argumentos)}' "
+                f"no respondió en {self.TIMEOUT_PROCESO_MS}ms (PipeWire "
+                f"colgado/degradado?) -- se mata el proceso y se sigue "
+                f"con el próximo reintento"
+            )
+            try:
+                proceso.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            proceso.kill()
+            proceso.deleteLater()
+            resolver(None)
+
+        proceso.finished.connect(al_terminar)
+        QTimer.singleShot(self.TIMEOUT_PROCESO_MS, al_agotarse_tiempo)
+        proceso.start("pactl", argumentos)
+
+    def _listar_sink_inputs(self, callback):
+        def al_tener_salida(salida):
+            ids = {
+                linea.split("\t")[0].strip()
+                for linea in (salida or "").splitlines() if linea.strip()
+            }
+            callback(ids)
+
+        self._ejecutar_pactl_con_timeout(["list", "sink-inputs", "short"], al_tener_salida)
 
     def _al_tener_snapshot_inicial(self, ids_previos: set):
         job = self._cola[0]
@@ -168,17 +239,20 @@ class EnrutadorPactl(QObject):
         QTimer.singleShot(self.ESPERA_REINTENTO_MS, lambda: self._listar_sink_inputs(self._al_buscar_stream_nuevo))
 
     def _mover(self, id_stream: str, nombre_sink: str):
-        proceso = QProcess(self)
-        proceso.finished.connect(lambda *_args: self._al_terminar_movida(proceso, id_stream, nombre_sink))
-        proceso.start("pactl", ["move-sink-input", id_stream, nombre_sink])
+        def al_terminar(salida):
+            # `salida` es `None` únicamente si el watchdog de
+            # `_ejecutar_pactl_con_timeout` mató el proceso por
+            # colgado -- ahí NO hubo movimiento real, así que no hay
+            # que registrarlo como éxito (aunque sea, igual, mejor
+            # seguir con la cola que dejarla trabada para siempre).
+            if salida is not None:
+                registrar_evento(
+                    f"MotorAudio: movido sink-input {id_stream} -> '{nombre_sink}' "
+                    f"vía pactl (fallback sin módulo 'pulse' en libVLC, serializado)"
+                )
+            self._terminar_job_actual()
 
-    def _al_terminar_movida(self, proceso: QProcess, id_stream: str, nombre_sink: str):
-        proceso.deleteLater()
-        registrar_evento(
-            f"MotorAudio: movido sink-input {id_stream} -> '{nombre_sink}' "
-            f"vía pactl (fallback sin módulo 'pulse' en libVLC, serializado)"
-        )
-        self._terminar_job_actual()
+        self._ejecutar_pactl_con_timeout(["move-sink-input", id_stream, nombre_sink], al_terminar)
 
     def _terminar_job_actual(self):
         if self._cola:
