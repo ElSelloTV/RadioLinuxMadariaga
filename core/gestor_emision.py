@@ -501,7 +501,13 @@ class GestorPlaylist:
         registrar_evento(f"Stop (Emisión persistir={self.persistir})")
         self.motor.detener()
         if self._motor_saliente_crossfade is not None:
-            self._motor_saliente_crossfade.detener()
+            # Libera de verdad su vlc.Instance()/MediaPlayer -- ver
+            # MotorAudio.liberar() (bug real de fuga de recursos,
+            # encontrado con el log real de una jornada completa:
+            # dejar esto en manos del GC cíclico de Python podía tardar
+            # horas, degradando el enrutado de audio a medida que
+            # avanzaba el día).
+            self._motor_saliente_crossfade.liberar()
             self._motor_saliente_crossfade = None
         self._crossfade_en_curso = False
         self._cancelar_pisador_en_curso()
@@ -882,6 +888,13 @@ class GestorPlaylist:
 
     def _liberar_crossfade(self, fila_entrante: int):
         self._crossfade_en_curso = False
+        if self._motor_saliente_crossfade is not None:
+            # Libera de verdad su vlc.Instance()/MediaPlayer, en vez de
+            # abandonarlo al GC cíclico de Python -- ver
+            # MotorAudio.liberar() para el bug real que esto corrige
+            # (degradación del enrutado de audio a lo largo del día,
+            # confirmada con un log real de producción).
+            self._motor_saliente_crossfade.liberar()
         self._motor_saliente_crossfade = None
 
         # El ducking (bajar el volumen del tema mientras suena el

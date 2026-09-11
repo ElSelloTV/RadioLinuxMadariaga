@@ -574,6 +574,64 @@ class MotorAudio(QObject):
         # entero, no solo a su remate.
         self._generacion_reproduccion += 1
 
+    def liberar(self):
+        """Libera de forma DETERMINÍSTICA los recursos de libVLC de
+        este motor -- nunca depender de que el ciclo de referencias
+        Python (self -> self._player -> event_manager -> callback ->
+        self, creado por `event_attach()` en `__init__`) se recolecte
+        solo vía el recolector cíclico de Python, que puede tardar
+        mucho bajo carga liviana de asignación de memoria (un
+        QObject/vlc.Instance pesa poco en el heap de Python, aunque
+        mantenga abierta una conexión de cliente PipeWire/ALSA real).
+
+        Bug real de producción, encontrado con el log real de una
+        jornada COMPLETA de Santiago: cada crossfade NATURAL de
+        Ventana 2 (`core/gestor_emision.py:_iniciar_crossfade()`) crea
+        un `MotorAudio` NUEVO (`vlc.Instance()` propio) para el ítem
+        entrante y abandona el saliente con solo `self.
+        _motor_saliente_crossfade = None` -- sin liberar nada. A lo
+        largo de un día real de emisión (un crossfade cada pocos
+        minutos, muchas horas seguidas), decenas/cientos de esas
+        instancias quedaban "vivas" en memoria (con su conexión de
+        audio subyacente todavía abierta) esperando una pasada del GC
+        cíclico que podía demorar arbitrariamente. Encaja exacto con
+        el patrón real observado: `EnrutadorPactl` (ver más arriba)
+        empezó a fallar cada vez más seguido a medida que avanzaba el
+        día ("no encontró ningún sink-input nuevo tras 20 intentos"),
+        hasta fallar CASI SIEMPRE ya entrada la noche -- y volvió a la
+        normalidad de inmediato tras reiniciar el proceso completo
+        (que fuerza al sistema operativo a cerrar TODAS las conexiones
+        de audio de ese proceso de una sola vez, sin depender de
+        ningún GC de Python). Esta función cierra esa ventana: se
+        llama sobre el motor SALIENTE de un crossfade justo cuando ya
+        terminó de fundirse y no hace falta para nada más (`core/
+        gestor_emision.py`: `_liberar_crossfade()` y `detener()`).
+
+        Segura de llamar más de una vez, o sobre un motor que nunca
+        llegó a inicializar libVLC (degradado desde el arranque)."""
+        if self._timer_posicion is not None:
+            self._timer_posicion.stop()
+        if self._timer_fade_volumen is not None:
+            self._timer_fade_volumen.stop()
+            self._timer_fade_volumen = None
+        if self._player is not None:
+            try:
+                self._player.stop()
+            except Exception:
+                pass
+            try:
+                self._player.release()
+            except Exception:
+                pass
+            self._player = None
+        if self._instancia is not None:
+            try:
+                self._instancia.release()
+            except Exception:
+                pass
+            self._instancia = None
+        self._disponible = False
+
     def esta_reproduciendo(self) -> bool:
         if not self._disponible:
             return False
