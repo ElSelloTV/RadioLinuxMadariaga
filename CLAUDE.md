@@ -13751,6 +13751,119 @@ soltó de una vez.
     Pisadores y el botón HORA/TEMP) pasa a sonar procesado por
     Viper4Linux, y que apagar el checkbox vuelve a la Salida Master
     de siempre sin reiniciar la app.
+135. ~~Bug real, urgente — el fix de la ronda 133 no alcanzaba:
+    `EnrutadorPactl` no tenía NINGÚN timeout, así que un `pactl`
+    genuinamente colgado (PipeWire degradado) dejaba la cola de
+    enrutado trabada de por vida, incluso reiniciando la app~~ —
+    Santiago mandó un reporte de campo real, alarmado, tras subirse al
+    auto a las 19hs: "la rotativa reproducía 1 sí... silencio
+    (posiblemente el siguiente no)... el otro sí. Al terminar la
+    rotativa y pasar a automático a la ventana dos el ítem 1 no salía
+    al aire, llegué, cerré y volví a abrir el programa y lo dejé
+    andando. Es decir, pasó lo mismo. No pude correr el comando para
+    ver si se elevó de 17 porque además traba la barra del explorador
+    de q4os. Un desastre." — cuatro síntomas en un solo reporte: (1)
+    silencios intermitentes dentro del mismo bloque horario de
+    Ventana 1, (2) el ítem 1 de Ventana 2 no salía al aire tras el
+    pase automático, (3) el MISMO problema persistía después de
+    cerrar y reabrir el programa ENTERO (dato clave: un reinicio de
+    proceso no lo arregló), y (4) ni siquiera pudo correr `pactl` a
+    mano para diagnosticar, porque eso TAMBIÉN trababa la barra de
+    tareas de Q4OS/TDE.
+
+    **Causa de fondo, encontrada auditando el propio código de la
+    ronda 128 (`EnrutadorPactl`, `core/audio_engine.py`) —
+    coherente con los 4 síntomas a la vez**: las dos únicas llamadas a
+    `pactl` de la clase (`_listar_sink_inputs`/`_mover`) corrían por
+    `QProcess` async SIN NINGÚN watchdog — si PipeWire quedaba
+    colgado/degradado (el mismo estado que explica que un `pactl`
+    corrido A MANO por Santiago tampoco respondiera, y que puede
+    trabar cualquier otro elemento del escritorio que también hable
+    con PipeWire, como la propia barra de tareas de TDE — dato (4) del
+    reporte), la señal `QProcess.finished` de ESE pedido puntual NUNCA
+    se disparaba — `self._procesando` quedaba en `True` PARA SIEMPRE,
+    y la cola ENTERA de rutas pendientes (cualquier reproducción
+    futura, en CUALQUIER ventana: Publicidad, Emisión, Auxiliar) se
+    bloqueaba de por vida detrás de ese único pedido colgado — sin
+    ningún error visible más que la música/publicidad que simplemente
+    no llega a sonar (síntomas (1) y (2), exactos). Como el problema
+    vive en PipeWire (un proceso del sistema operativo), no en el
+    proceso de Python de esta app, reiniciar la app entera no lo
+    arreglaba — el `EnrutadorPactl` recién creado volvía a intentar
+    `pactl` contra el MISMO PipeWire todavía colgado, y se trababa de
+    nuevo desde cero (síntoma (3), el dato más revelador del reporte:
+    normalmente "cerrar y reabrir arregla todo" en esta clase de bugs,
+    así que un reinicio de proceso que NO cambia nada apunta con fuerza
+    a que el problema real vive un nivel más abajo, en el sistema
+    operativo, no en la app).
+
+    **Corregido con un watchdog duro (`TIMEOUT_PROCESO_MS = 3000`)
+    sobre CADA invocación de `pactl`**, en un método nuevo compartido
+    `_ejecutar_pactl_con_timeout()` (reemplaza la lógica que antes
+    vivía duplicada en `_listar_sink_inputs()`/`_mover()`): si
+    `pactl` no responde a tiempo, se lo mata (`QProcess.kill()`) y se
+    resuelve con `None` (nunca `""`, que sigue siendo una salida VACÍA
+    LEGÍTIMA — ej. una lista de sink-inputs realmente vacía, o un
+    `move-sink-input` exitoso sin salida) — así el llamador puede
+    distinguir "no encontró nada" de "el proceso estaba colgado" sin
+    ambigüedad. Con `_listar_sink_inputs`, el timeout se trata
+    exactamente igual que una lista vacía (entra al mismo camino de
+    reintentos ya existente, `MAX_INTENTOS=20`/`ESPERA_REINTENTO_MS=150`
+    — sin este fix esos reintentos NUNCA se disparaban porque el
+    primer intento colgado nunca llegaba a resolverse). Con `_mover`,
+    se agregó un guard explícito para NO loguear "movido sink-input"
+    como si hubiera tenido éxito cuando en realidad fue el watchdog
+    quien mató el proceso — pero en los dos casos (éxito real o
+    timeout) se llama SIEMPRE a `_terminar_job_actual()`, que es lo
+    que de verdad importa: la cola avanza al próximo pedido sin
+    importar qué pasó con el actual, en vez de quedar detenida para
+    siempre. Guard de doble resolución (`estado["resuelto"]`) evita
+    que un `finished` tardío que llegue DESPUÉS de que el watchdog ya
+    mató el proceso reabra el mismo job por duplicado.
+
+    **Límite honesto de este fix, explicado para no generar falsas
+    expectativas**: esto NO arregla un PipeWire genuinamente
+    colgado/degradado a nivel del sistema operativo — si PipeWire
+    sigue mal, cada intento de `pactl` va a seguir fallando/colgándose
+    igual (ahora con un techo de 3s en vez de infinito), así que un
+    ítem puede tardar hasta `MAX_INTENTOS × (TIMEOUT_PROCESO_MS +
+    ESPERA_REINTENTO_MS)` ≈ 60 segundos en darse por vencido y sonar
+    SIN re-rutear (probablemente por la salida equivocada, hasta que
+    PipeWire se recupere solo o se reinicie) — pero la app YA NUNCA
+    vuelve a quedar muda de por vida esperando algo que no va a pasar,
+    que es la diferencia cualitativa real: de "colgado para siempre,
+    solo un reinicio de PC ayuda" a "se degrada, sigue sonando, y se
+    autocura solo apenas PipeWire vuelve a responder normal".
+
+    Probado con un script dedicado (scratch, sin commitear, ver ronda
+    90) usando un binario `pactl` FALSO que nunca responde (simula
+    PipeWire colgado, puesto primero en el PATH): confirmado que,
+    ANTES del fix (`git stash`), dos pedidos encolados dejan la cola
+    trabada para siempre — el test tuvo que ser matado por su propio
+    timeout externo, nunca llegó a "OK"; y que, CON el fix, los dos
+    ítems arrancan a sonar de inmediato (mismo comportamiento de
+    siempre, la reproducción NUNCA espera al enrutado) y la cola se
+    vacía sola en un tiempo acotado en vez de quedar colgada — + smoke
+    test de arranque de `main.py` sin traceback. **Sigue sin poder
+    confirmarse con PipeWire/pactl/hardware real** (el sandbox no
+    tiene ninguno de los tres, y la causa de fondo de POR QUÉ PipeWire
+    se degradó esa tarde en la PC real sigue sin conocerse): falta
+    que Santiago (1) actualice la radio, y (2) la próxima vez que note
+    algo raro (silencios, ítems que no salen al aire), en vez de
+    reiniciar la app de una, intente primero correr `pactl list
+    sink-inputs short` o `pactl info` a mano en una terminal — si esos
+    comandos TAMBIÉN cuelgan (como le pasó esta vez), confirma que el
+    problema de fondo está en PipeWire/el sistema operativo, no en
+    esta app, y ahí sí valdría la pena revisar
+    `systemctl --user status pipewire pipewire-pulse wireplumber`
+    (¿siguen corriendo? ¿se reiniciaron solos varias veces?) y pedir
+    el contenido de `~/monitor_radio/snapshot.log` de ese momento
+    (regla ya establecida en este archivo para diagnosticar cuelgues
+    del escritorio) — y (3) revise en
+    `Configuración → Diagnóstico → Ver log` si ahora aparecen líneas
+    nuevas de "no respondió en 3000ms (PipeWire colgado/degradado?)"
+    la próxima vez que algo se sienta lento, para confirmar si el
+    watchdog nuevo está entrando en juego de verdad.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
@@ -13832,6 +13945,32 @@ soltó de una vez.
   "cacen su propio recurso nuevo" al mismo tiempo, aunque eso implique
   encolar la segunda unos milisegundos detrás de la primera (ver
   `EnrutadorPactl` en `core/audio_engine.py`).
+- **Cualquier cola/mecanismo serializado que espera la señal
+  `finished` de un `QProcess` para avanzar al siguiente pedido
+  necesita SIEMPRE un watchdog de timeout propio — un proceso externo
+  puede colgarse (no crashear, no salir, simplemente no responder
+  nunca) y esa señal jamás se dispara** (bug real de producción,
+  ronda 135, "no salía al aire... ni reiniciando la app... traba la
+  barra del explorador"): `EnrutadorPactl` (ronda 128) serializaba
+  correctamente sus pedidos a `pactl`, pero sin ningún timeout propio
+  — si PipeWire quedaba colgado/degradado, el `QProcess.finished` de
+  ESE pedido puntual nunca llegaba, `self._procesando` quedaba en
+  `True` para siempre, y TODA la cola detrás (cualquier reproducción
+  futura, en cualquier ventana) se bloqueaba de por vida — sin ningún
+  error visible, y sin que reiniciar la app ayudara (el problema vivía
+  en PipeWire, no en el proceso de Python, así que un `EnrutadorPactl`
+  recién creado se trababa exactamente igual contra el mismo PipeWire
+  colgado). Regla: cualquier `proceso.finished.connect(...)` que
+  alimenta una cola/máquina de estados tiene que tener SIEMPRE, al
+  lado, un `QTimer.singleShot(timeout_ms, watchdog)` que mate el
+  proceso (`kill()`) y resuelva el pedido como fallido/vacío si no
+  respondió a tiempo — con un guard de "ya resuelto" para que el
+  `finished` real (si llega tarde, después del watchdog) no vuelva a
+  disparar la misma resolución dos veces. Sin esto, un solo proceso
+  externo colgado convierte "asíncrono y serializado" (ronda 128) en
+  "trabado para siempre" — la asincronía por sí sola no protege contra
+  un proceso que nunca termina, solo contra uno que bloquea el hilo
+  mientras corre.
 - **Un guard de "generación" solo protege si el valor comparado se
   CAPTURA en el momento del despacho, no si se relee "en vivo" dentro
   del propio callback asíncrono** (bug evitado antes de llegar a
