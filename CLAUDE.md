@@ -13480,9 +13480,178 @@ soltó de una vez.
     que vuelvan a tener un recorte ajustado — y confirme si, después
     de eso, el "flash silencioso" desaparece del todo tanto en Ventana
     1 como en Ventana 2 y la Auxiliar.
+133. ~~LA CAUSA DE FONDO real de "se quedaba muda la salida de
+    Silicon" y "no se escuchaban algunas canciones" — fuga de recursos
+    de libVLC en cada crossfade, degradando el enrutado de audio a lo
+    largo del día~~ — Santiago pidió reanalizar la biblioteca por el
+    bug de la ronda 132 y, de paso, mandó el log COMPLETO de un día
+    real de emisión con varias fallas: "hoy hubo muchas fallas donde
+    se quedaba muda la salida de Sillicon, varias... a las 19.40
+    aproximadamente, no se escuchaba algunas canciones, un desastre."
+    Leyendo el log de punta a punta (no a ciegas — el patrón era
+    clarísimo una vez puesto en orden cronológico) apareció un
+    problema mucho más grave que el de la ronda anterior: el mecanismo
+    `EnrutadorPactl` (ronda 128, el fallback que mueve cada stream
+    nuevo al sink de PipeWire correcto porque esta instalación de
+    libVLC no tiene compilado el módulo de salida "pulse") fallaba
+    ocasionalmente a la mañana ("no encontró ningún sink-input nuevo
+    tras 20 intentos", unas pocas veces entre las 07:31 y las 13:37) y
+    pasó a fallar **CASI SIEMPRE** desde las 18:49 en adelante — línea
+    tras línea del log, cada crossfade y cada Pisador fallando el
+    enrutado — hasta que Santiago reinició la app a las 20:44, momento
+    en el que volvió a andar perfecto de una. Un fallo de
+    `EnrutadorPactl` significa que el stream de audio se queda sonando
+    por la salida que sea que haya quedado puesta ANTES (o la que
+    PipeWire elija por defecto), nunca movido a la salida Silicon —
+    exactamente "se queda muda la salida de Silicon" y "no se
+    escuchaban algunas canciones" tal como reportó Santiago, sin que
+    la app ni el motor de reproducción tiren ningún error (el archivo
+    sonaba perfecto, solo que por el lugar equivocado).
+
+    **Causa real, encontrada auditando el propio código, no
+    adivinada**: `core/gestor_emision.py:_iniciar_crossfade()` (el
+    crossfade NATURAL de Ventana 2/Auxiliar, disparado cada pocos
+    minutos durante toda una jornada de emisión real) crea un
+    `MotorAudio` completamente NUEVO (con su propio `vlc.Instance()` y
+    `MediaPlayer`) para el ítem ENTRANTE en cada transición, y el motor
+    SALIENTE — que ya cumplió su función, terminó de fundirse a 0 —
+    se descartaba con un simple `self._motor_saliente_crossfade = None`
+    (tanto en `_liberar_crossfade()` como en `detener()`), sin liberar
+    NADA de sus recursos de libVLC. `MotorAudio.__init__()` registra
+    sus callbacks de eventos con `event_manager().event_attach(...,
+    self._on_fin_reproduccion)` — un CALLBACK LIGADO a `self`, lo que
+    arma un ciclo de referencias real (`self -> self._player ->
+    event_manager -> callback -> self`) — un ciclo así **nunca se
+    libera por conteo de referencias simple**, solo lo puede resolver
+    el recolector CÍCLICO de Python, que corre según umbrales de
+    asignación de memoria, no de forma inmediata ni predecible. Un
+    objeto `MotorAudio`/`vlc.Instance()` pesa poco en el heap de
+    Python (así que no dispara una recolección seguido) PERO mantiene
+    abierta una conexión de cliente de audio real con PipeWire/ALSA
+    mientras espera — con un crossfade natural cada pocos minutos
+    durante 13+ horas de emisión real, esto significa docenas o
+    cientos de conexiones de audio "zombis" acumulándose a lo largo
+    del día, cada una consumiendo un cliente real del lado de
+    PipeWire, hasta que el servidor de audio deja de poder
+    registrar/enrutar streams NUEVOS de forma confiable dentro de la
+    ventana de reintentos de `EnrutadorPactl` (`MAX_INTENTOS=20` ×
+    `ESPERA_REINTENTO_MS=150` = 3 segundos, ver ronda 128) — encaja
+    EXACTO con la progresión real observada (ocasional a la mañana,
+    casi constante por la noche) y con la recuperación instantánea al
+    reiniciar el proceso completo, que fuerza al sistema operativo a
+    cerrar TODAS las conexiones de audio de ese proceso de una sola
+    vez, sin depender de ningún GC de Python.
+
+    **Corregido con un método nuevo, `MotorAudio.liberar()`**
+    (`core/audio_engine.py`): detiene los timers (`_timer_posicion`/
+    `_timer_fade_volumen`), y llama `stop()` + `release()` explícitos
+    sobre el `MediaPlayer` Y sobre el `Instance` de libVLC —
+    liberación DETERMINÍSTICA, nunca dependiente de que el ciclo de
+    referencias se recolecte solo. Segura de llamar más de una vez o
+    sobre un motor nunca inicializado (degradado desde el arranque).
+    `core/gestor_emision.py` ahora llama `motor_saliente.liberar()` en
+    los DOS lugares donde antes solo se hacía `= None` —
+    `_liberar_crossfade()` (el camino normal, al terminar la rampa del
+    crossfade) y `detener()` (Stop a mitad de una transición en
+    curso). **Alcance acotado a propósito**: Ventana 1
+    (`GestorPublicidad`) NUNCA tuvo este patrón — a diferencia de
+    Ventana 2/Auxiliar, siempre usó un solo `MotorAudio` de punta a
+    punta (el fundido de Publicidad es SECUENCIAL, no crea un motor
+    nuevo por transición, ver la diferencia de arquitectura V1 vs. V2
+    ya documentada desde la ronda de paridad con Dinesat) — así que no
+    necesitaba ningún cambio. Otros usos de `MotorAudio()` temporales
+    de la app (listar dispositivos, previos puntuales de diálogos,
+    HORA/TEMP manual, Pisador) se crean UNA sola vez y se reusan
+    indefinidamente, no se recrean cada pocos minutos durante horas —
+    no son candidatos realistas a esta misma fuga, y quedan fuera del
+    alcance de esta ronda a propósito (si en algún momento se detecta
+    el mismo síntoma en un camino distinto, es la misma corrección,
+    aplicable puntual ahí).
+
+    Sobre la biblioteca sintética que se armó y probó en el chat antes
+    de esta ronda (con separadores/artísticas "reales" imitando fades
+    musicales largos, corridos a través de `_aplicar_analisis_
+    silencio()` y `core.reanalizador_batch.ejecutar_reanalisis()` de
+    punta a punta): confirmó que el fix de la ronda 132 corrige el
+    escenario que reproduce — pero **este log real de producción deja
+    claro que el problema de hoy era, en su enorme mayoría, este otro
+    bug** (la fuga de recursos), no el recorte de silencio — el propio
+    log muestra separadores/HTH/comandos FMT sonando con normalidad la
+    gran mayoría del día, mientras que el enrutado a la salida
+    correcta fallaba cada vez más seguido. Un hallazgo aparte, menor,
+    en el mismo log: a las 08:02:02 un ítem Aleatorio resolvió
+    `'Canta conmigo.mp3'` (carpeta `BASE/Storage 1/Audio High
+    Resolution/000/`, la MISMA carpeta de la ronda 93 sobre WAV
+    IMA-ADPCM) y disparó un `[ERROR] Error reproduciendo` real de
+    libVLC — la cascada de error funcionó exactamente como está
+    diseñada (saltó al ítem siguiente sin cortar el aire), así que no
+    es un bug de esta app, es un archivo puntual genuinamente roto/no
+    soportado en esa carpeta — si Santiago quiere, puede intentar
+    "🔈 Aplicar análisis de silencio..." sobre ese archivo puntual
+    (que ahora, con el fix de la ronda 89/93, corre el mismo motor de
+    conversión con ffmpeg de respaldo) o simplemente reemplazarlo.
+
+    Probado con un script dedicado (scratch, no commiteado, ver ronda
+    90): `MotorAudio.liberar()` detiene los timers y llama `stop()`+
+    `release()` sobre un player y una instancia VLC FALSOS (confirmado
+    que las dos llamadas ocurren, que el motor queda "no disponible",
+    y que llamarla una segunda vez no rompe nada ni vuelve a tocar los
+    mismos objetos); un `GestorPlaylist` real (con un panel Qt mínimo,
+    señales reales) confirma que tanto `_liberar_crossfade()` como
+    `detener()` (con un crossfade dejado a mitad, simulando un Stop en
+    plena transición) llaman `liberar()` de verdad sobre el motor
+    saliente, no solo lo descartan — + regresión de los tests de la
+    ronda 132 y de la validación de reanálisis sin fallos nuevos +
+    `py_compile` de los 2 archivos tocados + smoke test de arranque de
+    `main.py` sin traceback. **Sigue sin poder confirmarse con
+    PipeWire/libVLC/hardware real** (el sandbox no tiene ninguno de
+    los dos — esta es la limitación de siempre para todo lo que toca
+    `core/audio_engine.py`): falta que Santiago actualice la radio y
+    confirme, mirando `Configuración → Diagnóstico → Ver log` después
+    de una jornada completa de emisión real con crossfade activado
+    (su modo de uso normal), que la frecuencia de "EnrutadorPactl no
+    encontró ningún sink-input nuevo" YA NO aumenta con las horas —
+    debería quedar en niveles ocasionales parejos de la mañana a la
+    noche, nunca escalando hasta fallar casi siempre como ayer. Si
+    todavía aparece con frecuencia alta desde temprano, el próximo
+    paso sería revisar si hay OTRO lugar de la app creando
+    `MotorAudio()` nuevos de forma repetida sin liberar (no encontrado
+    en esta auditoría, pero el crossfade era, por lejos, el candidato
+    con más repeticiones por hora de todos).
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
+- **Crear un objeto que registra un callback LIGADO A SÍ MISMO
+  (`event_manager().event_attach(evento, self._metodo)`) y después
+  abandonarlo con solo `= None` es una fuga de recursos real, no un
+  simple "dejar que el GC lo junte"** (bug real de producción, ronda
+  133, "se quedaba muda la salida de Silicon" tras horas de emisión):
+  ese patrón arma un ciclo de referencias (`self -> self._player ->
+  event_manager -> callback -> self`) que el conteo de referencias
+  simple de Python NUNCA puede liberar — solo lo resuelve el
+  recolector CÍCLICO, que corre según umbrales de asignación de
+  memoria, no de forma inmediata ni predecible. Si el objeto envuelve
+  un recurso del SISTEMA OPERATIVO (acá, una conexión de cliente de
+  audio con PipeWire/ALSA vía `vlc.Instance()`) — no solo memoria de
+  Python — ese recurso queda "vivo" del lado del SO todo el tiempo que
+  tarde esa recolección, que puede ser arbitrariamente largo si el
+  objeto en sí pesa poco en el heap de Python (nunca dispara una
+  recolección por su cuenta). Con un patrón que crea un objeto así
+  REPETIDAMENTE a lo largo de una sesión larga (acá: un `MotorAudio`
+  nuevo en cada crossfade natural de Ventana 2, cada pocos minutos
+  durante 13+ horas), el resultado es una degradación que EMPEORA con
+  el tiempo (más conexiones zombis acumuladas cuantas más horas pasan)
+  y que un reinicio del PROCESO arregla de inmediato (el sistema
+  operativo cierra todas las conexiones de ese proceso al salir, sin
+  depender de ningún GC) — ese patrón de síntomas (bien al principio,
+  cada vez peor, arreglado por un reinicio) es la pista más fuerte de
+  que el problema real es este, no algo del propio hardware/driver.
+  **Regla**: cualquier objeto que registre un callback sobre sí mismo
+  y envuelva un recurso real del sistema operativo necesita un método
+  de liberación EXPLÍCITO (ver `MotorAudio.liberar()`,
+  `core/audio_engine.py`) llamado en el momento exacto en que ya no
+  hace falta — nunca confiar en que Python lo junte solo "en algún
+  momento".
 - **Nunca usar PAUSA para un handoff entre dos motores/ventanas que
   después tiene que "volver limpio"** (bug real con audio real, ver
   roadmap ronda 36): `MotorAudio.esta_reproduciendo()` da `False` con
