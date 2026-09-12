@@ -46,6 +46,7 @@ from satelite.dialogo_configuracion_conexion import DialogoConfiguracionConexion
 from satelite.dialogo_musicalizador_remoto import DialogoMusicalizadorRemoto
 from satelite.dialogo_programador_remoto import DialogoProgramadorRemoto
 from satelite.dialogo_subir_archivo import DialogoSubirArchivo
+from satelite.dialogo_ver_log import DialogoVerLog
 
 INTERVALO_POLLING_MS = 3000
 
@@ -91,6 +92,18 @@ class VentanaSatelite(QMainWindow):
         menu_config = self.menuBar().addMenu("Configuración")
         accion_actualizaciones = menu_config.addAction("⬇ Actualizaciones...")
         accion_actualizaciones.triggered.connect(self._abrir_actualizaciones)
+
+        # Pedido explícito: "actualiza pero reinicia el satélite, no el
+        # principal que está corriendo en la otra sesión... ¿se puede
+        # arreglar?" -- esto SÍ pasa por el socket de control remoto
+        # (a diferencia de "⬇ Actualizaciones..." de arriba, que es git
+        # local de la propia satélite), así que requiere estar
+        # conectado a la radio.
+        menu_config.addSeparator()
+        accion_actualizar_radio = menu_config.addAction("🔁 Actualizar y reiniciar la RADIO (principal)...")
+        accion_actualizar_radio.triggered.connect(self._actualizar_reiniciar_radio)
+        accion_ver_log = menu_config.addAction("📋 Ver log de la radio...")
+        accion_ver_log.triggered.connect(self._ver_log_radio)
 
     def _construir_ui(self):
         central = QWidget()
@@ -210,6 +223,65 @@ class VentanaSatelite(QMainWindow):
     # ------------------------------------------------------------------
     def _abrir_actualizaciones(self):
         DialogoActualizaciones(parent=self).exec()
+
+    def _actualizar_reiniciar_radio(self):
+        """Pedido explícito: "actualiza pero reinicia el satélite, no
+        el principal que está corriendo en la otra sesión... ¿se puede
+        arreglar? o si o si debo ir hasta la pc y del principal
+        reiniciar?" -- corta el aire un momento (git pull + reinicio
+        del proceso principal), así que pide confirmación con un texto
+        explícito, mismo criterio que el resto de las acciones que
+        interrumpen la emisión desde acá (ver `_on_toggle_automatico_menu`)."""
+        if self._cliente is None:
+            QMessageBox.warning(self, "Control remoto", "Conectate primero (menú \"Conexión\").")
+            return
+        respuesta = QMessageBox.question(
+            self, "Actualizar la radio",
+            "Esto va a actualizar y REINICIAR el programa principal de la radio "
+            "(el que está sonando al aire) -- corta la emisión un momento mientras "
+            "se reinicia.\n\n¿Confirmás que querés continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+        self.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            r = self._cliente.actualizar_reiniciar_principal()
+        except ErrorControlRemoto as error:
+            # Un error de conexión ACÁ es esperable si el pull sí se
+            # aplicó y la radio ya se está reiniciando -- el proceso
+            # viejo corta el socket antes de que este pedido reciba
+            # respuesta. No lo tratamos como una falla dura.
+            QMessageBox.information(
+                self, "Actualizar la radio",
+                f"Se perdió la conexión mientras esperaba la respuesta -- probable que "
+                f"la radio ya se esté reiniciando con la actualización aplicada.\n\n"
+                f"Detalle: {error}",
+            )
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.setEnabled(True)
+        if not r.get("ok"):
+            QMessageBox.warning(self, "Actualizar la radio", r.get("error", "No se pudo actualizar."))
+            return
+        QMessageBox.information(
+            self, "Actualizar la radio",
+            "Actualización aplicada -- la radio se está reiniciando. Puede tardar unos "
+            "segundos en volver a estar disponible.",
+        )
+        self._timer_estado.stop()
+
+    def _ver_log_radio(self):
+        """Pedido explícito: "agregá la posibilidad de acceder al
+        archivo de log desde el satélite para poder también corregir
+        futuros errores"."""
+        if self._cliente is None:
+            QMessageBox.warning(self, "Control remoto", "Conectate primero (menú \"Conexión\").")
+            return
+        DialogoVerLog(self._cliente, parent=self).exec()
 
     def _conectar(self):
         config = cargar_config_satelite()

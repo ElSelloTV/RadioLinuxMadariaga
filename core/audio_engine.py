@@ -20,6 +20,7 @@ en vez de lanzar una excepción no controlada.
 --------------------------------------------------------
 """
 
+import os
 import subprocess
 
 import vlc
@@ -1167,6 +1168,38 @@ if __name__ == "__main__":
     import json as _json
     _dispositivos = listar_dispositivos_pactl()
     print(_json.dumps(_dispositivos))
+
+
+def contar_descriptores_y_pulseaudio() -> tuple:
+    """Diagnóstico de la fuga real de audio investigada con Santiago
+    (log de producción real, ronda de "EnrutadorPactl no encontró
+    ningún sink-input nuevo"): antes había que pedirle que corriera a
+    mano `ls /proc/<pid>/fd | wc -l` (y mirar cuántos son
+    `memfd:pulseaudio (deleted)`) por Chrome Remote Desktop cada vez
+    que algo se sentía raro. Pedido explícito: "que el log también
+    registre todos esos números, así me ahorra correr el comando".
+
+    Devuelve (total_descriptores, conexiones_pulseaudio) leyendo
+    `/proc/self/fd` DIRECTO desde este mismo proceso -- sin
+    `subprocess`, sin `pactl`, sin nada que pueda colgarse (mismo
+    criterio de la ronda anterior: nunca competir con o repetir el
+    riesgo que `EnrutadorPactl` ya tuvo que blindar con un timeout).
+    Devuelve (-1, -1) si `/proc` no está disponible (no debería pasar
+    en Linux, pero nunca hay que asumirlo)."""
+    try:
+        entradas = os.listdir("/proc/self/fd")
+    except OSError:
+        return -1, -1
+    total = len(entradas)
+    conexiones_pulseaudio = 0
+    for entrada in entradas:
+        try:
+            destino = os.readlink(f"/proc/self/fd/{entrada}")
+        except OSError:
+            continue
+        if "pulseaudio" in destino:
+            conexiones_pulseaudio += 1
+    return total, conexiones_pulseaudio
 
 
 def obtener_duracion_formateada(ruta: str) -> str:
