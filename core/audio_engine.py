@@ -682,13 +682,39 @@ class MotorAudio(QObject):
         gestor_emision.py`: `_liberar_crossfade()` y `detener()`).
 
         Segura de llamar más de una vez, o sobre un motor que nunca
-        llegó a inicializar libVLC (degradado desde el arranque)."""
+        llegó a inicializar libVLC (degradado desde el arranque).
+
+        Bug real de fondo, encontrado releyendo este mismo método con
+        Santiago tras confirmar con un log real que la fuga SEGUÍA
+        pasando pese a este fix: acá abajo nunca se llamaba
+        `event_manager().event_detach(...)` de los dos eventos
+        adjuntados en `__init__` -- `player.release()` baja el
+        contador de libVLC, pero el `EventManager` de python-vlc
+        guarda el callback (`self._on_fin_reproduccion`/`_on_error`,
+        métodos LIGADOS a esta misma instancia) en su propio dict
+        interno (`self._callbacks`), colgado del player -- el ciclo
+        real es `self -> self._player -> event_manager -> _callbacks[k]
+        -> método ligado -> self`. Un ciclo así NUNCA se rompe por
+        conteo de referencias simple, sin importar cuántos `release()`
+        se llamen -- hace falta el recolector CÍCLICO de Python, que
+        no tiene un momento fijo (corre según umbrales de asignación
+        de memoria) y en una app de radio de bajo churn puede tardar
+        mucho más de lo que tarda en acumularse una fuga real.
+        `event_detach()` (confirmado en el propio código de python-vlc)
+        hace `del self._callbacks[k]` -- corta el ciclo A MANO, en el
+        instante exacto, sin depender de ningún GC."""
         if self._timer_posicion is not None:
             self._timer_posicion.stop()
         if self._timer_fade_volumen is not None:
             self._timer_fade_volumen.stop()
             self._timer_fade_volumen = None
         if self._player is not None:
+            try:
+                eventos = self._player.event_manager()
+                eventos.event_detach(vlc.EventType.MediaPlayerEndReached)
+                eventos.event_detach(vlc.EventType.MediaPlayerEncounteredError)
+            except Exception:
+                pass
             try:
                 self._player.stop()
             except Exception:
