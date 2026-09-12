@@ -22,6 +22,7 @@ en vez de lanzar una excepción no controlada.
 
 import os
 import subprocess
+import time
 
 import vlc
 from PySide6.QtCore import QObject, Signal, QTimer, QProcess
@@ -293,6 +294,22 @@ RETARDO_ARRANQUE_MS_POR_DEFECTO = 150
 # pasó por esa capa.
 VENTANA_MINIMA_SEGURA_MS = 500
 
+# Diagnóstico de silencios reales al aire (pedido explícito, tras un
+# reporte real: "encuentro un silencio largo cuando terminó el bloque
+# del automático de las 19"). Ninguna señal existente medía esto de
+# forma directa -- ver reproducir()/_arrancar_reproduccion_real() más
+# abajo: cuando la Salida configurada es un nombre de sink de pactl
+# (el caso real de Santiago, sin el módulo "pulse" en su libVLC), el
+# play() de verdad queda diferido a que EnrutadorPactl le dé su turno
+# en la cola serializada -- si esa cola está congestionada (varias
+# reproducciones casi simultáneas en CUALQUIER ventana, ya que el
+# enrutador es un singleton compartido por toda la app) o `pactl`
+# responde lento, el audio puede tardar bastante más que lo esperado
+# en arrancar de verdad, sin que ningún otro mecanismo lo deje
+# registrado. Un umbral de 1.5s ya es un corte perceptible al aire —
+# por debajo de eso ni vale la pena loguear (ruido).
+UMBRAL_DEMORA_REPRODUCCION_SOSPECHOSA_SEGUNDOS = 1.5
+
 
 def _argumentos_vlc(duracion_buffer_caching_ms: int, audio_cfg: dict = None) -> list:
     """Argumentos de la instancia de libVLC (pedido explícito, "para
@@ -554,9 +571,25 @@ class MotorAudio(QObject):
         # dispositivo normal (id de módulo de libVLC, o "default") el
         # comportamiento es IDÉNTICO a como era antes: arranca ya
         # mismo, sin ninguna cola de por medio.
+        momento_pedido_reproducir = time.monotonic()
+
         def _arrancar_reproduccion_real():
             if self._generacion_reproduccion != generacion_de_esta_reproduccion:
                 return  # una reproducción MÁS NUEVA ya canceló esta (ver más abajo)
+            # Diagnóstico de silencios reales al aire (ver constante
+            # UMBRAL_DEMORA_REPRODUCCION_SOSPECHOSA_SEGUNDOS más arriba)
+            # -- mide cuánto tardó ESTE play() en dispararse de verdad
+            # desde que se pidió reproducir(), sin importar si quedó
+            # diferido por EnrutadorPactl (cola congestionada, pactl
+            # lento) o arrancó ya mismo (dispositivo normal, cola
+            # libre). Nunca se dispara para una demora chica/normal.
+            demora_segundos = time.monotonic() - momento_pedido_reproducir
+            if demora_segundos > UMBRAL_DEMORA_REPRODUCCION_SOSPECHOSA_SEGUNDOS:
+                registrar_evento(
+                    f"MotorAudio: '{self._ruta_actual}' tardó {demora_segundos:.1f}s en "
+                    f"arrancar a sonar de verdad desde que se pidió reproducir() -- "
+                    f"posible corte de audio real al aire (ver EnrutadorPactl, cola de enrutado)"
+                )
             self._player.play()
             self._timer_posicion.start()
 
