@@ -40,10 +40,11 @@ from gui import estado_ui
 
 from core.playlist_manager import GestorPublicidad, GestorExplorador, SchedulerAutomatico
 from core.gestor_emision import GestorPlaylist
-from core.audio_engine import obtener_duracion_formateada, MotorAudio
+from core.audio_engine import obtener_duracion_formateada, MotorAudio, contar_descriptores_y_pulseaudio
 from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
 from core.servidor_control_remoto import ServidorControlRemoto
 from core.musicalizador import validar_formato
+from core import actualizador
 import core.prioridad_proceso as prioridad_proceso
 from config.settings import (
     cargar_configuracion, registrar_evento, registrar_error, guardar_configuracion,
@@ -54,6 +55,7 @@ from config.settings import (
     cargar_musicalizador, listar_formatos, obtener_formato,
     guardar_formato, eliminar_formato, renombrar_formato,
     categoria_de_enlatado, dispositivo_master_efectivo,
+    ARCHIVO_LOG,
 )
 
 
@@ -916,12 +918,39 @@ class MainWindow(QMainWindow):
         self._timer_prioridad_proceso.timeout.connect(self._actualizar_prioridad_proceso)
         self._timer_prioridad_proceso.start()
 
+        # Pedido explícito, de la misma investigación de la fuga de
+        # audio real ("que el log también registre todos esos
+        # números, así me ahorra correr el comando"): antes había que
+        # pedirle a Santiago que corriera a mano `ls /proc/<pid>/fd |
+        # wc -l` por Chrome Remote Desktop cada vez que algo se sentía
+        # raro. Ahora el propio proceso se audita solo cada 15 minutos
+        # -- pura lectura de /proc/self/fd (ver
+        # contar_descriptores_y_pulseaudio en core/audio_engine.py),
+        # nunca subprocess/pactl, así que nunca puede colgarse ni
+        # competir con EnrutadorPactl. El intervalo (15 min) da buena
+        # resolución contra el ritmo de fuga real observado (~1 cada
+        # 13-14 min) sin saturar el log de líneas repetidas.
+        self._timer_diagnostico_recursos = QTimer(self)
+        self._timer_diagnostico_recursos.setInterval(15 * 60 * 1000)
+        self._timer_diagnostico_recursos.timeout.connect(self._registrar_diagnostico_recursos)
+        self._timer_diagnostico_recursos.start()
+        self._registrar_diagnostico_recursos()  # una primera foto ya al arrancar, no recién a los 15 min
+
     def _actualizar_prioridad_proceso(self):
         motores = [self.gestor_publicidad.motor, self.gestor_emision.motor]
         if self._gestor_auxiliar is not None:
             motores.append(self._gestor_auxiliar.motor)
         hay_algo_sonando = any(motor.esta_reproduciendo() for motor in motores)
         prioridad_proceso.actualizar_segun_reproduccion(hay_algo_sonando)
+
+    def _registrar_diagnostico_recursos(self):
+        total, pulseaudio = contar_descriptores_y_pulseaudio()
+        if total < 0:
+            return  # /proc no disponible -- no debería pasar en Linux, pero nunca romper por esto
+        registrar_evento(
+            f"Diagnóstico de recursos: {total} descriptores de archivo abiertos "
+            f"({pulseaudio} conexiones PulseAudio vía memfd)"
+        )
 
     # ------------------------------------------------------------------
     # Control remoto (app satélite) — pedido explícito: "una app aparte
@@ -1006,6 +1035,10 @@ class MainWindow(QMainWindow):
             return self._emision_agregar_ciclo_fmt_remoto(params)
         if accion == "listar_enlatados":
             return {"ok": True, "datos": {"enlatados": self._listar_enlatados_remoto()}}
+        if accion == "actualizar_reiniciar_principal":
+            return self._actualizar_reiniciar_principal_remoto()
+        if accion == "obtener_log_aplicacion":
+            return self._obtener_log_aplicacion_remoto(params)
         return {"ok": False, "error": f"Acción desconocida: {accion}"}
 
     def _listar_enlatados_remoto(self) -> dict:
@@ -1343,6 +1376,71 @@ class MainWindow(QMainWindow):
 
         registrar_evento(f"Control remoto: archivo subido e importado — \"{titulo}\" ({registro['codigo']})")
         return {"ok": True, "datos": {"codigo": registro["codigo"], "ruta": registro["ruta"]}}
+
+    def _actualizar_reiniciar_principal_remoto(self) -> dict:
+        """Actualizar y reiniciar la RADIO (esta app) desde la
+        satélite -- pedido explícito: "actualiza pero reinicia el
+        satélite, no el principal... ¿se puede arreglar? o si o si
+        debo ir hasta la pc?". Mismo mecanismo que ya usa el botón
+        local (Configuración → Actualizaciones →
+        `VentanaConfiguracion._aplicar_actualizacion`), disparado acá
+        por el socket en vez de un click. La confirmación ("esto corta
+        el aire un momento") la pide la propia satélite ANTES de
+        mandar este pedido -- mismo criterio ya establecido para el
+        resto de las acciones remotas sensibles (Automático, Aplicar
+        Ahora): un QMessageBox acá sería MODAL y congelaría este
+        proceso esperando un click que nadie puede dar del otro lado.
+
+        El `git pull` (`aplicar_actualizacion()`) corre SÍNCRONO acá,
+        hasta 120s -- igual que el botón local, no es un riesgo nuevo.
+        Lo que SÍ hay que diferir es el reinicio en sí: `reiniciar_
+        aplicacion()` termina en `app.quit()`, y si se llamara directo
+        el proceso se cerraría ANTES de que `core/servidor_control_
+        remoto.py:_procesar()` llegue a escribir esta respuesta en el
+        socket -- la satélite vería la conexión cortada sin saber si
+        funcionó. `QTimer.singleShot` da el tiempo justo para que la
+        respuesta salga primero."""
+        exito, mensaje = actualizador.aplicar_actualizacion()
+        if not exito:
+            registrar_error(f"Control remoto: actualización de la radio falló — {mensaje}")
+            return {"ok": False, "error": mensaje}
+
+        registrar_evento("Control remoto: actualización aplicada, reiniciando la radio a pedido de la satélite")
+        self.preparar_cierre_por_actualizacion()
+        QTimer.singleShot(500, lambda: actualizador.reiniciar_aplicacion(QApplication.instance()))
+        return {"ok": True, "datos": {"mensaje": mensaje}}
+
+    def _obtener_log_aplicacion_remoto(self, params: dict) -> dict:
+        """Pedido explícito: "agregá la posibilidad de acceder al
+        archivo de log desde el satélite, para poder también corregir
+        futuros errores" -- devuelve las últimas N líneas de `config/
+        data/log_aplicacion.txt` (nunca el archivo entero: puede crecer
+        hasta TAMAÑO_MAXIMO_LOG_BYTES, un tail acotado ya alcanza para
+        diagnosticar sin inflar el mensaje del socket)."""
+        maximo_lineas = params.get("lineas") or 500
+        try:
+            maximo_lineas = int(maximo_lineas)
+        except (TypeError, ValueError):
+            maximo_lineas = 500
+        maximo_lineas = max(50, min(maximo_lineas, 5000))
+
+        if not os.path.isfile(ARCHIVO_LOG):
+            return {"ok": True, "datos": {"contenido": "", "lineas_totales": 0, "lineas_devueltas": 0}}
+        try:
+            with open(ARCHIVO_LOG, "r", encoding="utf-8", errors="replace") as f:
+                lineas = f.readlines()
+        except OSError as error:
+            return {"ok": False, "error": f"No se pudo leer el log: {error}"}
+
+        recortadas = lineas[-maximo_lineas:]
+        return {
+            "ok": True,
+            "datos": {
+                "contenido": "".join(recortadas),
+                "lineas_totales": len(lineas),
+                "lineas_devueltas": len(recortadas),
+            },
+        }
 
     def _aplicar_configuracion_en_vivo(self):
         """Aplica la configuración recién guardada SIN recrear ni

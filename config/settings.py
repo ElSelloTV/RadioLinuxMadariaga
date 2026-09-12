@@ -25,7 +25,13 @@ ARCHIVO_ULTIMO_FMT = os.path.join(DIRECTORIO_CONFIG, "ultimo_fmt.json")
 ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
 ARCHIVO_HISTORIAL_REPRODUCCION = os.path.join(DIRECTORIO_CONFIG, "historial_reproduccion.txt")
 ARCHIVO_ROTACION_CATEGORIAS = os.path.join(DIRECTORIO_CONFIG, "rotacion_categorias.json")
-TAMAÑO_MAXIMO_LOG_BYTES = 2 * 1024 * 1024  # 2 MB — más allá de esto, rota a .anterior.txt
+# Pedido explícito ("achicar el log a 2 días y no 3"): la rotación
+# siempre fue por TAMAÑO, nunca por fecha (no hay ningún concepto de
+# "días" en el propio mecanismo) — 2MB, en el uso real de Santiago,
+# venía cubriendo aproximadamente 3 días. Bajado a 2/3 de ese valor
+# para acercarse a 2 días, en vez de inventar un rotado por fecha
+# nuevo y separado sobre el mismo archivo.
+TAMAÑO_MAXIMO_LOG_BYTES = int(2 * 1024 * 1024 * 2 / 3)  # ~1.33 MB — antes 2 MB
 
 CONFIG_POR_DEFECTO = {
     "audio": {

@@ -32,6 +32,12 @@ TIMEOUT_SEGUNDOS = 6.0
 # importándose igual del otro lado. `importar_archivo()` usa un
 # timeout mucho más largo, acorde a ese trabajo real.
 TIMEOUT_IMPORTAR_ARCHIVO_SEGUNDOS = 120.0
+# `actualizar_reiniciar_principal()` corre un `git pull` del lado de la
+# radio, que en sí mismo puede tardar hasta 120s (mismo timeout que ya
+# usa `core/actualizador.aplicar_actualizacion()`) -- un margen de
+# sobra para no cortar la espera un instante antes de que el servidor
+# termine y responda.
+TIMEOUT_ACTUALIZAR_RADIO_SEGUNDOS = 130.0
 
 
 class ErrorControlRemoto(Exception):
@@ -218,3 +224,18 @@ class ClienteControlRemoto:
         if not respuesta.get("ok"):
             raise ErrorControlRemoto(respuesta.get("error", "listar_enlatados falló"))
         return respuesta["datos"]["enlatados"]
+
+    # ------------------------------------------------------------------
+    # Actualizar la RADIO (no la satélite) + ver su log, a distancia —
+    # pedido explícito: "actualiza pero reinicia el satélite, no el
+    # principal... ¿se puede arreglar?" y "agregá la posibilidad de
+    # acceder al archivo de log desde el satélite".
+    # ------------------------------------------------------------------
+    def actualizar_reiniciar_principal(self) -> dict:
+        return self._pedir("actualizar_reiniciar_principal", timeout_segundos=TIMEOUT_ACTUALIZAR_RADIO_SEGUNDOS)
+
+    def obtener_log_aplicacion(self, lineas: int = 500) -> dict:
+        respuesta = self._pedir("obtener_log_aplicacion", {"lineas": lineas})
+        if not respuesta.get("ok"):
+            raise ErrorControlRemoto(respuesta.get("error", "obtener_log_aplicacion falló"))
+        return respuesta["datos"]
