@@ -65,16 +65,38 @@ def actualizar_segun_reproduccion(hay_algo_sonando: bool):
     proceso con el estado agregado de reproducción de la app (algo
     sonando en cualquiera de las 3 ventanas, o nada). Idempotente — no
     repite la llamada al sistema operativo si el nivel deseado no
-    cambió desde la última vez."""
+    cambió desde la última vez.
+
+    Bug real corregido (encontrado leyendo un log de producción real,
+    "por qué el log solo muestra 'devuelta a la normal' pero nunca
+    'elevada'"): `_prioridad_actual` se actualizaba al valor DESEADO
+    sin importar si `_establecer_nice()` realmente tuvo éxito — en una
+    instalación SIN el permiso de sistema operativo necesario para
+    elevar prioridad (nice negativo, ver el docstring del módulo), el
+    intento de "elevar" fallaba en silencio (solo un aviso genérico UNA
+    vez en toda la sesión) pero quedaba MARCADO como si hubiera subido
+    -- así, la próxima vez que dejaba de sonar algo, el intento de
+    "bajar a 0" SÍ tenía éxito (nunca hace falta permiso para eso) y
+    quedaba logueado como si reflejara un cambio real de estado, aunque
+    la prioridad real del proceso NUNCA se hubiera movido de 0 en
+    absoluto. Esto hacía que la línea "devuelta a la normal" apareciera
+    en el log ante CUALQUIER transición a "nada sonando" que el poll de
+    2s llegara a atrapar -- sin ser, por sí sola, prueba de que hubo un
+    corte LARGO, solo de que en ESE instante puntual no había nada
+    reproduciéndose. Corregido: `_prioridad_actual` solo se actualiza
+    si `_establecer_nice()` realmente tuvo éxito -- sin el permiso
+    habilitado, esta función ahora simplemente no cambia nada (ni
+    interno ni real) en cada llamada, consistente con la realidad."""
     global _prioridad_actual
     nivel_deseado = NICE_REPRODUCIENDO if hay_algo_sonando else NICE_NORMAL
     if nivel_deseado == _prioridad_actual:
         return
     exito = _establecer_nice(nivel_deseado)
+    if not exito:
+        return
     _prioridad_actual = nivel_deseado
-    if exito:
-        registrar_evento(
-            "Prioridad de proceso: elevada (hay reproducción activa)"
-            if hay_algo_sonando else
-            "Prioridad de proceso: devuelta a la normal (sin reproducción activa)"
-        )
+    registrar_evento(
+        "Prioridad de proceso: elevada (hay reproducción activa)"
+        if hay_algo_sonando else
+        "Prioridad de proceso: devuelta a la normal (sin reproducción activa)"
+    )
