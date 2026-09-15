@@ -133,6 +133,14 @@ class VentanaExplorador(QWidget):
     # espera + mensaje en la barra de estado), mismo mecanismo ya usado
     # para el arranque/cargar música/cargar programación.
     solicitud_preload = Signal(str)
+    # Pedido explícito ("cambiá el botón BAYS por uno que diga AUDIO
+    # CANAL, donde detenga todas las reproducciones y emita SOLO el
+    # audio del streaming"): el estado real (activo o no, motor
+    # dedicado, cortar las 3 ventanas de reproducción) vive en
+    # MainWindow, que orquesta las 3 ventanas — acá solo se emite el
+    # click, sin ninguna lógica de reproducción en esta clase (regla
+    # de oro del proyecto: gui/ nunca toca el motor de audio directo).
+    solicitud_audio_canal = Signal()
 
     # Por debajo de esto, mostrar el preload es puro ruido visual (la
     # operación ya es instantánea) — por encima, con una biblioteca de
@@ -415,15 +423,14 @@ class VentanaExplorador(QWidget):
         self.slider_preview.sliderReleased.connect(self._on_slider_preview_soltado)
         layout_archivos.addWidget(self.slider_preview)
 
-        # --- Herramientas: Bays (grabador/editor externo ya instalado
-        # en la PC, pedido explícito -- reemplaza a la descarga de
-        # YouTube, que se sacó del todo) + Buscar duplicados ---
+        # --- Herramientas: AUDIO CANAL (streaming externo, pedido
+        # explícito -- reemplaza al botón "Bays") + Buscar duplicados ---
         grupo_herramientas = QGroupBox("🧰 Herramientas")
         layout_herramientas = QHBoxLayout(grupo_herramientas)
-        self.btn_abrir_bays = QPushButton("🎙 Bays")
-        self.btn_abrir_bays.setToolTip("Abrir el comando \"bays\" (ya instalado en la PC)")
-        self.btn_abrir_bays.setProperty("class", "btnCompacto")
-        self.btn_abrir_bays.clicked.connect(self._abrir_bays)
+        self.btn_audio_canal = QPushButton()
+        self.btn_audio_canal.setProperty("class", "btnCompacto")
+        self.btn_audio_canal.clicked.connect(self.solicitud_audio_canal.emit)
+        self.set_audio_canal_activo(False)  # texto/tooltip inicial
         self.btn_buscar_duplicados_avanzado = QPushButton("🧩 Buscar duplicados")
         self.btn_buscar_duplicados_avanzado.setToolTip(
             "Buscar archivos duplicados (nombre parecido + duración/tamaño) "
@@ -431,7 +438,7 @@ class VentanaExplorador(QWidget):
         )
         self.btn_buscar_duplicados_avanzado.setProperty("class", "btnCompacto")
         self.btn_buscar_duplicados_avanzado.clicked.connect(self._buscar_duplicados_avanzado)
-        layout_herramientas.addWidget(self.btn_abrir_bays)
+        layout_herramientas.addWidget(self.btn_audio_canal)
         layout_herramientas.addWidget(self.btn_buscar_duplicados_avanzado)
         layout_archivos.addWidget(grupo_herramientas)
 
@@ -1540,21 +1547,28 @@ class VentanaExplorador(QWidget):
             )
 
     # ------------------------------------------------------------------
-    # "Bays" (pedido explícito, reemplaza a la descarga de YouTube):
-    # solo abre el comando externo, ya instalado en la PC -- ningún
-    # otro tipo de integración con el programa.
+    # "AUDIO CANAL" (pedido explícito, reemplaza al botón "Bays"): el
+    # click solo emite `solicitud_audio_canal` -- TODA la lógica real
+    # (cortar Publicidad/Emisión/Auxiliar, crear el motor dedicado,
+    # reproducir el streaming) vive en MainWindow, que es quien de
+    # verdad orquesta las 3 ventanas de reproducción (regla de oro del
+    # proyecto: gui/ nunca toca el motor de audio directo). Este
+    # método solo pinta el botón según el estado que MainWindow le
+    # informe -- nunca decide el estado por su cuenta.
     # ------------------------------------------------------------------
-    COMANDO_BAYS = "bays"
-
-    def _abrir_bays(self):
-        ruta_ejecutable = shutil.which(self.COMANDO_BAYS)
-        if not ruta_ejecutable:
-            QMessageBox.warning(
-                self, "Bays",
-                f"No se encontró el comando \"{self.COMANDO_BAYS}\" en el sistema.",
+    def set_audio_canal_activo(self, activo: bool):
+        if activo:
+            self.btn_audio_canal.setText("⏹ DETENER AUDIO CANAL")
+            self.btn_audio_canal.setToolTip(
+                "Streaming externo AL AIRE ahora mismo. Apretar para detenerlo "
+                "y volver al audio normal de la radio."
             )
-            return
-        QProcess.startDetached(ruta_ejecutable, [])
+        else:
+            self.btn_audio_canal.setText("📡 AUDIO CANAL")
+            self.btn_audio_canal.setToolTip(
+                "Detener toda la reproducción (Publicidad/Emisión/Auxiliar) y "
+                "emitir SOLO el audio de un streaming externo."
+            )
 
     # ------------------------------------------------------------------
     # Buscador de duplicados AVANZADO (pedido explícito: coincidencia

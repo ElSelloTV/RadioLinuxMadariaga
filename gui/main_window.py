@@ -58,6 +58,12 @@ from config.settings import (
     ARCHIVO_LOG,
 )
 
+# Pedido explícito: "cambiá el botón BAYS por uno que diga AUDIO
+# CANAL, donde detenga todas las reproducciones y emita SOLO el audio
+# del siguiente streaming" -- ver VentanaExplorador.solicitud_audio_canal
+# y MainWindow._on_solicitud_audio_canal() más abajo.
+URL_AUDIO_CANAL = "https://elsellotvmax.com.ar:9443/elsellotv.m3u8"
+
 
 class MainWindow(QMainWindow):
     """Ventana raíz: agrupa las 3 ventanas principales del automatizador."""
@@ -100,6 +106,15 @@ class MainWindow(QMainWindow):
         # SIEMPRE por la salida de Preescucha configurada, nunca la
         # Master que va al aire.
         self._motor_previo_remoto = None
+        # "AUDIO CANAL" (pedido explícito, reemplaza al botón "Bays"
+        # de Ventana 3): motor DEDICADO al streaming externo, creado
+        # recién al primer uso y reutilizado de ahí en más (nunca se
+        # recrea en cada toggle -- mismo criterio que _motor_previo_remoto,
+        # y a propósito el patrón OPUESTO al que causó la fuga real de
+        # una ronda anterior, "crear un MotorAudio nuevo repetidas
+        # veces sin liberarlo").
+        self._motor_audio_canal = None
+        self._audio_canal_activo = False
 
         self._config = cargar_configuracion()
 
@@ -378,6 +393,8 @@ class MainWindow(QMainWindow):
         motores = [self.gestor_emision.motor, self.gestor_publicidad.motor]
         if self._gestor_auxiliar is not None:
             motores.append(self._gestor_auxiliar.motor)
+        if self._motor_audio_canal is not None:
+            motores.append(self._motor_audio_canal)
         return any(motor.esta_reproduciendo() for motor in motores)
 
     def preparar_cierre_por_actualizacion(self):
@@ -506,6 +523,7 @@ class MainWindow(QMainWindow):
         self.ventana_explorador.archivo_movido.connect(self._on_archivo_movido)
         self.ventana_explorador.archivo_copiado.connect(self._on_archivo_copiado)
         self.ventana_explorador.categoria_renombrada.connect(self._on_categoria_renombrada)
+        self.ventana_explorador.solicitud_audio_canal.connect(self._on_solicitud_audio_canal)
 
     def _on_automatico_cambiado(self, activo: bool):
         self.lbl_status_modo.setText("Automático Activo" if activo else "Modo Manual")
@@ -802,6 +820,88 @@ class MainWindow(QMainWindow):
         self._cortar_reproduccion_de(self.gestor_emision)
 
     # ------------------------------------------------------------------
+    # "AUDIO CANAL" (Ventana 3, pedido explícito -- reemplaza al botón
+    # "Bays": "detenga todas las reproducciones y emita SOLO el audio
+    # del siguiente streaming"). Toggle: un segundo click desactiva el
+    # streaming y deja la radio en silencio, lista para retomar a mano
+    # -- mismo criterio de "nunca auto-resume tras un corte
+    # deliberado" ya establecido en toda la app (Auxiliar<->Emisión,
+    # bloque automático<->Emisión, etc.).
+    #
+    # Límite conocido, a propósito no resuelto acá (fuera del pedido
+    # literal): esto NO queda enganchado a la exclusión mutua
+    # Auxiliar<->Emisión (`al_arrancar_reproduccion`) ni al corte de
+    # Play manual de V1 (`al_arrancar_manual`) -- si el operador
+    # apreta Play a mano en V1/V2/Auxiliar mientras el streaming está
+    # sonando, las dos cosas suenan superpuestas hasta que se vuelva a
+    # apretar "AUDIO CANAL" para cortarlo. Extenderlo a esos 3
+    # callbacks (hoy de un solo destinatario cada uno, no una lista)
+    # es un cambio de arquitectura más grande, no pedido explícito.
+    # ------------------------------------------------------------------
+    def _on_solicitud_audio_canal(self):
+        if self._audio_canal_activo:
+            self._desactivar_audio_canal()
+            return
+        respuesta = QMessageBox.question(
+            self, "Audio Canal",
+            "Esto va a DETENER toda la reproducción de Publicidad, Emisión "
+            "y Auxiliar, y va a poner al aire SOLO el audio de un "
+            "streaming externo.\n\nLa radio va a quedar en modo \"Audio "
+            "Canal\" hasta que vuelvas a apretar este mismo botón para "
+            "desactivarlo.\n\n¿Confirmás que querés activarlo?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+        self._activar_audio_canal()
+
+    def _activar_audio_canal(self):
+        # Corta las 3 ventanas de reproducción reusando los botones
+        # Stop REALES (mismo patrón ya usado por el control remoto,
+        # `accion_transporte`: `getattr(objetivo, boton).click()`) --
+        # así se hereda gratis cualquier guard que ya tengan (ej. Stop
+        # de V1 apaga el Automático solo, ronda 108) sin duplicar esa
+        # lógica acá. V1 primero: apaga el Automático como efecto
+        # colateral, así el Stop de V2 (bloqueado mientras el
+        # Automático esté activo) ya no queda bloqueado al llegarle el
+        # turno.
+        self.ventana_publicidad.btn_stop.click()
+        self.ventana_emision.panel.btn_stop.click()
+        if self._ventana_auxiliar is not None:
+            self._ventana_auxiliar.panel.btn_stop.click()
+
+        motor = self._motor_audio_canal_o_crear()
+        motor.reproducir(URL_AUDIO_CANAL)
+        self._audio_canal_activo = True
+        self.ventana_explorador.set_audio_canal_activo(True)
+        self.statusBar().showMessage("📡 Audio Canal activo — streaming externo al aire.", 8000)
+        registrar_evento(f"Audio Canal: activado, streaming '{URL_AUDIO_CANAL}'")
+
+    def _desactivar_audio_canal(self):
+        if self._motor_audio_canal is not None:
+            self._motor_audio_canal.detener()
+        self._audio_canal_activo = False
+        self.ventana_explorador.set_audio_canal_activo(False)
+        self.statusBar().showMessage("Audio Canal detenido.", 6000)
+        registrar_evento("Audio Canal: desactivado")
+
+    def _motor_audio_canal_o_crear(self) -> MotorAudio:
+        if self._motor_audio_canal is None:
+            audio_cfg = self._config.get("audio", {})
+            id_dispositivo_master = dispositivo_master_efectivo(audio_cfg)
+            self._motor_audio_canal = MotorAudio(id_dispositivo_master)
+            # Sin esto, un error real (streaming caído, URL
+            # inalcanzable, credenciales vencidas) quedaría totalmente
+            # invisible -- este motor no pasa por ningún GestorPlaylist/
+            # GestorPublicidad que ya conecte error_reproduccion por su
+            # cuenta (mismo criterio ya usado para motor_pisador/
+            # motor_anuncio_manual).
+            self._motor_audio_canal.error_reproduccion.connect(
+                lambda mensaje: registrar_error(f"[Audio Canal] {mensaje}")
+            )
+        return self._motor_audio_canal
+
+    # ------------------------------------------------------------------
     # Motor de audio real (core/)
     # ------------------------------------------------------------------
     def _inicializar_motores_audio(self):
@@ -940,6 +1040,8 @@ class MainWindow(QMainWindow):
         motores = [self.gestor_publicidad.motor, self.gestor_emision.motor]
         if self._gestor_auxiliar is not None:
             motores.append(self._gestor_auxiliar.motor)
+        if self._motor_audio_canal is not None:
+            motores.append(self._motor_audio_canal)
         hay_algo_sonando = any(motor.esta_reproduciendo() for motor in motores)
         prioridad_proceso.actualizar_segun_reproduccion(hay_algo_sonando)
 
