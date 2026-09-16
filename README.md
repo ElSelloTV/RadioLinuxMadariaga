@@ -3,7 +3,7 @@
 > 🚧 **PROYECTO EN DESARROLLO.** Uso en producción bajo tu propio
 > riesgo — puede haber cambios frecuentes y funciones incompletas.
 >
-> **Última actualización:** 2026-09-15
+> **Última actualización:** 2026-09-16
 
 Automatización radial para Linux (simil Dinesat), en
 Python + PySide6 + VLC. Publicidad, música y explorador de medios,
@@ -44,11 +44,15 @@ sudo apt install easyeffects
 ALTERNATIVA RECOMENDADA: 
 Alternativa más liviana a EasyEffects: `extras/procesador_fm_viper4linux/`
 trae un instalador aparte para Viper4Linux (motor + GUI opcional,
-compilado desde fuente vendorizada en este repo). Menos funciones que
-EasyEffects, pero ocupa muchísimo menos — ver ese README para
-comparación de recursos, y para alternativas todavía más completas
-(y pesadas) como JDSP4Linux/JamesDSP. Tampoco tiene ninguna
-integración con esta app.
+compilado desde fuente vendorizada en este repo) — EQ de 10 bandas,
+exciter de brillo, AGC, compresor/limitador tipo broadcast, todo
+mucho más liviano que EasyEffects. A diferencia de EasyEffects, ESTE
+sí tiene una integración mínima con la app: Configuración → Audio →
+"Viper4Linux" — un interruptor que redirige el audio del aire a un
+sink fijo (nunca la Preescucha) para que Viper4Linux lo tome; el
+procesamiento en sí sigue siendo 100% independiente (`viper
+start`/`stop`, o instalado como servicio con `--systemd` para que
+arranque solo con la PC). Ver el README de esa carpeta.
 
 Esta app sí nivela el volumen de cada tema al importarlo (para que no
 haya diferencia de volumen entre canción y canción), sin depender de

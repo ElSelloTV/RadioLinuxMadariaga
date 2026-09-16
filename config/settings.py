@@ -41,12 +41,18 @@ CONFIG_POR_DEFECTO = {
         "volumen_preescucha": 100,
         # Pedido explícito ("activar o desactivar el procesamiento por
         # Viper4Linux... todos los stream que va creando que los envíe
-        # a un solo skin"): interruptor + nombre de sink, ver
+        # a un solo sink"): interruptor + nombre de sink, ver
         # `dispositivo_master_efectivo()` más abajo — apagado por
         # defecto, una instalación existente nunca cambia de
-        # comportamiento sola.
+        # comportamiento sola. "viper" es el nombre FIJO que usa el
+        # instalador vendorizado (`extras/procesador_fm_viper4linux`,
+        # comando `viper start`) — ese script lo crea y lo completa
+        # solo, nunca hace falta que el operador cree nada a mano con
+        # pactl (corrección real de una ronda anterior, ver el
+        # docstring de `_crear_grupo_viper4linux` en
+        # gui/ventana_configuracion.py).
         "viper4linux_activado": False,
-        "viper4linux_sink": "",
+        "viper4linux_sink": "viper",
     },
     "fade": {
         "crossfade_activado": True,
@@ -400,11 +406,13 @@ def dispositivo_master_efectivo(audio: dict) -> str | None:
     Pedido explícito: "Agregá... un botón que yo desde configuración
     pueda activar o desactivar el procesamiento por Viper4Linux, es
     decir, todos los stream que va creando que los envíe a un solo
-    skin y de ahi lo tomo con Viper4Linux". Con `viper4linux_activado`
-    prendido Y un `viper4linux_sink` configurado (un nombre real de
-    pactl — Santiago crea un sink virtual y apunta Viper4Linux a leer
-    de su `.monitor`, ver `extras/procesador_fm_viper4linux/README.md`),
-    los tres devuelven ESE nombre — activa el mismo fallback de
+    sink y de ahi lo tomo con Viper4Linux". Con `viper4linux_activado`
+    prendido Y un `viper4linux_sink` configurado (default "viper" — el
+    nombre FIJO que crea SOLO el comando `viper start` del instalador
+    vendorizado, ver `extras/procesador_fm_viper4linux/README.md` —
+    nunca hace falta que el operador cree ningún sink a mano con
+    pactl, corregido tras un reporte real de confusión), los tres
+    devuelven ESE nombre — activa el mismo fallback de
     `EnrutadorPactl` (`core/audio_engine.py`) que ya usa cualquier
     nombre de sink escrito a mano en el campo de Salida Master, así que
     el ruteo queda serializado (Pisador incluido) exactamente igual que

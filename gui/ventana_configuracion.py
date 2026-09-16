@@ -134,25 +134,28 @@ class VentanaConfiguracion(QDialog):
         """Pedido explícito: "un botón que yo desde configuración pueda
         activar o desactivar el procesamiento por Viper4Linux, es
         decir, todos los stream que va creando que los envíe a un solo
-        skin y de ahi lo tomo con Viper4Linux". Con esto activado,
+        sink y de ahi lo tomo con Viper4Linux". Con esto activado,
         TODOS los motores "de aire" (Publicidad/Emisión/Auxiliar,
         Pisador y HORA/TEMP manual incluidos) enrutan al mismo sink acá
         elegido en vez de a la Salida Master de arriba — ver
         `config.settings.dispositivo_master_efectivo()`, el único punto
         que resuelve esto. Reversible al instante: apagar el checkbox
-        (o vaciar el nombre del sink) vuelve a la Salida Master de
-        siempre, sin tocar ese valor para nada.
+        vuelve a la Salida Master de siempre, sin tocar ese valor para
+        nada.
 
-        El combo es editable y reusa la MISMA lista de sinks reales ya
-        traída para Master/Preescucha (sin volver a consultar
-        `pactl`) — a propósito SIN un ítem "default": acá no hay
-        "salida del sistema", es el nombre de un sink VIRTUAL que
-        Santiago crea aparte (ej. `pactl load-module module-null-sink
-        sink_name=viper_input`) y apunta Viper4Linux a leer de su
-        `.monitor` (ver extras/procesador_fm_viper4linux/README.md) —
-        puede no existir todavía la primera vez que se configura esto,
-        así que se puede tipear un nombre nuevo igual que ya se puede
-        en los combos de arriba."""
+        Corrección real de una ronda anterior ("V4Linux me dice que
+        tengo que crear un sink virtual, no sé hacerlo"): el sink NO
+        lo crea Santiago a mano con `pactl` — el propio instalador
+        vendorizado (`extras/procesador_fm_viper4linux/vendor/
+        Viper4Linux/viper`, comando `viper start`) lo crea, lo
+        completa con el audio y arranca el procesamiento, todo solo.
+        Ese script tiene el nombre del sink FIJO en el código
+        (`vipersink=viper`, no es configurable sin editar el script) —
+        por eso el combo de acá arranca en "viper" por defecto: es el
+        valor que YA coincide con lo que el instalador crea solo,
+        nunca algo que haya que inventar. Se deja editable por si algún
+        día se corre una copia del script modificada a mano con otro
+        nombre, pero el 99% de los casos no necesita tocarlo."""
         grupo = QGroupBox("Viper4Linux (procesador externo, opcional)")
         layout = QVBoxLayout(grupo)
 
@@ -164,6 +167,7 @@ class VentanaConfiguracion(QDialog):
         form_sink = QFormLayout()
         self.combo_viper4linux_sink = QComboBox()
         self.combo_viper4linux_sink.setEditable(True)
+        self.combo_viper4linux_sink.addItem("viper (nombre fijo del instalador)", "viper")
         for id_dispositivo, descripcion in dispositivos:
             self.combo_viper4linux_sink.addItem(f"{descripcion} ({id_dispositivo})", id_dispositivo)
         form_sink.addRow("Sink de destino:", self.combo_viper4linux_sink)
@@ -175,8 +179,10 @@ class VentanaConfiguracion(QDialog):
             "HORA/TEMP manual incluidos) — apagarlo vuelve a la Salida\n"
             "Master de siempre al instante, sin perder nada. La\n"
             "Preescucha (▶ Previo de Ventana 3) nunca pasa por acá.\n"
-            "El sink es uno virtual que creás vos aparte y del que\n"
-            "Viper4Linux lee (viper4linux/README.md en extras/)."
+            "El sink lo crea SOLO el comando \"viper start\" (nunca hace\n"
+            "falta correr pactl a mano) — ver extras/\n"
+            "procesador_fm_viper4linux/README.md para instalarlo y\n"
+            "dejarlo arrancando solo con la PC."
         )
         nota_viper.setObjectName("lblTituloBloqueActivo")
         layout.addWidget(nota_viper)
@@ -1335,7 +1341,7 @@ class VentanaConfiguracion(QDialog):
         self.slider_volumen_master.setValue(audio["volumen_master"])
         self.slider_volumen_preescucha.setValue(audio["volumen_preescucha"])
         self.chk_viper4linux_activado.setChecked(audio.get("viper4linux_activado", False))
-        self._seleccionar_en_combo(self.combo_viper4linux_sink, audio.get("viper4linux_sink", ""))
+        self._seleccionar_en_combo(self.combo_viper4linux_sink, audio.get("viper4linux_sink") or "viper")
 
         fade = self._config["fade"]
         self.chk_crossfade.setChecked(fade["crossfade_activado"])
