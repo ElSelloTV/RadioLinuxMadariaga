@@ -1,0 +1,37 @@
+[Unit]
+# Servicio de usuario (systemd --user) para que Viper4Linux quede
+# procesando el audio de la salida FM SIEMPRE, sin que Santiago tenga
+# que correr "viper start" a mano cada vez que reinicia la PC -- pedido
+# explícito, "no sé hacerlo". Se instala con
+# ./instalar_procesador_fm.sh --systemd (ver ese script y el README de
+# esta carpeta).
+#
+# Depende de que PipeWire/PulseAudio ya estén arriba -- sin audio
+# corriendo, "viper start" no tiene ningún sink que tomar.
+Description=Viper4Linux — procesador de audio de la salida FM (compresor/limitador/EQ/exciter)
+After=pipewire.service pipewire-pulse.service wireplumber.service
+Wants=pipewire-pulse.service
+
+[Service]
+# "viper start" arma su propio pipeline (gst-launch-1.0) y lo deja
+# corriendo EN SEGUNDO PLANO (con & dentro del propio script) — desde
+# la perspectiva de systemd, el proceso principal de este unit
+# (el script "viper" en sí) termina apenas terminó de lanzarlo, no
+# se queda corriendo -- Type=oneshot + RemainAfterExit=yes es el
+# patrón correcto para ese caso ("se ejecuta, deja algo corriendo por
+# su cuenta, y así queda"), en vez de Type=simple (que esperaría que
+# el proceso principal siguiera vivo) o Type=forking (que necesita un
+# PIDFile confiable, y el que usa el script vive en /tmp, no pensado
+# para que systemd lo seguí).
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/viper start
+ExecStop=/usr/local/bin/viper stop
+# Reintentar si "viper start" fallara al arrancar (ej. PipeWire todavía
+# no terminó de levantar) -- nunca deja la radio sin procesamiento por
+# una carrera de arranque puntual.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
