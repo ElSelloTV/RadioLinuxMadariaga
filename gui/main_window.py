@@ -45,6 +45,7 @@ from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
 from core.servidor_control_remoto import ServidorControlRemoto
 from core.musicalizador import validar_formato
 from core import actualizador
+from core import reinicio_sistema
 import core.prioridad_proceso as prioridad_proceso
 from config.settings import (
     cargar_configuracion, registrar_evento, registrar_error, guardar_configuracion,
@@ -1141,6 +1142,8 @@ class MainWindow(QMainWindow):
             return self._actualizar_reiniciar_principal_remoto()
         if accion == "obtener_log_aplicacion":
             return self._obtener_log_aplicacion_remoto(params)
+        if accion == "reiniciar_pc_forzado":
+            return self._reiniciar_pc_forzado_remoto()
         return {"ok": False, "error": f"Acción desconocida: {accion}"}
 
     def _listar_enlatados_remoto(self) -> dict:
@@ -1543,6 +1546,39 @@ class MainWindow(QMainWindow):
                 "lineas_devueltas": len(recortadas),
             },
         }
+
+    def _reiniciar_pc_forzado_remoto(self) -> dict:
+        """Reiniciar la PC ENTERA desde la satélite -- caso real:
+        "estoy en la sesión de satélite y tengo que reiniciar TODA la
+        PC" — `systemctl reboot -i` corrido A MANO desde la sesión
+        virtual de Chrome Remote Desktop falla siempre ("Access
+        denied"), porque logind/polkit solo autoriza el reinicio sin
+        contraseña a la sesión gráfica ACTIVA (seat0, la física) — y
+        esa sesión virtual nunca es la activa.
+
+        Este proceso (la radio) SÍ corre siempre en la sesión física
+        (`:0`, forzado por `core/sesion_display.py` desde la ronda del
+        bug de "otra sesión le gana de mano al arranque") — así que el
+        MISMO `core.reinicio_sistema.reiniciar_pc_forzado()` que ya usa
+        el botón local de Configuración, corrido desde ACÁ (disparado
+        por el socket en vez de un click), tiene el permiso que a la
+        sesión de CRD le falta. La confirmación ("esto reinicia TODA
+        la PC, corta el aire") la pide la propia satélite ANTES de
+        mandar este pedido -- mismo criterio que el resto de las
+        acciones remotas sensibles, un QMessageBox acá sería MODAL y
+        congelaría este proceso.
+
+        Sin QTimer diferido: a diferencia de actualizar+reiniciar LA
+        APP, acá no hay ningún `app.quit()` de este proceso -- el
+        comando solo le pide a systemd que reinicie la MÁQUINA, algo
+        que sucede unos segundos después, afuera de este proceso. La
+        respuesta al socket sale normal, sin ninguna carrera."""
+        exito, mensaje = reinicio_sistema.reiniciar_pc_forzado()
+        if not exito:
+            registrar_error(f"Control remoto: reinicio forzado de la PC falló — {mensaje}")
+            return {"ok": False, "error": mensaje}
+        registrar_evento("Control remoto: reinicio forzado de la PC solicitado desde la satélite")
+        return {"ok": True, "datos": {"mensaje": mensaje}}
 
     def _aplicar_configuracion_en_vivo(self):
         """Aplica la configuración recién guardada SIN recrear ni

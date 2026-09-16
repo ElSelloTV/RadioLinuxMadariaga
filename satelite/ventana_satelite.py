@@ -105,6 +105,17 @@ class VentanaSatelite(QMainWindow):
         accion_ver_log = menu_config.addAction("📋 Ver log de la radio...")
         accion_ver_log.triggered.connect(self._ver_log_radio)
 
+        # Pedido explícito, caso real: "estoy en la sesión de satélite
+        # y tengo que reiniciar TODA la PC. Como hago?" -- un
+        # `systemctl reboot` corrido a mano desde la sesión virtual de
+        # Chrome Remote Desktop falla siempre ("Access denied", esa
+        # sesión no cuenta como la activa para polkit) -- disparado
+        # desde ACÁ, viaja por el socket hasta el proceso de la radio,
+        # que SÍ corre en la sesión física y tiene el permiso.
+        menu_config.addSeparator()
+        accion_reiniciar_pc = menu_config.addAction("💻 Reiniciar la PC (forzado)...")
+        accion_reiniciar_pc.triggered.connect(self._reiniciar_pc_forzado)
+
     def _construir_ui(self):
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -282,6 +293,56 @@ class VentanaSatelite(QMainWindow):
             QMessageBox.warning(self, "Control remoto", "Conectate primero (menú \"Conexión\").")
             return
         DialogoVerLog(self._cliente, parent=self).exec()
+
+    def _reiniciar_pc_forzado(self):
+        """Pedido explícito, caso real: "estoy en la sesión de
+        satélite y tengo que reiniciar TODA la PC. Como hago?" --
+        reinicia la MÁQUINA ENTERA (no solo la radio) desde la sesión
+        física, algo que la propia sesión de CRD no puede hacerse a sí
+        misma por permisos. Texto de confirmación bien explícito: esto
+        también corta la conexión de ESTA app satélite (vive en la
+        misma PC física que se está reiniciando)."""
+        if self._cliente is None:
+            QMessageBox.warning(self, "Control remoto", "Conectate primero (menú \"Conexión\").")
+            return
+        respuesta = QMessageBox.question(
+            self, "Reiniciar la PC",
+            "Esto reinicia TODA la PC de la radio -- no solo el programa, la "
+            "máquina entera. Corta el aire, y esta misma conexión remota también "
+            "se va a cortar (la PC física se apaga y vuelve a prender sola).\n\n"
+            "¿Confirmás que querés reiniciar la PC ahora?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+        self.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            r = self._cliente.reiniciar_pc_forzado()
+        except ErrorControlRemoto as error:
+            # Igual que con actualizar+reiniciar la radio: perder la
+            # conexión justo acá es esperable si el reinicio YA se
+            # disparó -- la PC entera se está apagando.
+            QMessageBox.information(
+                self, "Reiniciar la PC",
+                f"Se perdió la conexión mientras esperaba la respuesta -- probable "
+                f"que el reinicio ya se haya disparado y la PC se esté apagando.\n\n"
+                f"Detalle: {error}",
+            )
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.setEnabled(True)
+        if not r.get("ok"):
+            QMessageBox.warning(self, "Reiniciar la PC", r.get("error", "No se pudo reiniciar la PC."))
+            return
+        QMessageBox.information(
+            self, "Reiniciar la PC",
+            "Reinicio aceptado -- la PC se está reiniciando ahora. Esta conexión "
+            "se va a cortar en cualquier momento.",
+        )
+        self._timer_estado.stop()
 
     def _conectar(self):
         config = cargar_config_satelite()
