@@ -239,3 +239,13 @@ class ClienteControlRemoto:
         if not respuesta.get("ok"):
             raise ErrorControlRemoto(respuesta.get("error", "obtener_log_aplicacion falló"))
         return respuesta["datos"]
+
+    def reiniciar_pc_forzado(self) -> dict:
+        """Reiniciar TODA la PC de la radio a distancia — caso real:
+        "estoy en la sesión de satélite y tengo que reiniciar TODA la
+        PC" (un `systemctl reboot -i` corrido a mano ahí falla siempre,
+        esa sesión no cuenta como la "activa" para polkit). Se dispara
+        desde el proceso de la radio, que SÍ corre en la sesión física.
+        Devuelve el dict crudo (no unwrap/raise) -- el llamador decide
+        el mensaje, mismo criterio que `actualizar_reiniciar_principal`."""
+        return self._pedir("reiniciar_pc_forzado")
