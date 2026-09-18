@@ -157,6 +157,74 @@ Ninguno de los dos botones escribe ningún valor de DSP desde Python —
 el primero abre una herramienta externa, el segundo solo prende/apaga
 el interruptor global que el plugin ya expone.
 
+## Prueba pendiente — ¿alcanza `module-stream-restore` solo, sin el
+enrutador de la app? (para la noche, con la radio cortada)
+
+Santiago sigue con dudas sobre la robustez del enrutado propio de esta
+app (`core/audio_engine.py:EnrutadorPactl`) y quiere ver si PipeWire ya
+resuelve esto solo, por su cuenta — confirmado que
+`module-stream-restore` (memoria de a qué sink va cada app, ya activo
+en este PipeWire/pipewire-pulse, visto en un `pactl list sink-inputs`
+real de hoy: `module-stream-restore.id = "sink-input-by-application-
+name:gst-launch-1.0"`) es un mecanismo REAL del sistema operativo para
+esto, no algo para instalar.
+
+**Descartados, con evidencia concreta, dos atajos que Santiago propuso
+antes de esta prueba** (ver el resto de la conversación de hoy para el
+detalle completo):
+- Apagar el enrutador propio + Device de Viper en "Automático": el
+  propio script `viper` (`vendor/Viper4Linux/viper`) se choca consigo
+  mismo al reiniciarse en ese modo ("Something is very wrong (Target
+  is same as our vipersink name)") — confirmado en el código fuente.
+  Device de Viper QUEDA FIJO EN SILICON, no tocar esto nunca.
+- Apagar el enrutador propio + Device de Viper fijo en Silicon: sin
+  enrutador, el audio de la radio va directo a Silicon, sin pasar por
+  Viper para nada — cero procesamiento, no es una alternativa real.
+
+**El test real, para esta noche** — objetivo: ver si PipeWire, por su
+cuenta, mantiene el audio de la radio yendo a `viper` sin que
+`EnrutadorPactl` tenga que intervenir. Importante: esto NO reemplaza el
+enrutador propio si funciona -- se deja como capa ADICIONAL de
+resguardo, nunca como sustituto (mismo criterio de "nunca una sola
+protección" de todo hoy).
+
+1. Con la config actual (toggle de Viper activo, Salida Master =
+   Silicon explícito), confirmar que suena bien por `viper` como
+   siempre (línea base).
+2. En Configuración → Audio: cambiar **"Salida Master"** (el campo de
+   arriba, NO el de Viper4Linux) a **"Predeterminada del sistema"** —
+   Y **destildar** el checkbox de Viper4Linux. Guardar. (Con esto el
+   programa deja de pedir CUALQUIER dispositivo explícito -- condición
+   necesaria para que la memoria de PipeWire tenga alguna chance de
+   actuar; apagar solo el toggle, sin este cambio, siempre vuelve a
+   Silicon directo sin darle a stream-restore ninguna oportunidad.)
+3. Forzar un tema nuevo (Cut) y revisar:
+   ```bash
+   pactl list sink-inputs short
+   ```
+   ¿Cae solo en `viper`, o en Silicon directo?
+4. Si cae en Silicon: "enseñarle" la asociación a mano una vez —
+   ```bash
+   pactl list sink-inputs short   # anotar el id del stream de la radio
+   pactl move-sink-input <ID> viper
+   ```
+   — y RECIÉN AHÍ forzar OTRO tema nuevo (Cut). ¿El siguiente stream ya
+   cae solo en `viper`, sin repetir el `move-sink-input` a mano?
+5. **El test decisivo**: cerrar y volver a abrir el programa de radio
+   completo (no solo un tema nuevo) — ¿la memoria sobrevive un
+   reinicio del proceso? Es la única forma de confiar en esto de
+   verdad para el uso real.
+6. **Si funciona confiable** (sobrevive el punto 5): se puede dejar
+   "Salida Master = Predeterminada del sistema" + toggle de Viper
+   apagado como config final, con PipeWire haciendo el enrutado solo
+   — pero el Device de Viper SIGUE fijo en Silicon siempre (nunca
+   Automático, por el bug ya confirmado).
+7. **Si NO funciona confiable** (no sobrevive el reinicio, o cae en
+   Silicon sin procesar en algún momento): volver a la config de
+   siempre (toggle de Viper activo, Salida Master = Silicon explícito)
+   — ya sabremos que lo intentamos con evidencia real, sin dejarlo
+   como duda abierta.
+
 ## Lo que NO se tocó hoy
 
 - **Crossfade** (Fade In/Out de Ventana 2, Configuración → Fade/
