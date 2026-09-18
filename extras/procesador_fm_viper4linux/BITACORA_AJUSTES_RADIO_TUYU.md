@@ -188,6 +188,22 @@ enrutador propio si funciona -- se deja como capa ADICIONAL de
 resguardo, nunca como sustituto (mismo criterio de "nunca una sola
 protección" de todo hoy).
 
+**0. Chequeo de seguridad ANTES de tocar nada** (pregunta real de
+Santiago, confirmada en el código): la Preescucha
+(`audio["dispositivo_preescucha"]`, `gui/main_window.py` líneas
+914/1611) resuelve su dispositivo COMPLETAMENTE APARTE de
+`dispositivo_master_efectivo()` -- cambiar "Salida Master" nunca la
+toca. El ÚNICO riesgo real sería que "Salida Preescucha" estuviera
+configurada como "Predeterminada del sistema" -- ahí SÍ podría caer en
+Viper junto con todo lo demás, ya que Viper se declara a sí mismo
+"default" del sistema al arrancar. Confirmado con el log real de hoy
+que esto está bien (`audio_output_device_set(None, 'alsa_output.pci-
+0000_00_14.2.analog-stereo')`, dispositivo explícito, los parlantes
+internos) -- pero de todas formas, antes de arrancar la prueba: ir a
+Configuración → Audio → "Salida Preescucha" y confirmar a ojo que
+sigue diciendo el dispositivo específico, NO "Predeterminada del
+sistema".
+
 1. Con la config actual (toggle de Viper activo, Salida Master =
    Silicon explícito), confirmar que suena bien por `viper` como
    siempre (línea base).
