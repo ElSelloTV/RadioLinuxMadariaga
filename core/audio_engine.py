@@ -130,7 +130,26 @@ class EnrutadorPactl(QObject):
     entera para siempre). Esto NO arregla un PipeWire genuinamente
     colgado a nivel del sistema operativo (eso requiere reiniciar
     PipeWire/la PC), pero evita que un solo `pactl` colgado deje a
-    esta app entera muda de por vida hasta el próximo reinicio."""
+    esta app entera muda de por vida hasta el próximo reinicio.
+
+    (4) Bug real corregido tras otro reporte de campo (Santiago: la
+    operadora reintentó una cortina que no escuchaba 8 veces seguidas
+    en el Auxiliar en ~20 minutos; eso backlogueó la cola compartida
+    lo suficiente como para que una cortina REAL del aire tardara 3.8s
+    en sonar, y dos pedidos se dieran por vencidos del todo): un
+    pedido cuya reproducción de origen ya fue cancelada/superada (Stop,
+    o un Play nuevo sobre el mismo motor) antes de que este job
+    encontrara su sink-input igual agotaba sus `MAX_INTENTOS`
+    completos buscando un stream que NUNCA iba a aparecer -- el propio
+    `play()` real nunca se disparó para esa reproducción vieja, así
+    que la búsqueda estaba condenada de entrada. Corregido con el
+    parámetro `sigue_vigente` de `reclamar()`: se chequea antes de
+    arrancar la búsqueda Y en cada reintento -- un pedido que se volvió
+    obsoleto se da por terminado DE INMEDIATO, sin agotar el resto de
+    sus intentos, dejando pasar al próximo de la cola sin demora.
+    Con esto, una racha de clicks repetidos (por más frustrante que
+    sea para quien la hace) ya no puede backloguear el aire real
+    detrás suyo."""
 
     MAX_INTENTOS = 20
     ESPERA_REINTENTO_MS = 150
@@ -145,15 +164,41 @@ class EnrutadorPactl(QObject):
         self._cola = []
         self._procesando = False
 
-    def reclamar(self, nombre_sink: str, al_listo_para_reproducir):
+    def reclamar(self, nombre_sink: str, al_listo_para_reproducir, sigue_vigente=None):
         """Encola un pedido para el sink `nombre_sink`. Cuando le
         toca el turno (nunca antes de que el pedido anterior haya
         terminado), toma la foto de "qué ya existía" y RECIÉN AHÍ
         llama a `al_listo_para_reproducir()` — es responsabilidad de
         quien llama hacer el `self._player.play()` real DENTRO de ese
-        callback, nunca antes de encolar."""
-        self._cola.append({"sink": nombre_sink, "al_listo": al_listo_para_reproducir,
-                            "intento": 0, "ids_previos": None})
+        callback, nunca antes de encolar.
+
+        `sigue_vigente` (pedido explícito, "arreglá eso del hueco real
+        y concreto, para que no vuelva a fallar" — bug real de campo,
+        una racha de clicks Play/Stop repetidos en el Auxiliar
+        backlogueó la cola entera y demoró una cortina REAL del aire
+        3.8s): callable opcional que devuelve `False` el día que ESTE
+        pedido puntual ya no tiene sentido perseguir (la reproducción
+        que lo generó fue cancelada/superada por otra más nueva en el
+        mismo motor — ver `MotorAudio.reproducir()`, que pasa una
+        comprobación de generación). Sin esto, un pedido obsoleto
+        igual agotaba sus `MAX_INTENTOS` completos buscando un
+        sink-input que NUNCA iba a aparecer (porque `al_listo_para_
+        reproducir()` nunca llega a llamar `play()` para una
+        reproducción ya superada) — hasta varios segundos por pedido
+        fantasma, bloqueando a TODA la cola compartida (Master Y
+        Preescucha) detrás suyo. Ahora se chequea DOS VECES: antes de
+        invocar `al_listo_para_reproducir()` (si ya nació obsoleto
+        mientras esperaba su turno, ni se llama) y en cada vuelta de
+        `_al_buscar_stream_nuevo()` (si se volvió obsoleto A MITAD de
+        la búsqueda) — en cualquiera de los dos casos se da por
+        terminado DE INMEDIATO, sin gastar el resto de los intentos.
+        `None` (default) equivale a "siempre vigente", para no romper
+        ningún llamador que no necesite esto."""
+        self._cola.append({
+            "sink": nombre_sink, "al_listo": al_listo_para_reproducir,
+            "sigue_vigente": sigue_vigente or (lambda: True),
+            "intento": 0, "ids_previos": None,
+        })
         self._procesar_siguiente_si_libre()
 
     def _procesar_siguiente_si_libre(self):
@@ -215,6 +260,20 @@ class EnrutadorPactl(QObject):
 
     def _al_tener_snapshot_inicial(self, ids_previos: set):
         job = self._cola[0]
+
+        # Chequeo #1 de "sigue_vigente" -- este pedido pudo haber
+        # pasado un buen rato esperando su turno en la cola (detrás de
+        # otros), y en ese tiempo la reproducción que lo originó puede
+        # haber sido cancelada/superada por otra más nueva en el mismo
+        # motor. Si ya nació obsoleto, ni siquiera vale la pena
+        # llamar a `al_listo()` (sería un play() que el propio motor
+        # va a descartar solo por generación) ni tomar una foto de
+        # sink-inputs para nada -- se da por terminado YA, dejando
+        # pasar al próximo pedido de la cola de inmediato.
+        if not job["sigue_vigente"]():
+            self._terminar_job_actual()
+            return
+
         job["ids_previos"] = ids_previos
         # Recién ACÁ arranca la reproducción real -- con la foto de
         # "antes" ya en mano, cualquier sink-input nuevo que aparezca
@@ -226,6 +285,25 @@ class EnrutadorPactl(QObject):
 
     def _al_buscar_stream_nuevo(self, ids_actuales: set):
         job = self._cola[0]
+
+        # Chequeo #2 -- acá el pedido YA arrancó a buscar (ver arriba),
+        # pero puede volverse obsoleto A MITAD de la búsqueda (ej. un
+        # Stop/Cut, o un Play nuevo sobre el mismo motor, mientras
+        # todavía estábamos esperando que aparezca el sink-input). Bug
+        # real corregido acá, reporte de campo: una racha de clicks
+        # Play/Stop repetidos (el operador reintentando porque no
+        # escuchaba nada) hacía que CADA pedido superado agotara sus
+        # MAX_INTENTOS completos —hasta varios segundos— buscando un
+        # sink-input que nunca iba a aparecer (el play() real nunca
+        # llegó a dispararse para esa reproducción vieja), backlogueando
+        # la cola COMPARTIDA (Master y Preescucha juntos) detrás suyo —
+        # confirmado en un log real: una cortina legítima tardó 3.8s en
+        # sonar de verdad por este motivo. Cortar acá, apenas se detecta,
+        # es lo que evita que una racha de clicks demore el aire real.
+        if not job["sigue_vigente"]():
+            self._terminar_job_actual()
+            return
+
         id_nuevo = next((i for i in ids_actuales if i and i not in job["ids_previos"]), None)
         if id_nuevo is not None:
             self._mover(id_nuevo, job["sink"])
@@ -654,7 +732,10 @@ class MotorAudio(QObject):
         # reproducciones que arrancan casi juntas nunca se confundan
         # sobre cuál sink-input le pertenece a cuál.
         if _es_nombre_pactl_directo(self._id_dispositivo):
-            _enrutador_pactl().reclamar(self._id_dispositivo, _arrancar_reproduccion_real)
+            _enrutador_pactl().reclamar(
+                self._id_dispositivo, _arrancar_reproduccion_real,
+                sigue_vigente=lambda: self._generacion_reproduccion == generacion_de_esta_reproduccion,
+            )
         else:
             _arrancar_reproduccion_real()
 
