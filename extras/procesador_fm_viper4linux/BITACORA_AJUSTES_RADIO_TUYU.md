@@ -1,0 +1,144 @@
+# Bitácora de ajustes de audio — PC de aire (radio-tuyu)
+
+Registro de lo que se cambió el 2026-09-18, por qué, y cómo revertir CADA
+parte por separado si hace falta. Todo lo de acá es config del SISTEMA
+OPERATIVO/Viper4Linux — nada de esto toca el código Python de esta app.
+
+## El incidente real de hoy
+
+Al activar el enrutado a Viper4Linux desde Configuración → Audio, el aire
+se puso "robótico" y terminó en silencio total. Investigado en vivo con
+Santiago, en la PC real, con dos causas reales encontradas y corregidas
+por separado:
+
+### Causa 1 — PipeWire cambiaba de frecuencia del grafo sobre la marcha
+
+Sin fijar una frecuencia, PipeWire puede cambiar la frecuencia de reloj
+de TODO el grafo de audio cuando un stream nuevo se conecta con una
+frecuencia nativa distinta a la que el grafo ya está usando — eso se
+escucha como un glitch/sonido raro en el instante del cambio, afectando
+incluso lo que ya estaba sonando bien.
+
+**Fix aplicado**: `~/.config/pipewire/pipewire.conf.d/99-radio-samplerate.conf`
+```
+context.properties = {
+    default.clock.rate          = 48000
+    default.clock.allowed-rates = [ 48000 ]
+}
+```
+Se eligió 48000Hz porque tanto Silicon (la consola USB) como el null-sink
+de Viper ya negociaban nativamente a esa frecuencia.
+
+**Para revertir esto**:
+```bash
+rm ~/.config/pipewire/pipewire.conf.d/99-radio-samplerate.conf
+systemctl --user restart pipewire pipewire-pulse wireplumber
+```
+Ojo: esto corta el audio un instante (todo lo que esté sonando en la PC,
+no solo la radio) — hacerlo en un hueco tranquilo, nunca en medio de algo
+al aire.
+
+### Causa 2 — el compresor FET de Viper (`fetcomp`) se rompe, con parámetros técnicamente VÁLIDOS
+
+Verificado contra el código fuente real del plugin
+(`vendor/gst-plugin-viperfx/src/gstviperfx.c`): TODOS los valores que
+tenía el preset de Santiago para `fetcomp_*` estaban dentro del rango
+declarado por el propio plugin (0-100, "percent") — incluido
+`fetcomp_ratio=0`, que resultó ser literalmente el valor de fábrica por
+defecto del módulo, no un número inválido como se sospechó al principio.
+
+Es decir: **no es un problema de un número mal puesto** — es una
+inestabilidad real del módulo compresor de esta build/versión de
+Viper4Linux, cuya lógica interna vive en una librería compilada aparte
+(referenciada acá como `PARAM_HPFX_FETCOMP_*`), fuera del alcance de lo
+que se puede auditar desde este código fuente. No se pudo confirmar la
+causa exacta a nivel de código.
+
+**Decisión tomada, explicada a Santiago**: dado que la prioridad explícita
+es "que no suceda el silencio nunca más", y que `fetcomp_enable=false` es
+el ÚNICO estado que quedó probado estable en varias rondas de prueba real
+(incluso después de arreglar la frecuencia), se deja el compresor FET
+APAGADO por ahora — el brillo/nivelado que pidió se logra con el EQ y el
+limitador (ver abajo), módulos mucho más simples y sin ningún fallo
+observado en las pruebas de hoy.
+
+**Si en algún momento se quiere reintentar el compresor FET**: hacerlo en
+una sesión de pruebas dedicada, fuera del aire, escuchando varios minutos
+seguidos con distintos temas antes de confiar en que quedó estable — el
+bug pudo no depender de los valores en sí, sino de algo más (duración de
+la reproducción, algún estado interno acumulado, etc.) que no se llegó a
+aislar del todo.
+
+## Ajustes nuevos aplicados hoy (pedido explícito: "quiero brillo y
+nivelador de salida... sonido de radio moderna")
+
+Archivo: `~/.config/viper4linux/audio.conf`. Backup guardado ANTES de
+tocar nada en `~/.config/viper4linux/audio.conf.backup-2026-09-18` (con
+el compresor ya apagado, pero SIN el EQ ni el limitador nuevos — ese es
+el punto exacto al que revertir si algo de esto da problema).
+
+**EQ activado** (`eq_enable=true`), curva suave tipo "sonrisa" — valores
+verificados contra el rango real del plugin (-1200 a +1200, equivalente
+a ±12dB por banda; todo lo usado hoy queda muy por debajo del techo):
+
+| Banda | Valor | ~dB  | Rol |
+|-------|-------|------|-----|
+| 1     | 150   | +1.5 | graves — un poco de cuerpo/punch |
+| 2     | 100   | +1.0 | graves |
+| 3     | 0     | 0    | sin tocar |
+| 4     | -50   | -0.5 | mids bajos — leve recorte para claridad |
+| 5     | -50   | -0.5 | mids — leve recorte, cuida la voz |
+| 6     | 0     | 0    | sin tocar |
+| 7     | 150   | +1.5 | presencia |
+| 8     | 250   | +2.5 | brillo |
+| 9     | 250   | +2.5 | brillo/aire |
+| 10    | 200   | +2.0 | aire/sparkle, un poco menos que 8-9 para no ensuciar |
+
+**Limitador de salida** (`lim_threshold`): de `100` (prácticamente
+inerte, solo protegía contra saturación total) a `88` — ahora actúa como
+un nivelador real, agarrando picos con margen antes del techo absoluto,
+sin ser agresivo.
+
+**AGC**: sin cambios — ya estaba dentro de rango válido
+(`agc_ratio=126`, `agc_volume=143`, `agc_maxgain=444`, todos dentro de
+sus rangos reales) y fue la única parte de la cadena que nunca falló en
+ninguna prueba de hoy. Sigue siendo el "nivelador" principal.
+
+**Para revertir SOLO estos ajustes nuevos** (volver al estado de recién
+después de apagar el compresor, sin EQ ni limitador nuevo):
+```bash
+cp ~/.config/viper4linux/audio.conf.backup-2026-09-18 ~/.config/viper4linux/audio.conf
+viper stop && viper start   # o: systemctl --user restart viper4linux.service, si ya está con systemd
+```
+
+## Arranque automático (systemd)
+
+Antes había que correr `viper start` a mano cada vez que se prendía la
+PC. Ahora arranca solo, vía `~/.config/systemd/user/viper4linux.service`
+(copiado desde `extras/procesador_fm_viper4linux/viper4linux.service` de
+este mismo repo), habilitado con:
+```bash
+systemctl --user enable --now viper4linux.service
+sudo loginctl enable-linger radio
+```
+
+**Para revertir esto** (volver a arrancarlo a mano):
+```bash
+systemctl --user disable --now viper4linux.service
+rm ~/.config/systemd/user/viper4linux.service
+systemctl --user daemon-reload
+sudo loginctl disable-linger radio   # opcional, solo si no se quiere más lingering
+```
+Después de esto, hay que volver a correr `viper start` a mano en cada
+arranque, como se hacía antes de hoy.
+
+## Lo que NO se tocó hoy
+
+- **Crossfade** (Fade In/Out de Ventana 2, Configuración → Fade/
+  Transiciones) — pedido explícito de Santiago de no activarlo todavía,
+  hasta confirmar que Viper4Linux quedó estable un buen rato. Sigue en
+  40ms/80ms.
+- El enrutado del programa a Viper (checkbox de Configuración → Audio,
+  `dispositivo_master_efectivo()` en `config/settings.py`) — sin cambios
+  de código en esta ronda, todo lo de hoy fue configuración externa
+  (PipeWire, Viper4Linux), no del programa de radio en sí.
