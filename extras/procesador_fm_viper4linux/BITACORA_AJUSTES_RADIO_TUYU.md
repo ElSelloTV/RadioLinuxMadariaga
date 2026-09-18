@@ -132,6 +132,31 @@ sudo loginctl disable-linger radio   # opcional, solo si no se quiere más linge
 Después de esto, hay que volver a correr `viper start` a mano en cada
 arranque, como se hacía antes de hoy.
 
+## Botones nuevos en Configuración → Audio (pedido explícito, "sin
+tanto trabajo")
+
+Después de reactivar el compresor, Santiago pidió una forma de comparar
+con/sin efectos en caliente y de llegar rápido a los controles reales
+de Viper, SIN reconstruir un panel de sliders adentro del programa de
+radio (ese camino ya se descartó varias veces en este proyecto — ver
+rondas 37-55 y 69-78 de CLAUDE.md). Alcance deliberadamente chico,
+`core/viper4linux_control.py`:
+
+- **"🎛 Abrir editor de Viper4Linux..."** — lanza `viper-gui` (la
+  interfaz nativa, se instala con `./instalar_procesador_fm.sh --gui`).
+  Ahí viven los controles reales — EQ, compresor, limitador, AGC,
+  presets — hechos por los propios desarrolladores de Viper.
+- **"🔇 Alternar bypass (con/sin efectos)"** — prende/apaga TODA la
+  cadena de Viper en caliente, sin reiniciar el servicio ni tocar
+  `audio.conf`, vía la interfaz D-Bus real que el propio plugin expone
+  (confirmada en el código fuente vendorizado,
+  `vendor/gst-plugin-viperfx/src/dbus-interface.c`: bus de sesión,
+  `me.noahbliss.ViperFx`, propiedad `fx_enable`).
+
+Ninguno de los dos botones escribe ningún valor de DSP desde Python —
+el primero abre una herramienta externa, el segundo solo prende/apaga
+el interruptor global que el plugin ya expone.
+
 ## Lo que NO se tocó hoy
 
 - **Crossfade** (Fade In/Out de Ventana 2, Configuración → Fade/
