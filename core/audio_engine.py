@@ -149,7 +149,36 @@ class EnrutadorPactl(QObject):
     sus intentos, dejando pasar al próximo de la cola sin demora.
     Con esto, una racha de clicks repetidos (por más frustrante que
     sea para quien la hace) ya no puede backloguear el aire real
-    detrás suyo."""
+    detrás suyo.
+
+    (5) Camino rápido — enrutado directo VERIFICADO, sin mover nada a
+    mano cuando no hace falta (pedido explícito, "más simple y
+    rápido... reestructurar", confirmado con una prueba real en la
+    PC de aire): `_es_nombre_pactl_directo()` seguía asumiendo que
+    libVLC NUNCA puede apuntar directo a un sink escrito a mano (el
+    motivo original de esta clase entera) — pero una prueba real,
+    hecha DESDE LA SESIÓN FÍSICA (la que usa la radio en producción,
+    nunca una sesión remota de Chrome Remote Desktop — ver más abajo
+    por qué eso importa), confirmó que `audio_output_device_set(None,
+    sink)` SÍ enruta bien, de una, incluso a un sink dinámico creado
+    en caliente por otro programa (el caso real: el sink de
+    Viper4Linux). Lo que fallaba en instalaciones viejas no era la
+    llamada en sí, sino no tener forma de CONFIRMARLA — así que en vez
+    de sacar el mecanismo de respaldo (sería apostar la radio en vivo
+    a un solo dato), ahora se VERIFICA: apenas aparece el sink-input
+    nuevo, si YA está en el sink correcto (porque el enrutado directo
+    de libVLC ya lo dejó ahí), se da el pedido por terminado DE UNA —
+    sin ningún `pactl move-sink-input` de más. Solo si el sink-input
+    nuevo aparece en OTRO sink (el enrutado directo no llegó a tiempo,
+    o esta instalación puntual todavía no lo soporta) se cae al
+    mecanismo de siempre (`_mover()`, forzar la reubicación a mano) —
+    exactamente como antes, sin perder nada de la robustez ya
+    probada. Importante: la MISMA prueba, corrida desde la sesión
+    VIRTUAL de Chrome Remote Desktop en vez de la física, dio un
+    resultado distinto (el stream terminó en el sink de esa sesión
+    remota, no en el pedido) — otra razón más para que la radio SIEMPRE
+    corra en la sesión física (ya forzado desde otra ronda, ver
+    `core/sesion_display.py`)."""
 
     MAX_INTENTOS = 20
     ESPERA_REINTENTO_MS = 150
@@ -249,16 +278,25 @@ class EnrutadorPactl(QObject):
         proceso.start("pactl", argumentos)
 
     def _listar_sink_inputs(self, callback):
+        """Devuelve al callback un dict `{id_sink_input: id_sink}` —
+        antes solo se guardaba el índice (un `set`), pero desde el
+        camino rápido del punto (5) hace falta saber a QUÉ SINK está
+        atado cada sink-input, para poder confirmar sin ambigüedad si
+        uno nuevo ya aterrizó en el destino correcto."""
         def al_tener_salida(salida):
-            ids = {
-                linea.split("\t")[0].strip()
-                for linea in (salida or "").splitlines() if linea.strip()
-            }
-            callback(ids)
+            sink_inputs = {}
+            for linea in (salida or "").splitlines():
+                if not linea.strip():
+                    continue
+                columnas = linea.split("\t")
+                if len(columnas) < 2:
+                    continue
+                sink_inputs[columnas[0].strip()] = columnas[1].strip()
+            callback(sink_inputs)
 
         self._ejecutar_pactl_con_timeout(["list", "sink-inputs", "short"], al_tener_salida)
 
-    def _al_tener_snapshot_inicial(self, ids_previos: set):
+    def _al_tener_snapshot_inicial(self, sink_inputs_previos: dict):
         job = self._cola[0]
 
         # Chequeo #1 de "sigue_vigente" -- este pedido pudo haber
@@ -274,16 +312,21 @@ class EnrutadorPactl(QObject):
             self._terminar_job_actual()
             return
 
-        job["ids_previos"] = ids_previos
+        job["sink_inputs_previos"] = sink_inputs_previos
         # Recién ACÁ arranca la reproducción real -- con la foto de
         # "antes" ya en mano, cualquier sink-input nuevo que aparezca
         # de acá en más pertenece SIN AMBIGÜEDAD a este pedido, porque
         # ningún otro pedido de la cola puede estar reproduciendo
-        # todavía (están esperando su turno).
+        # todavía (están esperando su turno). `al_listo()` es quien
+        # llama a `self._player.play()`, y DENTRO de esa misma llamada
+        # el motor ya intenta el enrutado DIRECTO
+        # (`audio_output_device_set(None, sink)`, ver
+        # `_aplicar_dispositivo_salida()`) -- acá solo queda
+        # CONFIRMARLO, ver `_al_verificar_enrutado()`.
         job["al_listo"]()
-        self._listar_sink_inputs(self._al_buscar_stream_nuevo)
+        self._listar_sink_inputs(self._al_verificar_enrutado)
 
-    def _al_buscar_stream_nuevo(self, ids_actuales: set):
+    def _al_verificar_enrutado(self, sink_inputs_actuales: dict):
         job = self._cola[0]
 
         # Chequeo #2 -- acá el pedido YA arrancó a buscar (ver arriba),
@@ -304,21 +347,46 @@ class EnrutadorPactl(QObject):
             self._terminar_job_actual()
             return
 
-        id_nuevo = next((i for i in ids_actuales if i and i not in job["ids_previos"]), None)
-        if id_nuevo is not None:
-            self._mover(id_nuevo, job["sink"])
+        anteriores = job["sink_inputs_previos"]
+        nuevos = {sid: sink for sid, sink in sink_inputs_actuales.items() if sid and sid not in anteriores}
+
+        if not nuevos:
+            job["intento"] += 1
+            if job["intento"] >= self.MAX_INTENTOS:
+                registrar_evento(
+                    f"MotorAudio: EnrutadorPactl no encontró ningún sink-input "
+                    f"nuevo tras {job['intento']} intentos (target: '{job['sink']}')"
+                )
+                self._terminar_job_actual()
+                return
+            QTimer.singleShot(self.ESPERA_REINTENTO_MS, lambda: self._listar_sink_inputs(self._al_verificar_enrutado))
             return
-        job["intento"] += 1
-        if job["intento"] >= self.MAX_INTENTOS:
-            registrar_evento(
-                f"MotorAudio: EnrutadorPactl no encontró ningún sink-input "
-                f"nuevo tras {job['intento']} intentos (target: '{job['sink']}')"
-            )
+
+        # Camino RÁPIDO (punto (5) del docstring de la clase): si
+        # alguno de los sink-inputs nuevos YA está en el sink que
+        # pedimos, es que el enrutado DIRECTO de libVLC
+        # (`audio_output_device_set(None, ...)`, aplicado dentro de
+        # `al_listo()` un poco más arriba) ya lo dejó bien solo -- no
+        # hace falta ningún `pactl move-sink-input` de más, se termina
+        # el pedido YA.
+        id_ya_en_destino = next((sid for sid, sink in nuevos.items() if sink == job["sink"]), None)
+        if id_ya_en_destino is not None:
             self._terminar_job_actual()
             return
-        QTimer.singleShot(self.ESPERA_REINTENTO_MS, lambda: self._listar_sink_inputs(self._al_buscar_stream_nuevo))
+
+        # Ninguno de los nuevos está en el sink correcto todavía --
+        # Camino de RESPALDO, el de siempre: se toma el primero que
+        # apareció (sigue siendo el ÚNICO pedido "cazando su stream
+        # nuevo" en toda la app -- serializado, sin ambigüedad de a
+        # quién pertenece) y se lo mueve a mano.
+        id_cualquiera = next(iter(nuevos))
+        self._mover(id_cualquiera, job["sink"])
 
     def _mover(self, id_stream: str, nombre_sink: str):
+        """Camino de RESPALDO (ver punto (5) del docstring de la
+        clase) -- solo se llega acá si el enrutado DIRECTO de libVLC
+        no dejó el stream en el sink correcto a tiempo. Antes esto era
+        el ÚNICO camino posible; ahora es la red de seguridad."""
         def al_terminar(salida):
             # `salida` es `None` únicamente si el watchdog de
             # `_ejecutar_pactl_con_timeout` mató el proceso por
@@ -328,7 +396,8 @@ class EnrutadorPactl(QObject):
             if salida is not None:
                 registrar_evento(
                     f"MotorAudio: movido sink-input {id_stream} -> '{nombre_sink}' "
-                    f"vía pactl (fallback sin módulo 'pulse' en libVLC, serializado)"
+                    f"vía pactl (respaldo -- el enrutado directo no llegó a tiempo, "
+                    f"serializado)"
                 )
             self._terminar_job_actual()
 
