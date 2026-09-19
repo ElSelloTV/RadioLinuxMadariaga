@@ -55,7 +55,7 @@ from config.settings import (
     listar_programaciones, obtener_programacion, guardar_programacion,
     cargar_musicalizador, listar_formatos, obtener_formato,
     guardar_formato, eliminar_formato, renombrar_formato,
-    categoria_de_enlatado, dispositivo_master_efectivo,
+    categoria_de_enlatado,
     ARCHIVO_LOG,
 )
 
@@ -889,7 +889,8 @@ class MainWindow(QMainWindow):
     def _motor_audio_canal_o_crear(self) -> MotorAudio:
         if self._motor_audio_canal is None:
             audio_cfg = self._config.get("audio", {})
-            id_dispositivo_master = dispositivo_master_efectivo(audio_cfg)
+            dispositivo_master = audio_cfg.get("dispositivo_master", "default")
+            id_dispositivo_master = dispositivo_master if dispositivo_master != "default" else None
             self._motor_audio_canal = MotorAudio(id_dispositivo_master)
             # Sin esto, un error real (streaming caído, URL
             # inalcanzable, credenciales vencidas) quedaría totalmente
@@ -910,7 +911,7 @@ class MainWindow(QMainWindow):
         reproduccion = self._config["reproduccion"]
         fade = self._config["fade"]
 
-        id_dispositivo_master = dispositivo_master_efectivo(audio)
+        id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
         id_dispositivo_preescucha = audio["dispositivo_preescucha"] if audio["dispositivo_preescucha"] != "default" else None
 
         self.gestor_emision = GestorPlaylist(
@@ -1607,7 +1608,7 @@ class MainWindow(QMainWindow):
         audio = self._config["audio"]
         reproduccion = self._config["reproduccion"]
         fade = self._config["fade"]
-        id_dispositivo_master = dispositivo_master_efectivo(audio)
+        id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
         id_dispositivo_preescucha = audio["dispositivo_preescucha"] if audio["dispositivo_preescucha"] != "default" else None
 
         for gestor in (self.gestor_emision, self._gestor_auxiliar):
@@ -1683,7 +1684,7 @@ class MainWindow(QMainWindow):
             audio = self._config["audio"]
             reproduccion = self._config["reproduccion"]
             fade = self._config["fade"]
-            id_dispositivo_master = dispositivo_master_efectivo(audio)
+            id_dispositivo_master = audio["dispositivo_master"] if audio["dispositivo_master"] != "default" else None
 
             self._ventana_auxiliar = VentanaAuxiliar(self)
             # Ventana Auxiliar arma sus propias columnas de ajuste LIBRE
