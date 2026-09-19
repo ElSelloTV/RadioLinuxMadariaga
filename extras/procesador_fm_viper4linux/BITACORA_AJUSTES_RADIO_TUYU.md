@@ -13,7 +13,25 @@
 > Configuración → Audio volvió a ser exactamente como era antes de
 > toda esta saga: Salida Master + Salida Preescucha, nada más.
 >
-> El resto de este archivo queda como registro histórico completo —
+> **Hallazgo real de paso, valioso más allá de Viper**: mientras la PC
+> estaba con el sonido robótico, Santiago reportó que la barra de
+> tareas de Q4OS/TDE (Kicker) se trabó y dejó de responder — mismo
+> síntoma ya documentado como misterio sin resolver en el incidente de
+> Chrome Remote Desktop de rondas mucho más viejas de este proyecto
+> (ver `CLAUDE.md`, sección "Incidente real"). Esta vez SÍ se pudo
+> diagnosticar en vivo: `pactl info` mostraba `Default Sink: viper` —
+> el sink VIRTUAL (null-sink) de Viper como default del sistema
+> entero, en vez de una placa real — y al parar Viper de verdad
+> (`systemctl --user stop/disable viper4linux.service`, confirmando
+> `Default Sink` vuelto a Silicon), **la barra de tareas se destrabó
+> sola**. Primera confirmación real y reproducible de esta hipótesis
+> en toda la historia del proyecto: un sink virtual como "default" del
+> sistema parece confundir/trabar a KMix o al panel de TDE. Si en el
+> futuro se vuelve a experimentar con cualquier software que se
+> declare a sí mismo "sink por defecto" (Viper, u otro), vigilar este
+> síntoma específico.
+
+## El resto de este archivo queda como registro histórico completo —
 > incluye el fix real de la frecuencia de PipeWire (que SÍ se deja
 > aplicado, es independiente de Viper y beneficia a cualquier audio de
 > la PC) y todo lo investigado, por si en algún momento se retoma un
