@@ -157,6 +157,124 @@ Ninguno de los dos botones escribe ningún valor de DSP desde Python —
 el primero abre una herramienta externa, el segundo solo prende/apaga
 el interruptor global que el plugin ya expone.
 
+## Riesgo real descubierto — la interfaz gráfica de Viper puede
+pisar `audio.conf` entero, sin avisar (2026-09-19)
+
+Al retomar la prueba de esta noche, con `fetcomp_enable=true` y el resto
+de los ajustes de ayer ya aplicados, el audio quedó en silencio total
+de nuevo apenas se arrancó Viper. Comparando el `ps aux` real contra lo
+documentado arriba, CASI TODOS los valores habían cambiado —
+`fetcomp_ratio` volvió a `0` (el mismo valor que rompió todo la ronda
+anterior), `eq_enable` volvió a `false` con los valores de fábrica (no
+los de brillo que dejamos), `lim_threshold` volvió a `100`, y apareció
+`dynsys_enable=true` — un módulo que NUNCA se tocó ni se probó, con sus
+propios valores activos de la nada.
+
+**Causa más probable**: usar la interfaz gráfica de Viper (`viper-gui`)
+la noche anterior — navegar presets, tocar sliders, lo que sea —
+sobreescribió `~/.config/viper4linux/audio.conf` ENTERO con otro
+contenido, sin ningún aviso. La interfaz nativa no respeta ni protege
+los valores que esta app dejó configurados.
+
+**Regla nueva para el futuro**: después de CUALQUIER uso de
+`viper-gui`, antes de confiar en que el sonido está bien, verificar:
+```bash
+ps aux | grep -i gst-launch | grep -v grep
+```
+y confirmar a ojo que `fetcomp-ratio`, `eq-enable`/`eq-bandN`,
+`lim-threshold` y `dynsys-enable` siguen siendo los de esta bitácora
+— si cambiaron, volver a aplicar el bloque completo de abajo (no
+alcanza con parchar valores sueltos, hay que asumir que TODO el
+archivo pudo cambiar).
+
+**Restaurar el archivo completo y conocido-bueno, en caso de que esto
+vuelva a pasar**:
+```bash
+systemctl --user stop viper4linux.service
+cat > ~/.config/viper4linux/audio.conf << 'EOF'
+agc_enable=true
+agc_maxgain=444
+agc_ratio=126
+agc_volume=143
+ax_enable=false
+ax_mode=0
+colm_depth=203
+colm_enable=false
+colm_midimage=100
+colm_widening=100
+conv_cc_level=0
+conv_enable=false
+conv_ir_path="conv-cc-level=0"
+cure_enable=false
+cure_level=0
+ds_enable=false
+ds_level=0
+dynsys_bassgain=2100
+dynsys_enable=false
+dynsys_sidegain1=10
+dynsys_sidegain2=80
+dynsys_xcoeff1=140
+dynsys_xcoeff2=6200
+dynsys_ycoeff1=40
+dynsys_ycoeff2=60
+eq_band1=150
+eq_band10=200
+eq_band2=100
+eq_band3=0
+eq_band4=-50
+eq_band5=-50
+eq_band6=0
+eq_band7=150
+eq_band8=250
+eq_band9=250
+eq_enable=true
+fetcomp_attack=51
+fetcomp_autoattack=true
+fetcomp_autogain=true
+fetcomp_autoknee=true
+fetcomp_autorelease=true
+fetcomp_enable=true
+fetcomp_gain=2
+fetcomp_kneewidth=20
+fetcomp_meta_adapt=66
+fetcomp_meta_crest=61
+fetcomp_meta_kneemulti=50
+fetcomp_meta_maxattack=88
+fetcomp_meta_maxrelease=88
+fetcomp_noclip=true
+fetcomp_ratio=35
+fetcomp_release=38
+fetcomp_threshold=30
+fx_enable=true
+lim_threshold=88
+out_pan=0
+out_volume=100
+reverb_damp=10
+reverb_dry=80
+reverb_enable=false
+reverb_roomsize=30
+reverb_wet=20
+reverb_width=40
+tube_enable=false
+vb_enable=false
+vb_freq=120
+vb_gain=350
+vb_mode=0
+vc_enable=true
+vc_level=221
+vc_mode=0
+vhe_enable=false
+vhe_level=0
+vse_bark_cons=10
+vse_enable=false
+vse_ref_bark=7600
+EOF
+systemctl --user start viper4linux.service
+```
+Este es AHORA el archivo de referencia oficial — más confiable que el
+backup viejo (`audio.conf.backup-2026-09-18`, que no tenía el EQ/
+limitador/compresor ya ajustados).
+
 ## Prueba pendiente — ¿alcanza `module-stream-restore` solo, sin el
 enrutador de la app? (para la noche, con la radio cortada)
 
