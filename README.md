@@ -41,18 +41,16 @@ independiente:
 ```bash
 sudo apt install easyeffects
 ```
-ALTERNATIVA RECOMENDADA: 
-Alternativa más liviana a EasyEffects: `extras/procesador_fm_viper4linux/`
-trae un instalador aparte para Viper4Linux (motor + GUI opcional,
-compilado desde fuente vendorizada en este repo) — EQ de 10 bandas,
-exciter de brillo, AGC, compresor/limitador tipo broadcast, todo
-mucho más liviano que EasyEffects. A diferencia de EasyEffects, ESTE
-sí tiene una integración mínima con la app: Configuración → Audio →
-"Viper4Linux" — un interruptor que redirige el audio del aire a un
-sink fijo (nunca la Preescucha) para que Viper4Linux lo tome; el
-procesamiento en sí sigue siendo 100% independiente (`viper
-start`/`stop`, o instalado como servicio con `--systemd` para que
-arranque solo con la PC). Ver el README de esa carpeta.
+Se probó una integración con Viper4Linux (interruptor en
+Configuración → Audio que enrutaba el aire a un sink fijo para que lo
+tomara) — se sacó por completo tras dos incidentes reales en
+producción la misma noche (sonido robótico y silencio total). La app
+NO tiene hoy ninguna integración con Viper4Linux ni con ningún otro
+procesador — `extras/procesador_fm_viper4linux/` sigue en el repo
+como instalador standalone (EQ de 10 bandas, exciter, AGC,
+compresor/limitador tipo broadcast) por si alguien quiere
+experimentar con él por su cuenta, corriendo 100% aparte, sin que
+esta app le toque nada.
 
 Esta app sí nivela el volumen de cada tema al importarlo (para que no
 haya diferencia de volumen entre canción y canción), sin depender de
@@ -63,9 +61,10 @@ EasyEffects ni de ningún procesador externo — ver
 
 Dos formas, cualquiera de las dos hace lo mismo (`git pull`):
 
-- Desde la app: **Herramientas → Preferencias generales... →
-  pestaña "Actualizaciones" → Buscar actualización → Actualizar y
-  reiniciar**. Descarga los cambios y reinicia la app sola.
+- Desde la app: botón **"⚙ Configuración"** de la barra de
+  herramientas → pestaña **"Actualizaciones"** → Buscar actualización
+  → Actualizar y reiniciar. Descarga los cambios y reinicia la app
+  sola.
 - Desde la terminal:
   ```bash
   cd ~/RadioLinuxMadariaga && ./instalar.sh
