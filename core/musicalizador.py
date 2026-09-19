@@ -10,9 +10,24 @@ ORDENADA de ítems de 3 tipos, tal cual describe Santiago (y Dinesat):
 - "aleatorio": SIEMPRE elige UN tema al azar de una categoría (y, si
   se pide, sus subcategorías) — pedido explícito: "el aleatorio
   (siempre será 1 tema elegido al azar)". Puede llevar Pisador. "No
-  repetir hasta agotar la categoría" se resuelve consultando el
-  historial de reproducción PERSISTENTE (config/settings.py:
-  rutas_recientes_en_historial) — sobrevive un reinicio del programa.
+  repetir hasta agotar la categoría" se resuelve con la ROTACIÓN
+  SECUENCIAL persistida por categoría (core/rotacion_categoria.py —
+  ver ese módulo para el diseño completo) — mismo mecanismo que ya
+  usa el Ítem Aleatorio de Ventana 1, en vez del historial de
+  reproducción (usado antes acá, cambiado en la ronda de "revisión
+  del aleatorio, necesito absoluta variedad" — el historial es una
+  ventana de RECENCIA que depende de cuánto haya quedado escrito en
+  el log ANTES de la última rotación de archivo; la rotación
+  persistida no depende de ningún log y garantiza matemáticamente el
+  espaciado máximo posible entre dos repeticiones del mismo archivo:
+  toda la categoría entera antes de repetir ninguno, sin excepción).
+  El "commit" (avanzar la rotación de verdad) pasa en el momento en
+  que este ítem se RESUELVE dentro de una serie generada — a
+  diferencia de Ventana 1 (que resuelve el placeholder recién al
+  arrancar a sonar de verdad), acá no hay ningún punto posterior
+  donde "vuelva a resolverse": una vez generado, el ítem concreto
+  queda fijo en la lista de Emisión, así que el momento de generar
+  ES el momento de comprometerse con esa elección.
 - "subformato": referencia a OTRO formato ya creado, expandido hasta
   cubrir una duración en segundos — permite anidar formatos dentro de
   formatos, igual que Dinesat.
@@ -33,7 +48,8 @@ ni rompe la generación de los demás ítems del formato.
 --------------------------------------------------------
 """
 
-from config.settings import obtener_formato, rutas_recientes_en_historial
+from config.settings import obtener_formato
+from core.rotacion_categoria import elegir_por_rotacion, marcar_reproducido_por_rotacion
 
 DURACION_SEGUNDOS_POR_DEFECTO = 180  # 3 min — fallback si la duración del registro es ilegible
 TOPE_VUELTAS_POR_DURACION = 500  # freno defensivo, nunca debería hacer falta en la práctica
@@ -89,31 +105,29 @@ def _resolver_pisador(explorador, item_config: dict):
 
 
 def _resolver_aleatorio(explorador, item_config: dict, rutas_a_evitar: frozenset = frozenset()) -> dict | None:
-    categoria = explorador.buscar_categoria_por_ruta(item_config.get("categoria") or [])
-    if categoria is None:
-        return None
+    # No repetir hasta agotar la categoría (pedido explícito, "necesito
+    # absoluta variedad... el máximo tiempo para que no se repita"):
+    # `elegir_por_rotacion()` ya garantiza matemáticamente el espaciado
+    # máximo posible (toda la categoría completa antes de repetir
+    # ningún archivo) — reemplaza el historial de reproducción usado
+    # antes acá, que solo cubría lo que YA sonó y podía quedarse corto
+    # si el log rotó recientemente. `rutas_a_evitar` (lo que ya se
+    # generó en esta misma serie, o lo que sigue en cola de una serie
+    # anterior todavía sin sonar — pedido explícito, ronda posterior:
+    # "cuando volvió a cargar la serie, cargó el mismo archivo
+    # aleatorio que en la primera") se pasa como capa EXTRA sobre la
+    # rotación, no en su reemplazo.
+    ruta_categoria = item_config.get("categoria") or []
     recursivo = item_config.get("recursivo", True)
-    candidatos = explorador.listar_registros_de_categoria(categoria, recursivo)
-    if not candidatos:
+    registro = elegir_por_rotacion(explorador, ruta_categoria, recursivo, excluir_rutas=rutas_a_evitar)
+    if registro is None:
         return None
-    rutas_candidatas = {r.get("ruta") for r in candidatos if r.get("ruta")}
-    # No repetir hasta agotar la categoría (pedido explícito): excluye
-    # las (N-1) rutas de ESTA categoría más recientes en el historial
-    # PERSISTENTE (lo que YA sonó), MÁS `rutas_a_evitar` (lo que ya se
-    # generó en esta misma serie o en una serie anterior todavía en
-    # cola sin sonar — pedido explícito, ronda posterior: "cuando
-    # volvió a cargar la serie, cargó el mismo archivo aleatorio que
-    # en la primera". El historial por sí solo no alcanza: solo
-    # registra lo que YA se REPRODUJO, y con el refill ahora disparado
-    # apenas algo "entra en previo" (verde), la serie nueva se genera
-    # ANTES de que la anterior termine de sonar — el historial todavía
-    # no reflejaría esas rutas). Mismo criterio de "nunca dejar hueco"
-    # (ver `elegir_aleatorio_de_categoria`): si excluir todo vacía la
-    # lista de candidatos, la exclusión se ignora antes que repetir un
-    # tema a dejar silencio.
-    excluidas_historial = rutas_recientes_en_historial(rutas_candidatas, len(rutas_candidatas) - 1)
-    excluidas = excluidas_historial | (rutas_a_evitar & rutas_candidatas)
-    return explorador.elegir_aleatorio_de_categoria(categoria, recursivo, excluir_rutas=excluidas)
+    # Este ítem queda fijo en la serie generada apenas se resuelve acá
+    # (no hay ningún momento posterior de "arranca a sonar de verdad"
+    # propio, a diferencia de Ventana 1) — el commit de la rotación
+    # pasa ahora, no antes.
+    marcar_reproducido_por_rotacion(explorador, ruta_categoria, registro.get("ruta", ""), recursivo)
+    return registro
 
 
 def _resolver_item(explorador, item_config: dict, visitados: frozenset,

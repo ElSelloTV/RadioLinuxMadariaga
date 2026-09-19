@@ -44,6 +44,7 @@ from core.audio_engine import obtener_duracion_formateada, MotorAudio, contar_de
 from core.clima_meteo import RefrescadorClima, LATITUD_DEFECTO, LONGITUD_DEFECTO
 from core.servidor_control_remoto import ServidorControlRemoto
 from core.musicalizador import validar_formato
+from core.rotacion_categoria import elegir_por_rotacion, marcar_reproducido_por_rotacion
 from core import actualizador
 from core import reinicio_sistema
 import core.prioridad_proceso as prioridad_proceso
@@ -51,7 +52,6 @@ from config.settings import (
     cargar_configuracion, registrar_evento, registrar_error, guardar_configuracion,
     guardar_lista_auxiliar, listar_listas_auxiliares,
     obtener_lista_auxiliar, eliminar_lista_auxiliar,
-    rutas_recientes_en_historial,
     listar_programaciones, obtener_programacion, guardar_programacion,
     cargar_musicalizador, listar_formatos, obtener_formato,
     guardar_formato, eliminar_formato, renombrar_formato,
@@ -684,29 +684,35 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{len(registros)} ítem(s) agregado(s) al Auxiliar.", 3000)
 
     def _agregar_item_aleatorio_auxiliar(self):
+        # No repetir hasta agotar la categoría (pedido explícito,
+        # "necesito absoluta variedad... el máximo tiempo para que no
+        # se repita"): usa la misma rotación secuencial persistida por
+        # categoría que ya usa el Ítem Aleatorio de Ventana 1
+        # (core/rotacion_categoria.py) en vez del historial de
+        # reproducción — garantiza matemáticamente el espaciado máximo
+        # posible, sin depender de cuánto haya quedado escrito en el
+        # log antes de su última rotación por tamaño. El "commit"
+        # (avanzar la rotación) pasa acá mismo, al agregarlo a la
+        # lista — a diferencia de Ventana 1, este ítem queda FIJO en
+        # el Auxiliar desde el momento de agregarlo, no hay ningún
+        # "arranca a sonar de verdad" posterior donde volver a
+        # resolverlo.
         dialogo = DialogoSeleccionarCategoria(self.ventana_explorador.tree_categorias, parent=self)
         if dialogo.exec() != DialogoSeleccionarCategoria.DialogCode.Accepted:
             return
         ruta_categoria = dialogo.ruta_elegida()
         if not ruta_categoria:
             return
-        categoria = self.ventana_explorador.buscar_categoria_por_ruta(ruta_categoria)
-        if categoria is None:
-            return
-        candidatos = self.ventana_explorador.listar_registros_de_categoria(categoria, recursivo=True)
-        if not candidatos:
-            QMessageBox.information(self, "Agregar ítem aleatorio", "Esa categoría no tiene archivos.")
-            return
-        rutas_candidatas = {r.get("ruta") for r in candidatos if r.get("ruta")}
-        evitar = rutas_recientes_en_historial(rutas_candidatas, max(0, len(rutas_candidatas) - 1))
-        registro = self.ventana_explorador.elegir_aleatorio_de_categoria(categoria, recursivo=True, excluir_rutas=evitar)
+        registro = elegir_por_rotacion(self.ventana_explorador, ruta_categoria, recursivo=True)
         if registro is None:
+            QMessageBox.information(self, "Agregar ítem aleatorio", "Esa categoría no tiene archivos.")
             return
         self._ventana_auxiliar.panel.agregar_item(
             registro.get("titulo", ""), registro.get("duracion", ""), registro.get("codigo", "—"),
             registro.get("ruta", ""), registro.get("punto_inicio_ms") or 0,
             registro.get("punto_fin_ms"), registro.get("ganancia_db") or 0.0,
         )
+        marcar_reproducido_por_rotacion(self.ventana_explorador, ruta_categoria, registro.get("ruta", ""), True)
         self.statusBar().showMessage(f"Agregado al azar: {registro.get('titulo', '')}", 3000)
 
     def _agregar_ciclo_fmt_emision(self):
