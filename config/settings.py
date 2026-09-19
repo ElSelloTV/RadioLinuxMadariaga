@@ -1044,44 +1044,6 @@ def obtener_ultimo_fmt() -> str | None:
     return datos.get("nombre") or None
 
 
-def rutas_recientes_en_historial(rutas_candidatas: set, cantidad_a_excluir: int) -> set:
-    """Pedido explícito ("no repetir una canción hasta tanto no se
-    haya reproducido toda la lista... búsqueda lógica... en el log de
-    reproducción"): lee `historial_reproduccion.txt` de atrás para
-    adelante y devuelve hasta `cantidad_a_excluir` rutas DISTINTAS (de
-    las que están en `rutas_candidatas`) que sonaron más
-    recientemente. Al elegir un aleatorio, el llamador excluye este
-    conjunto — así una categoría de N temas no repite ninguno hasta
-    que los otros N-1 ya sonaron, y esto sobrevive un reinicio porque
-    lee el archivo en disco, no un contador en memoria. No lee
-    `.anterior.txt` (una rotación del log es un corte de ciclo
-    aceptable, no un bug)."""
-    if cantidad_a_excluir <= 0 or not rutas_candidatas:
-        return set()
-    if not os.path.exists(ARCHIVO_HISTORIAL_REPRODUCCION):
-        return set()
-    try:
-        with open(ARCHIVO_HISTORIAL_REPRODUCCION, "r", encoding="utf-8") as f:
-            lineas = f.readlines()
-    except OSError:
-        return set()
-
-    excluidas = set()
-    for linea in reversed(lineas):
-        if len(excluidas) >= cantidad_a_excluir:
-            break
-        # Formato de cada línea: "[timestamp] [Ventana] Título (Código) - ruta"
-        # rsplit (no split): el título puede contener " - " también, la
-        # ruta es siempre el último tramo.
-        partes = linea.rstrip("\n").rsplit(" - ", 1)
-        if len(partes) != 2:
-            continue
-        ruta = partes[1]
-        if ruta in rutas_candidatas:
-            excluidas.add(ruta)
-    return excluidas
-
-
 # ----------------------------------------------------------------------
 # Rotación SECUENCIAL por categoría (pedido explícito de Santiago, ver
 # core/rotacion_categoria.py para el motor completo): "las mismas 2
