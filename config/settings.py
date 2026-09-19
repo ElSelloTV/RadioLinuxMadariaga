@@ -39,20 +39,6 @@ CONFIG_POR_DEFECTO = {
         "dispositivo_preescucha": "default",
         "volumen_master": 100,
         "volumen_preescucha": 100,
-        # Pedido explícito ("activar o desactivar el procesamiento por
-        # Viper4Linux... todos los stream que va creando que los envíe
-        # a un solo sink"): interruptor + nombre de sink, ver
-        # `dispositivo_master_efectivo()` más abajo — apagado por
-        # defecto, una instalación existente nunca cambia de
-        # comportamiento sola. "viper" es el nombre FIJO que usa el
-        # instalador vendorizado (`extras/procesador_fm_viper4linux`,
-        # comando `viper start`) — ese script lo crea y lo completa
-        # solo, nunca hace falta que el operador cree nada a mano con
-        # pactl (corrección real de una ronda anterior, ver el
-        # docstring de `_crear_grupo_viper4linux` en
-        # gui/ventana_configuracion.py).
-        "viper4linux_activado": False,
-        "viper4linux_sink": "viper",
     },
     "fade": {
         "crossfade_activado": True,
@@ -394,47 +380,6 @@ def parametros_nivelado(config: dict) -> tuple:
         reproduccion.get("nivelado_loudness_lufs_objetivo", -16.0),
         reproduccion.get("nivelado_techo_pico_dbfs", -1.0),
     )
-
-
-def dispositivo_master_efectivo(audio: dict) -> str | None:
-    """Punto único de resolución del dispositivo de salida MASTER real
-    a usar por TODOS los motores "de aire" — Publicidad (V1), Emisión
-    (V2), Auxiliar, el Pisador y el HORA/TEMP manual (los tres últimos
-    comparten siempre el mismo dispositivo que su motor principal, ver
-    `core/gestor_emision.py`/`core/playlist_manager.py`).
-
-    Pedido explícito: "Agregá... un botón que yo desde configuración
-    pueda activar o desactivar el procesamiento por Viper4Linux, es
-    decir, todos los stream que va creando que los envíe a un solo
-    sink y de ahi lo tomo con Viper4Linux". Con `viper4linux_activado`
-    prendido Y un `viper4linux_sink` configurado (default "viper" — el
-    nombre FIJO que crea SOLO el comando `viper start` del instalador
-    vendorizado, ver `extras/procesador_fm_viper4linux/README.md` —
-    nunca hace falta que el operador cree ningún sink a mano con
-    pactl, corregido tras un reporte real de confusión), los tres
-    devuelven ESE nombre — activa el mismo fallback de
-    `EnrutadorPactl` (`core/audio_engine.py`) que ya usa cualquier
-    nombre de sink escrito a mano en el campo de Salida Master, así que
-    el ruteo queda serializado (Pisador incluido) exactamente igual que
-    hoy, sin ningún camino nuevo.
-
-    Apagar el interruptor (o dejar el campo vacío) vuelve a lo de
-    siempre de inmediato — el valor guardado en
-    `audio.dispositivo_master` NUNCA se toca, "que ese botón cambie de
-    un sistema a otro" es exactamente eso: un `or` sobre la resolución
-    de siempre, reversible al instante y sin ningún efecto colateral.
-    Fail-open ante config vieja/parcial, mismo criterio que el resto de
-    los helpers de este archivo.
-
-    La Preescucha (Ventana 3, previos de diálogos) NUNCA pasa por acá —
-    sigue leyendo `audio.dispositivo_preescucha` directo, a propósito:
-    el pedido es sobre "el aire" de la FM, no sobre la salida de
-    monitoreo de la PC (separación ya deliberada de una ronda
-    anterior)."""
-    if audio.get("viper4linux_activado") and audio.get("viper4linux_sink"):
-        return audio["viper4linux_sink"]
-    dispositivo = audio.get("dispositivo_master", "default")
-    return dispositivo if dispositivo != "default" else None
 
 
 def categoria_de_enlatado(config: dict, numero) -> list | None:

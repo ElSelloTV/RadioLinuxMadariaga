@@ -42,7 +42,6 @@ NUMEROS_ENLATADO = ("1", "2", "3", "4", "5")
 from core.audio_engine import MotorAudio
 from core import actualizador
 from core import reinicio_sistema
-from core import viper4linux_control
 from gui.styles import LISTA_GENEROS
 from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 
@@ -127,125 +126,7 @@ class VentanaConfiguracion(QDialog):
         nota.setObjectName("lblTituloBloqueActivo")
         form.addRow(nota)
 
-        form.addRow(self._crear_grupo_viper4linux(dispositivos))
-
         return widget
-
-    def _crear_grupo_viper4linux(self, dispositivos) -> QGroupBox:
-        """Pedido explícito: "un botón que yo desde configuración pueda
-        activar o desactivar el procesamiento por Viper4Linux, es
-        decir, todos los stream que va creando que los envíe a un solo
-        sink y de ahi lo tomo con Viper4Linux". Con esto activado,
-        TODOS los motores "de aire" (Publicidad/Emisión/Auxiliar,
-        Pisador y HORA/TEMP manual incluidos) enrutan al mismo sink acá
-        elegido en vez de a la Salida Master de arriba — ver
-        `config.settings.dispositivo_master_efectivo()`, el único punto
-        que resuelve esto. Reversible al instante: apagar el checkbox
-        vuelve a la Salida Master de siempre, sin tocar ese valor para
-        nada.
-
-        Corrección real de una ronda anterior ("V4Linux me dice que
-        tengo que crear un sink virtual, no sé hacerlo"): el sink NO
-        lo crea Santiago a mano con `pactl` — el propio instalador
-        vendorizado (`extras/procesador_fm_viper4linux/vendor/
-        Viper4Linux/viper`, comando `viper start`) lo crea, lo
-        completa con el audio y arranca el procesamiento, todo solo.
-        Ese script tiene el nombre del sink FIJO en el código
-        (`vipersink=viper`, no es configurable sin editar el script) —
-        por eso el combo de acá arranca en "viper" por defecto: es el
-        valor que YA coincide con lo que el instalador crea solo,
-        nunca algo que haya que inventar. Se deja editable por si algún
-        día se corre una copia del script modificada a mano con otro
-        nombre, pero el 99% de los casos no necesita tocarlo."""
-        grupo = QGroupBox("Viper4Linux (procesador externo, opcional)")
-        layout = QVBoxLayout(grupo)
-
-        self.chk_viper4linux_activado = QCheckBox(
-            "Enrutar todos los streams a un sink único para Viper4Linux"
-        )
-        layout.addWidget(self.chk_viper4linux_activado)
-
-        form_sink = QFormLayout()
-        self.combo_viper4linux_sink = QComboBox()
-        self.combo_viper4linux_sink.setEditable(True)
-        self.combo_viper4linux_sink.addItem("viper (nombre fijo del instalador)", "viper")
-        for id_dispositivo, descripcion in dispositivos:
-            self.combo_viper4linux_sink.addItem(f"{descripcion} ({id_dispositivo})", id_dispositivo)
-        form_sink.addRow("Sink de destino:", self.combo_viper4linux_sink)
-        layout.addLayout(form_sink)
-
-        nota_viper = QLabel(
-            "Reemplaza la Salida Master de arriba SOLO mientras esto\n"
-            "esté activo (Publicidad, Emisión, Auxiliar, Pisador y\n"
-            "HORA/TEMP manual incluidos) — apagarlo vuelve a la Salida\n"
-            "Master de siempre al instante, sin perder nada. La\n"
-            "Preescucha (▶ Previo de Ventana 3) nunca pasa por acá.\n"
-            "El sink lo crea SOLO el comando \"viper start\" (nunca hace\n"
-            "falta correr pactl a mano) — ver extras/\n"
-            "procesador_fm_viper4linux/README.md para instalarlo y\n"
-            "dejarlo arrancando solo con la PC."
-        )
-        nota_viper.setObjectName("lblTituloBloqueActivo")
-        layout.addWidget(nota_viper)
-
-        # Pedido explícito, tras el incidente real de hoy con el
-        # compresor: "un botón Bypass... y un botón que abra el
-        # entorno gráfico de Viper4Linux". Alcance deliberadamente
-        # chico -- ver core/viper4linux_control.py, nunca escribimos
-        # un valor de DSP desde acá, eso sigue siendo 100% de la
-        # interfaz nativa de Viper.
-        fila_viper_control = QHBoxLayout()
-        self.btn_abrir_viper_gui = QPushButton("🎛 Abrir editor de Viper4Linux...")
-        self.btn_abrir_viper_gui.setToolTip(
-            "Abre la interfaz gráfica nativa de Viper4Linux (EQ, compresor,\n"
-            "limitador, AGC, presets) — los cambios que hagas ahí se guardan\n"
-            "directo, sin pasar por este programa."
-        )
-        self.btn_abrir_viper_gui.clicked.connect(self._abrir_editor_viper)
-        fila_viper_control.addWidget(self.btn_abrir_viper_gui)
-
-        self.btn_bypass_viper = QPushButton("🔇 Alternar bypass (con/sin efectos)")
-        self.btn_bypass_viper.setToolTip(
-            "Prende o apaga TODA la cadena de efectos de Viper en caliente,\n"
-            "para comparar con y sin procesamiento — no reinicia nada, no\n"
-            "toca la configuración guardada ni el archivo audio.conf."
-        )
-        self.btn_bypass_viper.clicked.connect(self._alternar_bypass_viper)
-        fila_viper_control.addWidget(self.btn_bypass_viper)
-        layout.addLayout(fila_viper_control)
-
-        self.lbl_estado_viper_bypass = QLabel("")
-        self.lbl_estado_viper_bypass.setWordWrap(True)
-        layout.addWidget(self.lbl_estado_viper_bypass)
-
-        return grupo
-
-    def _abrir_editor_viper(self):
-        exito, mensaje = viper4linux_control.abrir_editor_viper()
-        if not exito:
-            QMessageBox.warning(self, "Viper4Linux", mensaje)
-
-    def _alternar_bypass_viper(self):
-        activo_ahora, error = viper4linux_control.leer_bypass_activo()
-        if activo_ahora is None:
-            QMessageBox.warning(
-                self, "Viper4Linux",
-                f"No se pudo leer el estado actual: {error}"
-            )
-            return
-        nuevo_fx_enable = not activo_ahora
-        exito, mensaje = viper4linux_control.establecer_bypass_activo(nuevo_fx_enable)
-        if not exito:
-            QMessageBox.warning(self, "Viper4Linux", mensaje)
-            return
-        if nuevo_fx_enable:
-            self.lbl_estado_viper_bypass.setText(
-                "🎚 Efectos ACTIVOS — audio procesado por Viper."
-            )
-        else:
-            self.lbl_estado_viper_bypass.setText(
-                "🔇 Bypass ACTIVO — estás escuchando el audio SIN procesar."
-            )
 
     def _crear_slider_volumen(self) -> QSlider:
         slider = QSlider(Qt.Orientation.Horizontal)
@@ -1398,8 +1279,6 @@ class VentanaConfiguracion(QDialog):
         self._seleccionar_en_combo(self.combo_dispositivo_preescucha, audio["dispositivo_preescucha"])
         self.slider_volumen_master.setValue(audio["volumen_master"])
         self.slider_volumen_preescucha.setValue(audio["volumen_preescucha"])
-        self.chk_viper4linux_activado.setChecked(audio.get("viper4linux_activado", False))
-        self._seleccionar_en_combo(self.combo_viper4linux_sink, audio.get("viper4linux_sink") or "viper")
 
         fade = self._config["fade"]
         self.chk_crossfade.setChecked(fade["crossfade_activado"])
@@ -1498,8 +1377,6 @@ class VentanaConfiguracion(QDialog):
         self._config["audio"]["dispositivo_preescucha"] = self._valor_dispositivo_combo(self.combo_dispositivo_preescucha)
         self._config["audio"]["volumen_master"] = self.slider_volumen_master.value()
         self._config["audio"]["volumen_preescucha"] = self.slider_volumen_preescucha.value()
-        self._config["audio"]["viper4linux_activado"] = self.chk_viper4linux_activado.isChecked()
-        self._config["audio"]["viper4linux_sink"] = self._valor_dispositivo_combo(self.combo_viper4linux_sink)
 
         self._config["fade"]["crossfade_activado"] = self.chk_crossfade.isChecked()
         self._config["fade"]["duracion_fade_in_v2_ms"] = self.spin_fade_in_v2.value()

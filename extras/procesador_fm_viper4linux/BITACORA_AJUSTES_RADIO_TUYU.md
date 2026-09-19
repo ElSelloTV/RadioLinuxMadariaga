@@ -1,3 +1,26 @@
+> **CIERRE (2026-09-19)**: tras dos incidentes reales en vivo en la
+> misma noche —sonido robótico y silencio total, primero por el
+> `audio.conf` pisado por la interfaz gráfica, después de nuevo al
+> probar "Predeterminada del sistema" como Salida Master— Santiago
+> decidió sacar la integración de Viper4Linux del programa por
+> completo: "la PC no soporta el proceso". Se removió TODO el código
+> relacionado (`core/viper4linux_control.py` eliminado,
+> `dispositivo_master_efectivo()` sacado de `config/settings.py`, el
+> grupo "Viper4Linux" y sus botones sacados de
+> `gui/ventana_configuracion.py`, las 4 llamadas de
+> `gui/main_window.py` vueltas a la resolución simple de siempre) —
+> probado que compila y que la app arranca limpio sin ningún rastro.
+> Configuración → Audio volvió a ser exactamente como era antes de
+> toda esta saga: Salida Master + Salida Preescucha, nada más.
+>
+> El resto de este archivo queda como registro histórico completo —
+> incluye el fix real de la frecuencia de PipeWire (que SÍ se deja
+> aplicado, es independiente de Viper y beneficia a cualquier audio de
+> la PC) y todo lo investigado, por si en algún momento se retoma un
+> procesador externo (Viper4Linux corriendo por fuera sin integración
+> con el programa, u otro software) — para no tener que redescubrir
+> nada de lo ya aprendido.
+
 # Bitácora de ajustes de audio — PC de aire (radio-tuyu)
 
 Registro de lo que se cambió el 2026-09-18, por qué, y cómo revertir CADA
