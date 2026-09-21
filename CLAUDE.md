@@ -25,9 +25,28 @@ transmisión con ondas de radio sobre medallón oscuro con anillo rojo.
 NO cambió — Santiago no lo pidió, solo el nombre visible de la app.
 
 Usuario: Santiago Martín Escobar — abogado, músico, operador de medios
-(ElSelloTV/LU28 Radio Tuyú). Notebook con **Q4OS Linux**, hardware
-modesto (Celeron N2820, 4GB RAM). Este programa es para su propia
-radio, uso diario en producción.
+(ElSelloTV/LU28 Radio Tuyú). Este programa es para su propia radio, uso
+diario en producción.
+
+**Hardware REAL de la PC de aire (`radio-tuyu`), corregido — ver
+"Cosas ya resueltas" más abajo para el detalle completo del error**:
+el resto de este archivo, en varios puntos anteriores a esta
+corrección, describe el hardware como "notebook, Celeron N2820, 4GB
+RAM" — ese dato era INCORRECTO, nunca verificado contra la máquina
+real hasta que Santiago compartió un diagnóstico completo
+(`lscpu`/`hostnamectl`, 2026-09-19 20:44:30 -03). La PC real es un
+**equipo de ESCRITORIO** (`Chassis: desktop`, placa **ASRock AM1B-M**)
+con **AMD Sempron(tm) 2650 APU with Radeon(tm) R3** — 2 núcleos reales,
+1 hilo por núcleo (sin Hyper-Threading), 800MHz-1450MHz, arquitectura
+"Kabini" (AMD Family 16h) — NO un Celeron Intel de ningún tipo. RAM:
+~3.3GB usables (Debian 13 "trixie", kernel 6.12). Las menciones viejas
+de "Celeron N2820"/"notebook" que aparecen más abajo en este archivo
+son registro histórico de lo que se creía en su momento — no se
+reescribieron a propósito (mismo criterio de todo este archivo: nunca
+borrar el historial, corregir con una nota nueva) pero hay que leerlas
+sabiendo que el dato de hardware específico estaba mal. Para cualquier
+cálculo de capacidad/carga de CPU futuro, usar SIEMPRE el dato de
+acá arriba, verificado.
 
 ## Manual de Dinesat Visual (referencia de diseño completa)
 
@@ -14224,3 +14243,33 @@ soltó de una vez.
   `core/audio_engine.py` (la segunda capa de defensa en
   `MotorAudio.reproducir()`, para datos viejos ya guardados antes de
   este fix).
+
+- **El hardware de la PC de aire, documentado desde el arranque del
+  proyecto como "notebook, Celeron N2820, 4GB RAM", estaba MAL — nunca
+  se había verificado contra la máquina real con un comando concreto,
+  solo repetido de ronda en ronda como si fuera un hecho ya
+  confirmado**: Santiago compartió un diagnóstico completo
+  (`hostnamectl`/`lscpu`/`lspci`/`pactl`, generado el 2026-09-19
+  20:44:30 -03, guardado en un archivo que él llamó
+  `diagnostico_audio_radio.md`) que reveló la máquina real —
+  `radio-tuyu`, `Chassis: desktop`, placa **ASRock AM1B-M**, CPU
+  **AMD Sempron(tm) 2650 APU with Radeon(tm) R3** (2 núcleos, 1 hilo
+  por núcleo, 800-1450MHz, arquitectura Kabini/AMD Family 16h) — un
+  equipo de ESCRITORIO con un procesador AMD, no una notebook con un
+  Celeron Intel. El error se arrastró sin que nadie lo notara durante
+  DECENAS de rondas de trabajo (toda la sección "Usuario" al
+  principio de este archivo, y cada mención puntual de "Celeron
+  N2820" en el cuerpo del historial) — nadie volvió a correr
+  `lscpu` para confirmarlo, cada ronda nueva simplemente asumía que
+  la anterior tenía razón. Corregido en la sección "Usuario" (el
+  único lugar que se reescribe con el dato correcto — el resto de
+  las menciones históricas de "Celeron N2820" quedan intactas como
+  registro de lo que se creía en su momento, mismo criterio de nunca
+  reescribir el historial de este archivo). **Regla para el
+  futuro**: un dato de hardware "conocido" que nunca se volvió a
+  verificar con un comando real es una suposición, no un hecho —
+  ante cualquier decisión que dependa de la capacidad real de la
+  máquina (¿alcanza la CPU para tal proceso?, ¿conviene tal
+  upgrade?), pedir el comando concreto (`lscpu`, `free -h`, etc.) en
+  vez de confiar en lo que este archivo dice de memoria, por más
+  rondas que lleve repitiéndose sin que nadie lo cuestionara.
