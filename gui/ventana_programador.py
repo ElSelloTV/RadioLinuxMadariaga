@@ -621,8 +621,10 @@ class VentanaProgramador(QDialog):
         """Comando FMT (pedido explícito, encadenado con el
         Musicalizador Avanzado) — mismo concepto que
         VentanaPublicidad.agregar_comando(), acá en el editor del
-        Programador."""
-        hijo = QTreeWidgetItem([f"▶ {tipo_comando}: {parametro}", "—", "—"])
+        Programador. STOP/PLAY (sin parámetro) renderizan sin el ": "
+        colgando, mismo criterio que en Ventana 1."""
+        titulo = f"▶ {tipo_comando}: {parametro}" if parametro else f"▶ {tipo_comando}"
+        hijo = QTreeWidgetItem([titulo, "—", "—"])
         hijo.setData(0, Qt.ItemDataRole.UserRole, "")
         hijo.setData(0, ROL_ES_COMANDO, True)
         hijo.setData(0, ROL_TIPO_COMANDO, tipo_comando)

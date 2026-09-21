@@ -62,6 +62,17 @@ DURACION_FUNDIDO_MANUAL_SEGUNDOS = 1.2
 # de slot ("1".."5", ver Configuración → Enlatados) — ver
 # GestorPublicidad._reproducir_comando_enlatado más abajo.
 TIPO_COMANDO_ENLATADO = "ENLATADO"
+# Comandos STOP/PLAY (pedido explícito: "un comando FMT llamado STOP
+# (desactivará el automático y detendrá todas las reproducciones) y
+# un comando FMT Play que iniciará la reproducción con automático").
+# A diferencia de FMT/HTH/ENLATADO, no tienen parámetro (se insertan
+# sin diálogo, ver VentanaPublicidad._insertar_comando_stop/_play) y
+# son TERMINALES para Ventana 1: a propósito NO llaman a _avanzar()
+# después de ejecutarse (ver _reproducir_comando_stop/_play más abajo)
+# — el objetivo es un handoff limpio hacia/desde Emisión, nunca que
+# Publicidad siga sonando encima apenas soltó o retomó el control.
+TIPO_COMANDO_STOP = "STOP"
+TIPO_COMANDO_PLAY = "PLAY"
 
 
 class GestorPublicidad:
@@ -194,6 +205,17 @@ class GestorPublicidad:
         # nombre del formato cuando la reproducción "pasa por" un
         # ítem-comando FMT en un bloque (ver _ejecutar_comando).
         self.al_comando_fmt = None
+
+        # Comandos STOP/PLAY (pedido explícito): el apagado/prendido
+        # del Automático y el corte de la Publicidad los maneja este
+        # mismo gestor directo (self._detener()/self.ventana.
+        # _toggle_automatico()) — estos dos callbacks son solo para lo
+        # que este gestor NO puede tocar por sí mismo: Emisión (V2) y
+        # el Auxiliar. MainWindow los conecta en
+        # _inicializar_motores_audio(). `None` = sin efecto en
+        # V2/Auxiliar (nunca rompe nada si faltara la conexión).
+        self.al_comando_stop = None
+        self.al_comando_play = None
 
         # Pedido explícito: "cuando pase de la ventana 2 a la 1,
         # haciendo play, cortará en fade la reproducción de la ventana
@@ -543,6 +565,12 @@ class GestorPublicidad:
             if tipo_comando == TIPO_COMANDO_ENLATADO:
                 self._reproducir_comando_enlatado(item)
                 return
+            if tipo_comando == TIPO_COMANDO_STOP:
+                self._reproducir_comando_stop(item)
+                return
+            if tipo_comando == TIPO_COMANDO_PLAY:
+                self._reproducir_comando_play(item)
+                return
             # Bug real corregido: antes esto llamaba a self._avanzar()
             # sin actualizar item_reproduciendo()/item_siguiente() —
             # la próxima vuelta de _avanzar() volvía a resolver este
@@ -786,6 +814,47 @@ class GestorPublicidad:
             "Publicidad", registro.get("titulo", ""), registro.get("codigo", ""), registro.get("ruta", ""),
         )
         registrar_evento(f"Publicidad: Comando ENLATADO {numero} -> '{registro.get('titulo', '')}'")
+
+    # ------------------------------------------------------------------
+    # Comandos STOP / PLAY (pedido explícito): "apagar todo" y
+    # "prender todo con automático" para poder programarlos en un
+    # bloque horario (ej. corte nocturno / retomo a la mañana), sin
+    # tener que operar el botón AUTOMÁTICO ni el Stop/Play a mano a
+    # esa hora. Los dos son TERMINALES para Ventana 1 (ver constantes
+    # más arriba) — nunca llaman a _avanzar() después, para no dejar
+    # a Publicidad sonando encima del handoff que acaban de hacer.
+    # ------------------------------------------------------------------
+    def _reproducir_comando_stop(self, item):
+        registrar_evento("Publicidad: Comando STOP -- desactivando Automático y deteniendo toda la reproducción")
+        self.ventana.marcar_reproduciendo_item(item)
+        if self.ventana.esta_en_automatico():
+            self.ventana.btn_automatico.setChecked(False)
+            self.ventana._toggle_automatico()
+        # V1 primero, directo (self, no un callback) -- después de
+        # esto el Stop de V2 ya no está bloqueado por el Automático,
+        # mismo orden que ya usa MainWindow._activar_audio_canal().
+        self._detener()
+        if self.al_comando_stop is not None:
+            try:
+                self.al_comando_stop()
+            except Exception as error:
+                registrar_error(f"Publicidad: error ejecutando Comando STOP (Emisión/Auxiliar): {error}")
+
+    def _reproducir_comando_play(self, item):
+        registrar_evento("Publicidad: Comando PLAY -- activando Automático e iniciando la reproducción")
+        self.ventana.marcar_reproduciendo_item(item)
+        # Publicidad se calla para cederle el aire a Emisión -- mismo
+        # criterio que un Play manual en Ventana 1 corta Emisión, acá
+        # en el sentido inverso.
+        self._detener()
+        if not self.ventana.esta_en_automatico():
+            self.ventana.btn_automatico.setChecked(True)
+            self.ventana._toggle_automatico()
+        if self.al_comando_play is not None:
+            try:
+                self.al_comando_play()
+            except Exception as error:
+                registrar_error(f"Publicidad: error ejecutando Comando PLAY (Emisión): {error}")
 
     # ------------------------------------------------------------------
     # Comando HTH (Hora-Temperatura-Humedad) — pedido explícito,

@@ -884,6 +884,19 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("📡 Audio Canal activo — streaming externo al aire.", 8000)
         registrar_evento(f"Audio Canal: activado, streaming '{URL_AUDIO_CANAL}'")
 
+    def _detener_v2_y_auxiliar_por_comando_stop(self):
+        """Comando STOP de Ventana 1 (pedido explícito): la parte de
+        Publicidad (motor propio + Automático) ya la maneja
+        GestorPublicidad solo -- acá solo falta Emisión y el Auxiliar,
+        mismo patrón (botones Stop REALES, no duplicar la lógica de
+        cada uno) ya usado en _activar_audio_canal más arriba. El
+        Automático ya está apagado para cuando esto se llama (lo apaga
+        GestorPublicidad ANTES de disparar este callback), así el Stop
+        de V2 no llega bloqueado."""
+        self.ventana_emision.panel.btn_stop.click()
+        if self._ventana_auxiliar is not None:
+            self._ventana_auxiliar.panel.btn_stop.click()
+
     def _desactivar_audio_canal(self):
         if self._motor_audio_canal is not None:
             self._motor_audio_canal.detener()
@@ -962,6 +975,13 @@ class MainWindow(QMainWindow):
         # un bloque de Publicidad, dispara la generación continua de
         # música en Emisión.
         self.gestor_publicidad.al_comando_fmt = self.gestor_emision.iniciar_musicalizador
+        # Comandos STOP/PLAY (pedido explícito, "para poner en la
+        # programación de Ventana 1 cuando yo quiera"): GestorPublicidad
+        # ya se apaga/prende y toca el Automático por su cuenta -- estos
+        # dos callbacks cubren solo lo que ese gestor no puede tocar
+        # directo: Emisión (V2) y el Auxiliar.
+        self.gestor_publicidad.al_comando_stop = self._detener_v2_y_auxiliar_por_comando_stop
+        self.gestor_publicidad.al_comando_play = self.gestor_emision.reproducir_actual
         # Pedido explícito (botón azul "HORA/TEMP", ahora también en
         # Ventana 1): mismo aviso por la barra de estado que ya tiene
         # Ventana 2 si no hay nada para reproducir.
