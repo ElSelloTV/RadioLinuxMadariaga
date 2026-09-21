@@ -1600,6 +1600,28 @@ class SchedulerAutomatico:
                 return True
         return False
 
+    def _bloque_arranca_con_comando_play(self, bloque) -> bool:
+        """Pedido explícito (Comando PLAY como 'despertador' del
+        Automático apagado por un Comando STOP anterior, ej. STOP a
+        las 00hs / PLAY a las 5:30am): sin esta excepción, un STOP
+        apaga el Automático y `_tick()` deja de disparar CUALQUIER
+        bloque futuro por horario (incluido el que tiene el PLAY
+        adentro) -- la estación se quedaría en silencio para siempre,
+        nunca "se despertaría sola". El primer ítem REPRODUCIBLE del
+        bloque (el mismo criterio que usa `_item_valido`, saltea
+        ítems rotos) tiene que ser justo el Comando PLAY -- mismo
+        patrón de uso que describe Santiago, "el play ni bien arranque
+        la tanda"."""
+        for j in range(bloque.childCount()):
+            item = bloque.child(j)
+            if not self.gestor_publicidad._item_valido(item):
+                continue
+            return (
+                self.ventana.es_comando(item)
+                and self.ventana.tipo_comando_de_item(item) == "PLAY"
+            )
+        return False
+
     # ------------------------------------------------------------------
     def _on_automatico_cambiado(self, activo: bool):
         """Pedido explícito (afinado sobre la ronda 119, "revisá de
@@ -1748,8 +1770,17 @@ class SchedulerAutomatico:
                     # Pedido explícito: "solo se dispara si el botón
                     # Automático está activo, si no, no se debe
                     # disparar" — antes disparaba SIEMPRE por horario,
-                    # sin importar el estado del botón.
-                    if not self.ventana.esta_en_automatico():
+                    # sin importar el estado del botón. EXCEPCIÓN
+                    # (pedido explícito, "despertador" tras un Comando
+                    # STOP): un bloque cuyo primer ítem reproducible es
+                    # un Comando PLAY se dispara IGUAL con el
+                    # Automático apagado — si no, un STOP a las 00hs
+                    # apagaría el Automático y ningún bloque futuro
+                    # (ni siquiera el que tiene el PLAY adentro) se
+                    # volvería a disparar solo, dejando la estación en
+                    # silencio para siempre en vez de "despertarse" a
+                    # la hora programada.
+                    if not self.ventana.esta_en_automatico() and not self._bloque_arranca_con_comando_play(bloque):
                         registrar_evento(
                             f"Publicidad: bloque de las {hora_str} no se disparó — Automático apagado"
                         )

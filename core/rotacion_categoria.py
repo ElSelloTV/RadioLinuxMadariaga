@@ -42,7 +42,7 @@ la app) en vez de sonar SIEMPRE en el mismo orden día tras día.
 
 import random
 
-from config.settings import cargar_rotacion_categorias, guardar_rotacion_categorias
+from config.settings import cargar_rotacion_categorias, guardar_rotacion_categorias, vigencia_activa
 
 
 def _clave_categoria(ruta_categoria: list) -> str:
@@ -51,14 +51,38 @@ def _clave_categoria(ruta_categoria: list) -> str:
 
 def _candidatos_por_ruta(explorador, ruta_categoria: list, recursivo: bool) -> dict:
     """{ruta_archivo: registro} de la categoría, resuelta EN VIVO. {}
-    si la categoría no existe o está vacía."""
+    si la categoría no existe o está vacía.
+
+    Bug real corregido (reportado con audio real: "acaba de
+    reproducirse una publicidad que debía vencerse el 20 de
+    septiembre"): la vigencia de fecha (`registro["fecha_inicio"]`/
+    `registro["fecha_fin"]`, editable desde Ventana 3 -> "📅
+    Vigencia...") solo se chequeaba para una TANDA fija arrastrada
+    directo a un bloque (`GestorPublicidad._item_valido()`) -- un
+    Ítem Aleatorio es "válido" ahí sin mirar vigencia para NADA (no
+    tiene ruta propia, recién se resuelve al llegarle el turno), y
+    esta función nunca filtraba por vigencia tampoco -- un material
+    vencido, si vivía en una categoría usada por rotación (el caso
+    típico de "Publicidad"), seguía saliendo elegido para siempre,
+    sin ningún control. Filtrar ACÁ, en el único lugar que arma la
+    lista de candidatos de la categoría (compartido por
+    `elegir_por_rotacion()` y `marcar_reproducido_por_rotacion()`),
+    cierra el hueco de una sola vez -- un material vencido/no
+    iniciado queda afuera de la rotación mientras dure fuera de
+    vigencia, sin que haga falta sacarlo de la categoría a mano."""
     if explorador is None or not ruta_categoria:
         return {}
     categoria = explorador.buscar_categoria_por_ruta(ruta_categoria)
     if categoria is None:
         return {}
     candidatos = explorador.listar_registros_de_categoria(categoria, recursivo)
-    return {r["ruta"]: r for r in candidatos if r.get("ruta")}
+    return {
+        r["ruta"]: r
+        for r in candidatos
+        if r.get("ruta") and vigencia_activa(
+            {"fecha_inicio": r.get("fecha_inicio"), "fecha_fin": r.get("fecha_fin")}
+        )
+    }
 
 
 def _reconciliar_orden_ronda(orden_previo: list, rutas_vivas: set) -> list:
