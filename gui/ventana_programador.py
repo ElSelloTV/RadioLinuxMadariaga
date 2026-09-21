@@ -342,6 +342,18 @@ class VentanaProgramador(QDialog):
             "humedad concatenando los clips de voz del género \"HTH\"."
         )
         self.btn_insertar_hth.clicked.connect(self._insertar_comando_hth)
+        self.btn_insertar_stop = QPushButton("⏹ Comando STOP")
+        self.btn_insertar_stop.setToolTip(
+            "Al pasar la reproducción por este ítem, apaga el Automático y\n"
+            "detiene TODA la emisión (Publicidad, Emisión y Auxiliar)."
+        )
+        self.btn_insertar_stop.clicked.connect(self._insertar_comando_stop)
+        self.btn_insertar_play = QPushButton("▶ Comando PLAY")
+        self.btn_insertar_play.setToolTip(
+            "Al pasar la reproducción por este ítem, prende el Automático\n"
+            "y arranca la Emisión (Ventana 2) con fundido de entrada."
+        )
+        self.btn_insertar_play.clicked.connect(self._insertar_comando_play)
         self.btn_insertar_enlatado = QPushButton("▶ Comando ENLATADO...")
         self.btn_insertar_enlatado.setToolTip(
             "Al pasar la reproducción por este ítem, reproduce el ÚLTIMO\n"
@@ -357,6 +369,8 @@ class VentanaProgramador(QDialog):
         self.btn_insertar_aleatorio.clicked.connect(self._insertar_item_aleatorio)
         layout_especial.addWidget(self.btn_insertar_fmt)
         layout_especial.addWidget(self.btn_insertar_hth)
+        layout_especial.addWidget(self.btn_insertar_stop)
+        layout_especial.addWidget(self.btn_insertar_play)
         layout_especial.addWidget(self.btn_insertar_enlatado)
         layout_especial.addWidget(self.btn_insertar_aleatorio)
         panel_derecho.addWidget(grupo_especial)
@@ -711,6 +725,20 @@ class VentanaProgramador(QDialog):
         if parametro:
             self._agregar_comando_a_bloque(bloque, "HTH", parametro, self._indice_insercion_actual(bloque))
 
+    def _insertar_comando_stop(self):
+        bloque = self._bloque_destino_actual()
+        if bloque is None:
+            QMessageBox.information(self, "Insertar Comando STOP", "Primero creá un bloque horario.")
+            return
+        self._agregar_comando_a_bloque(bloque, "STOP", "", self._indice_insercion_actual(bloque))
+
+    def _insertar_comando_play(self):
+        bloque = self._bloque_destino_actual()
+        if bloque is None:
+            QMessageBox.information(self, "Insertar Comando PLAY", "Primero creá un bloque horario.")
+            return
+        self._agregar_comando_a_bloque(bloque, "PLAY", "", self._indice_insercion_actual(bloque))
+
     def _insertar_comando_enlatado(self):
         bloque = self._bloque_destino_actual()
         if bloque is None:
@@ -878,10 +906,9 @@ class VentanaProgramador(QDialog):
         if item.data(0, ROL_ES_COMANDO):
             QMessageBox.information(
                 self, "Reemplazar",
-                "Un Comando (FMT/HTH/ENLATADO) no se \"reemplaza\" — quitalo\n"
-                "(botón ✕ Quitar) y agregá uno nuevo con \"▶ Comando FMT...\",\n"
-                "\"▶ Comando HTH...\" o \"▶ Comando ENLATADO...\" si querés\n"
-                "cambiar el comando.",
+                "Un Comando (FMT/HTH/STOP/PLAY/ENLATADO) no se \"reemplaza\" —\n"
+                "quitalo (botón ✕ Quitar) y agregá uno nuevo con el botón\n"
+                "correspondiente si querés cambiar el comando.",
             )
             return
 

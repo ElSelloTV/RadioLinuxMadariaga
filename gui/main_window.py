@@ -128,6 +128,29 @@ class MainWindow(QMainWindow):
         self._inicializar_motores_audio()
         self._inicializar_control_remoto()
 
+        # Bug real de fondo, encontrado auditando el código tras un
+        # reporte de Santiago ("se traba la barra de tareas SOLO
+        # cuando cierro este programa, con otros programas no me
+        # pasa"): hasta esta ronda, cerrar la app NUNCA liberaba
+        # ordenadamente ninguno de los ~8-10 MotorAudio() que puede
+        # llegar a tener abiertos a la vez (V1 + su HORA/TEMP manual,
+        # V2 + Pisador + su HORA/TEMP manual, el Auxiliar con el mismo
+        # trío si está abierto, el Previo de Ventana 3, y AUDIO
+        # CANAL/Previo remoto si se llegaron a usar) — el proceso de
+        # Python los mataba a todos DE GOLPE al salir, sin llamar
+        # nunca a `MotorAudio.liberar()` (el mismo método que ya
+        # existe desde el fix real de la fuga de audio del crossfade
+        # -- ver `core/gestor_emision.py` -- pensado justo para esto:
+        # cerrar la conexión de audio con PipeWire de forma prolija en
+        # vez de dejar que el sistema operativo la corte de un tirón).
+        # Ningún otro programa de la PC abre tantos clientes de audio
+        # simultáneos como este -- coherente con que el síntoma sea
+        # específico de cerrar ESTE programa. `aboutToQuit` (no
+        # `closeEvent`) porque se dispara siempre que el cierre ya
+        # está confirmado y va a pasar de verdad, sin importar por
+        # qué camino se llegó ahí.
+        QApplication.instance().aboutToQuit.connect(self._liberar_todos_los_motores_al_salir)
+
         self._timer_reloj = QTimer(self)
         self._timer_reloj.timeout.connect(self._actualizar_reloj)
         self._timer_reloj.start(1000)
@@ -397,6 +420,47 @@ class MainWindow(QMainWindow):
         if self._motor_audio_canal is not None:
             motores.append(self._motor_audio_canal)
         return any(motor.esta_reproduciendo() for motor in motores)
+
+    def _liberar_todos_los_motores_al_salir(self):
+        """Conectado a `QApplication.aboutToQuit` -- ver el comentario
+        en `__init__`. Recorre TODOS los MotorAudio que esta ventana
+        puede llegar a tener vivos (los principales de las 3 ventanas
+        + los secundarios de cada una -- Pisador, HORA/TEMP manual,
+        el motor "entrante" de un crossfade si justo quedó uno a
+        mitad, más los creados bajo demanda que puede que nunca se
+        hayan usado, de ahí el chequeo `is not None` en cada uno) y
+        llama `.liberar()` en cada uno -- nunca falla si alguno ya
+        está liberado o nunca se inicializó (ver el propio docstring
+        de `MotorAudio.liberar()`)."""
+        motores = [
+            self.gestor_publicidad.motor,
+            self.gestor_publicidad.motor_anuncio_manual,
+            self.gestor_emision.motor,
+            self.gestor_emision.motor_pisador,
+            self.gestor_emision.motor_anuncio_manual,
+            self.gestor_explorador.motor,
+        ]
+        if self.gestor_emision._motor_saliente_crossfade is not None:
+            motores.append(self.gestor_emision._motor_saliente_crossfade)
+        if self._gestor_auxiliar is not None:
+            motores.extend([
+                self._gestor_auxiliar.motor,
+                self._gestor_auxiliar.motor_pisador,
+                self._gestor_auxiliar.motor_anuncio_manual,
+            ])
+            if self._gestor_auxiliar._motor_saliente_crossfade is not None:
+                motores.append(self._gestor_auxiliar._motor_saliente_crossfade)
+        if self._motor_audio_canal is not None:
+            motores.append(self._motor_audio_canal)
+        if self._motor_previo_remoto is not None:
+            motores.append(self._motor_previo_remoto)
+        for motor in motores:
+            try:
+                motor.liberar()
+            except Exception:
+                # Nunca dejar que un motor puntual roto trabe la
+                # liberación del resto ni el cierre del programa.
+                pass
 
     def preparar_cierre_por_actualizacion(self):
         """El reinicio por actualización YA pide su propia confirmación
