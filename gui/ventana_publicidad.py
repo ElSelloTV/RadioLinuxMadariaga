@@ -394,8 +394,13 @@ class VentanaPublicidad(QWidget):
         Musicalizador Avanzado): NO es audio real — sin ruta, sin
         "duración" (no ocupa tiempo de aire). Al llegarle el turno en
         la reproducción, ejecuta su acción y sigue directo al próximo
-        ítem real (ver core/playlist_manager.py:GestorPublicidad)."""
-        hijo = QTreeWidgetItem([f"▶ {tipo_comando}: {parametro}", "—", "—"])
+        ítem real (ver core/playlist_manager.py:GestorPublicidad).
+
+        STOP/PLAY (pedido explícito) no tienen parámetro que mostrar —
+        `parametro=""` renderiza solo "▶ STOP"/"▶ PLAY", sin el ": "
+        colgando que quedaría con el formato de FMT/HTH/ENLATADO."""
+        titulo = f"▶ {tipo_comando}: {parametro}" if parametro else f"▶ {tipo_comando}"
+        hijo = QTreeWidgetItem([titulo, "—", "—"])
         hijo.setData(0, Qt.ItemDataRole.UserRole, "")
         hijo.setData(0, ROL_ESTADO_ITEM, ESTADO_NORMAL)
         hijo.setData(0, ROL_ES_COMANDO, True)
@@ -763,6 +768,11 @@ class VentanaPublicidad(QWidget):
         accion_insertar_fmt = menu.addAction("▶ Insertar Comando FMT...")
         accion_insertar_hth = menu.addAction("▶ Insertar Comando HTH...")
         accion_insertar_enlatado = menu.addAction("▶ Insertar Comando ENLATADO...")
+        menu.addSeparator()
+        # STOP/PLAY (pedido explícito) no necesitan diálogo -- no
+        # tienen ningún parámetro que elegir, se insertan directo.
+        accion_insertar_stop = menu.addAction("⏹ Insertar Comando STOP")
+        accion_insertar_play = menu.addAction("▶ Insertar Comando PLAY")
 
         elegida = menu.exec(self.tree.viewport().mapToGlobal(posicion))
         if elegida in (accion_crear_prog, accion_modificar_prog, accion_eliminar_prog):
@@ -792,6 +802,10 @@ class VentanaPublicidad(QWidget):
             self._insertar_comando_hth(seleccionados[0] if seleccionados else None)
         elif elegida == accion_insertar_enlatado:
             self._insertar_comando_enlatado(seleccionados[0] if seleccionados else None)
+        elif elegida == accion_insertar_stop:
+            self._insertar_comando_stop(seleccionados[0] if seleccionados else None)
+        elif elegida == accion_insertar_play:
+            self._insertar_comando_play(seleccionados[0] if seleccionados else None)
 
     def _bloque_destino_para_insertar(self, item_referencia):
         """Mismo criterio que el Programador (_bloque_destino_actual):
@@ -842,6 +856,27 @@ class VentanaPublicidad(QWidget):
         if parametro:
             self.agregar_comando(bloque, "ENLATADO", parametro)
 
+    def _insertar_comando_stop(self, item_referencia):
+        """Pedido explícito ("un comando FMT llamado STOP -- desactivará
+        el automático y detendrá todas las reproducciones"): sin
+        diálogo, no tiene ningún parámetro que elegir (ver
+        agregar_comando -- parametro="" renderiza solo "▶ STOP")."""
+        bloque = self._bloque_destino_para_insertar(item_referencia)
+        if bloque is None:
+            QMessageBox.information(self, "Insertar Comando STOP", "Primero creá un bloque horario.")
+            return
+        self.agregar_comando(bloque, "STOP", "")
+
+    def _insertar_comando_play(self, item_referencia):
+        """Pedido explícito ("un comando FMT Play que iniciará la
+        reproducción con automático"): sin diálogo, mismo criterio que
+        STOP."""
+        bloque = self._bloque_destino_para_insertar(item_referencia)
+        if bloque is None:
+            QMessageBox.information(self, "Insertar Comando PLAY", "Primero creá un bloque horario.")
+            return
+        self.agregar_comando(bloque, "PLAY", "")
+
     def _agregar_item_v1(self, item_referencia):
         """Pedido explícito: habilitar "Agregar Item" del menú
         contextual — mismo buscador de biblioteca a dos columnas que
@@ -881,10 +916,9 @@ class VentanaPublicidad(QWidget):
         if self.es_comando(item):
             QMessageBox.information(
                 self, "Reemplazar Item",
-                "Un Comando (FMT/HTH/ENLATADO) no se \"reemplaza\" — sacalo\n"
-                "(Sacar Item) y agregá uno nuevo con \"▶ Insertar Comando\n"
-                "FMT...\", \"▶ Insertar Comando HTH...\" o \"▶ Insertar\n"
-                "Comando ENLATADO...\" si querés cambiar el comando.",
+                "Un Comando (FMT/HTH/ENLATADO/STOP/PLAY) no se \"reemplaza\"\n"
+                "— sacalo (Sacar Item) y agregá uno nuevo con la opción\n"
+                "\"▶ Insertar Comando...\" que corresponda si querés cambiarlo.",
             )
             return
         if self._bloqueado_por_reproduccion(item):
