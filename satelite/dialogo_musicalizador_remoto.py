@@ -289,9 +289,13 @@ class DialogoMusicalizadorRemoto(QDialog):
             return
         # Pedido explícito ("2 o 3 o 4 o 5"): agregar varios ítems
         # Aleatorio de una — cada copia es un dict independiente.
+        # Mismo criterio que la versión local (paridad, ronda 126):
+        # se inserta JUSTO DEBAJO del seleccionado, no siempre al final.
         cantidad = dialogo.resultado_cantidad()
-        for _ in range(cantidad):
-            self._items_en_edicion.append(dict(item))
+        fila = self._fila_actual()
+        indice = fila + 1 if fila >= 0 else len(self._items_en_edicion)
+        for offset in range(cantidad):
+            self._items_en_edicion.insert(indice + offset, dict(item))
         self._refrescar_lista_items()
 
     def _editar_item(self):

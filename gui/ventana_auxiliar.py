@@ -120,9 +120,11 @@ class VentanaAuxiliar(QDialog):
         self.panel.actualizar_progreso(permille)
 
     def agregar_item(self, titulo, duracion, codigo, ruta="",
-                      punto_inicio_ms=0, punto_fin_ms=None, ganancia_db=0.0):
+                      punto_inicio_ms=0, punto_fin_ms=None, ganancia_db=0.0,
+                      item_destino=None):
         return self.panel.agregar_item(titulo, duracion, codigo, ruta,
-                                        punto_inicio_ms, punto_fin_ms, ganancia_db)
+                                        punto_inicio_ms, punto_fin_ms, ganancia_db,
+                                        item_destino)
 
     def agregar_pisador(self, fila_padre, titulo, duracion, codigo, ruta, posicion="inicio"):
         return self.panel.agregar_pisador(fila_padre, titulo, duracion, codigo, ruta, posicion)

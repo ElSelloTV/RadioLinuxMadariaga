@@ -25,6 +25,7 @@ ARCHIVO_ULTIMO_FMT = os.path.join(DIRECTORIO_CONFIG, "ultimo_fmt.json")
 ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
 ARCHIVO_HISTORIAL_REPRODUCCION = os.path.join(DIRECTORIO_CONFIG, "historial_reproduccion.txt")
 ARCHIVO_ROTACION_CATEGORIAS = os.path.join(DIRECTORIO_CONFIG, "rotacion_categorias.json")
+ARCHIVO_PROCESADOR_AUDIO = os.path.join(DIRECTORIO_CONFIG, "procesador_audio.json")
 # Pedido explícito ("achicar el log a 2 días y no 3"): la rotación
 # siempre fue por TAMAÑO, nunca por fecha (no hay ningún concepto de
 # "días" en el propio mecanismo) — 2MB, en el uso real de Santiago,
@@ -1082,3 +1083,37 @@ def cargar_rotacion_categorias() -> dict:
 
 def guardar_rotacion_categorias(datos: dict):
     _guardar_json_atomico(ARCHIVO_ROTACION_CATEGORIAS, datos)
+
+
+# ----------------------------------------------------------------------
+# Procesador de audio FM (filter-chain de PipeWire) -- pedido explícito:
+# "un archivo de configuración de efectos... que lo cargue filter-chain.
+# conf, algo así como elegir_config.sh pero con un semi entorno gráfico
+# integrado". La app NO procesa audio en sí (sigue siendo 100% externo
+# al programa, mismo criterio de siempre) -- esto solo GUARDA presets
+# nombrados con los parámetros de cada efecto (core/procesador_audio.py
+# es quien arma el texto real del .conf y lo aplica). Ver ese módulo
+# para el catálogo de efectos/rangos y para "Aplicar"/"Bypass".
+#
+# Estructura de config/data/procesador_audio.json:
+#   {"ruta_conf_pipewire": "...", "sink_captura": "...",
+#    "sink_reproduccion": "...", "preset_predeterminado": "Configuración 1",
+#    "preset_actual": "Configuración 1",
+#    "presets": {"Configuración 1": {"<efecto>": {"activado": bool,
+#                "<parametro>": valor, ...}, ...}, ...}}
+# ----------------------------------------------------------------------
+
+def cargar_procesador_audio() -> dict:
+    _asegurar_directorio()
+    if not os.path.exists(ARCHIVO_PROCESADOR_AUDIO):
+        return {}
+    try:
+        with open(ARCHIVO_PROCESADOR_AUDIO, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as error:
+        registrar_error(f"Error leyendo procesador_audio.json: {error}")
+        return {}
+
+
+def guardar_procesador_audio(datos: dict):
+    _guardar_json_atomico(ARCHIVO_PROCESADOR_AUDIO, datos)

@@ -3,17 +3,27 @@ gui/ventana_configuracion.py
 --------------------------------------------------------
 Configuración general de la aplicación, en pestañas: Audio (dispositivos
 Master/Preescucha, volúmenes), Fade/Transiciones, Rutas, Reproducción y
-Automatización, General, Apariencia, Actualizaciones, Diagnóstico.
+Automatización, General, Apariencia, Actualizaciones, Diagnóstico,
+Control remoto, Enlatados, Procesador FM.
 
-La pestaña "Procesador" (compresor/Stereo Enhancer/Volume Normalizer
-nativos de VLC, rondas 69-74) se sacó a pedido explícito de Santiago —
-armó una app Python aparte, standalone, que controla el filter-chain
-nativo de PipeWire para el procesamiento de audio de salida (ver
-CLAUDE.md, ronda de esta remoción, para el contexto completo).
+Historial de la pestaña "Procesador" -- por qué volvió: un compresor/
+Stereo Enhancer/Volume Normalizer NATIVOS DE VLC (rondas 69-74) se
+sacaron a pedido explícito porque Santiago armó una app Python aparte,
+standalone, para controlar el filter-chain de PipeWire. Esta pestaña
+NUEVA ("🎚 Procesador FM", ver gui/panel_procesador_audio.py) es otra
+cosa: no procesa audio desde el programa (mismo criterio de siempre,
+100% externo) -- es un controlador EN FRÍO que arma/aplica el archivo
+`filter-chain.conf` de PipeWire con plugins Calf (StereoTools/
+Compresor/Limiter, ya confirmados con audio real en este proyecto, +
+Exciter/BassEnhancer/Deesser para probar), pedido explícito de
+Santiago para volver a tener ese control desde acá con deslizadores +
+Aplicar/Predeterminado/Bypass, en vez de en una app aparte.
 
 Todo se persiste en config/data/config_general.json vía
-config/settings.py. No hay nada de satelital/RDS: es justo lo
-necesario para emitir publicidad y música de forma automática.
+config/settings.py (el Procesador FM tiene su propio archivo,
+config/data/procesador_audio.json, ver core/procesador_audio.py). No
+hay nada de satelital/RDS: es justo lo necesario para emitir
+publicidad y música de forma automática.
 --------------------------------------------------------
 """
 
@@ -44,6 +54,7 @@ from core import actualizador
 from core import reinicio_sistema
 from gui.styles import LISTA_GENEROS
 from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
+from gui.panel_procesador_audio import PanelProcesadorAudio
 
 
 class VentanaConfiguracion(QDialog):
@@ -70,16 +81,27 @@ class VentanaConfiguracion(QDialog):
         layout = QVBoxLayout(self)
 
         self.tabs = QTabWidget()
+        # Pedido explícito ("rediseñá... el mejor diseño posible para
+        # no perderse"): orden de pestañas agrupado por TEMA en vez de
+        # por orden de aparición histórico —
+        # (1) procesamiento de audio del aire: Audio / Fade / Procesador FM;
+        # (2) comportamiento de reproducción/contenido: Reproducción /
+        #     Enlatados / Rutas;
+        # (3) identidad de la app: General / Apariencia;
+        # (4) administración/mantenimiento: Control remoto /
+        #     Actualizaciones / Diagnóstico (las dos últimas, "acciones
+        #     de una vez cada tanto", quedan al final a propósito).
         self.tabs.addTab(self._crear_tab_audio(), "Audio")
         self.tabs.addTab(self._crear_tab_fade(), "Fade / Transiciones")
-        self.tabs.addTab(self._crear_tab_rutas(), "Rutas")
+        self.tabs.addTab(self._crear_tab_procesador_fm(), "🎚 Procesador FM")
         self.tabs.addTab(self._crear_tab_reproduccion(), "Reproducción y Automatización")
+        self.tabs.addTab(self._crear_tab_enlatados(), "Enlatados")
+        self.tabs.addTab(self._crear_tab_rutas(), "Rutas")
         self.tabs.addTab(self._crear_tab_general(), "General")
         self.tabs.addTab(self._crear_tab_apariencia(), "Apariencia")
+        self.tabs.addTab(self._crear_tab_control_remoto(), "Control remoto")
         self.tabs.addTab(self._crear_tab_actualizaciones(), "Actualizaciones")
         self.tabs.addTab(self._crear_tab_diagnostico(), "Diagnóstico")
-        self.tabs.addTab(self._crear_tab_control_remoto(), "Control remoto")
-        self.tabs.addTab(self._crear_tab_enlatados(), "Enlatados")
         layout.addWidget(self.tabs)
 
         botones = QDialogButtonBox(
@@ -256,6 +278,9 @@ class VentanaConfiguracion(QDialog):
     # ------------------------------------------------------------------
     # Tab: Rutas
     # ------------------------------------------------------------------
+    def _crear_tab_procesador_fm(self) -> QWidget:
+        return PanelProcesadorAudio(parent=self)
+
     def _crear_tab_rutas(self) -> QWidget:
         widget = QWidget()
         form = QFormLayout(widget)
@@ -289,8 +314,20 @@ class VentanaConfiguracion(QDialog):
     # Tab: Reproducción y Automatización
     # ------------------------------------------------------------------
     def _crear_tab_reproduccion(self) -> QWidget:
+        # Pedido explícito ("rediseñá... para no perderse"): esta
+        # pestaña había ido creciendo hasta 12 campos + 3 notas en un
+        # único QFormLayout plano, sin ninguna separación visual —
+        # reagrupada en 4 bloques temáticos (mismo criterio ya usado
+        # en la pestaña Diagnóstico, ronda 98) + QScrollArea por si no
+        # entra entera en una pantalla más baja.
+        widget_exterior = QWidget()
+        layout_exterior = QVBoxLayout(widget_exterior)
+        layout_exterior.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
         widget = QWidget()
-        form = QFormLayout(widget)
+        layout = QVBoxLayout(widget)
 
         self.chk_avanzar_en_error = QCheckBox(
             "Si un ítem falla al reproducirse, saltar automáticamente al siguiente"
@@ -412,49 +449,65 @@ class VentanaConfiguracion(QDialog):
             "arranque. Requiere reabrir la app para aplicar."
         )
 
-        form.addRow(self.chk_avanzar_en_error)
-        form.addRow("Fallos consecutivos antes de detenerse:", self.spin_reintentos)
-        form.addRow(self.chk_repetir_lista)
-        form.addRow("Tolerancia de silencio al recortar (Música/Artística/Pisador):", self.spin_tolerancia_silencio)
-        form.addRow("Tolerancia de silencio estricta (Publicidad/Separadores/HTH):", self.spin_tolerancia_silencio_v1)
-        form.addRow("Umbral de silencio (más negativo = más permisivo):", self.spin_umbral_silencio)
-        form.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
-        form.addRow(self.chk_nivelado_activado)
-        form.addRow("Nivelado de volumen — objetivo de sonoridad:", self.spin_objetivo_lufs)
-        form.addRow("Nivelado de volumen — techo de seguridad de pico:", self.spin_techo_pico)
-        form.addRow("Buffer de audio (anti-tartamudeo):", self.spin_buffer_caching)
-        form.addRow("Retardo de arranque interno:", self.spin_retardo_arranque)
+        def _nota(texto: str) -> QLabel:
+            lbl = QLabel(texto)
+            lbl.setObjectName("lblTituloBloqueActivo")
+            lbl.setWordWrap(True)
+            return lbl
 
-        nota_silencio = QLabel(
-            "El recorte de silencio SOLO mira el principio y el final de\n"
-            "cada tema, nunca el medio — una pausa breve a mitad de una\n"
-            "canción nunca se corta, sin importar el umbral elegido.\n"
-            "Publicidad y Separadores usan una tolerancia más estricta (por\n"
-            "defecto 0, sin margen) para que las tandas queden bien pegadas."
+        grupo_errores = QGroupBox("⚠ Manejo de errores")
+        form_errores = QFormLayout(grupo_errores)
+        form_errores.addRow(self.chk_avanzar_en_error)
+        form_errores.addRow("Fallos consecutivos antes de detenerse:", self.spin_reintentos)
+        form_errores.addRow(self.chk_repetir_lista)
+        layout.addWidget(grupo_errores)
+
+        grupo_silencio = QGroupBox("🔇 Silencio y recorte")
+        form_silencio = QFormLayout(grupo_silencio)
+        form_silencio.addRow(
+            "Tolerancia al recortar (Música/Artística/Pisador):", self.spin_tolerancia_silencio,
         )
-        nota_silencio.setObjectName("lblTituloBloqueActivo")
-        form.addRow(nota_silencio)
-
-        nota_pisador = QLabel(
-            "Mientras suena el Pisador superpuesto al inicio de un tema\n"
-            "(Ventana 2 / Auxiliar), el tema baja este nivel de volumen y\n"
-            "vuelve al original apenas termina el Pisador."
+        form_silencio.addRow(
+            "Tolerancia estricta (Publicidad/Separadores/HTH):", self.spin_tolerancia_silencio_v1,
         )
-        nota_pisador.setObjectName("lblTituloBloqueActivo")
-        form.addRow(nota_pisador)
+        form_silencio.addRow("Umbral (más negativo = más permisivo):", self.spin_umbral_silencio)
+        form_silencio.addRow(_nota(
+            "Solo mira el principio y el final de cada tema, nunca el medio — "
+            "una pausa breve a mitad de una canción nunca se corta, sin "
+            "importar el umbral elegido."
+        ))
+        layout.addWidget(grupo_silencio)
 
-        nota_nivelado = QLabel(
-            "El nivelado de volumen NUNCA reescribe el archivo original —\n"
-            "solo calcula un ajuste de volumen que se aplica al reproducir.\n"
-            "Usa sonoridad real (LUFS) si pyloudnorm está instalado (ver\n"
-            "Diagnóstico → \"Verificar motor de análisis de audio\"); si no,\n"
-            "cae a un promedio de amplitud más simple, sin romper nada."
-        )
-        nota_nivelado.setObjectName("lblTituloBloqueActivo")
-        nota_nivelado.setWordWrap(True)
-        form.addRow(nota_nivelado)
+        grupo_volumen = QGroupBox("🔊 Volumen y nivelado")
+        form_volumen = QFormLayout(grupo_volumen)
+        form_volumen.addRow("Bajada de volumen al sonar un Pisador:", self.spin_bajada_pisador)
+        form_volumen.addRow(_nota(
+            "Mientras suena el Pisador superpuesto al inicio de un tema "
+            "(Ventana 2 / Auxiliar), el tema baja este nivel y vuelve al "
+            "original apenas termina el Pisador."
+        ))
+        form_volumen.addRow(self.chk_nivelado_activado)
+        form_volumen.addRow("Objetivo de sonoridad:", self.spin_objetivo_lufs)
+        form_volumen.addRow("Techo de seguridad de pico:", self.spin_techo_pico)
+        form_volumen.addRow(_nota(
+            "El nivelado NUNCA reescribe el archivo original — solo calcula "
+            "un ajuste de volumen que se aplica al reproducir. Usa sonoridad "
+            "real (LUFS) si pyloudnorm está instalado (ver Diagnóstico → "
+            "\"Verificar motor de análisis de audio\"); si no, cae a un "
+            "promedio de amplitud más simple, sin romper nada."
+        ))
+        layout.addWidget(grupo_volumen)
 
-        return widget
+        grupo_rendimiento = QGroupBox("⚙ Rendimiento (requieren reabrir la app)")
+        form_rendimiento = QFormLayout(grupo_rendimiento)
+        form_rendimiento.addRow("Buffer de audio (anti-tartamudeo):", self.spin_buffer_caching)
+        form_rendimiento.addRow("Retardo de arranque interno:", self.spin_retardo_arranque)
+        layout.addWidget(grupo_rendimiento)
+
+        layout.addStretch()
+        scroll.setWidget(widget)
+        layout_exterior.addWidget(scroll)
+        return widget_exterior
 
     def _on_toggle_nivelado_activado(self, activo: bool):
         """Apagar el nivelado no borra los dos números configurados —
