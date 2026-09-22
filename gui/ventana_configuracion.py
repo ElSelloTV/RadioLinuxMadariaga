@@ -33,10 +33,11 @@ import subprocess
 import sys
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QTabWidget, QWidget,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QWidget,
     QComboBox, QSlider, QCheckBox, QDoubleSpinBox, QSpinBox, QLineEdit,
     QPushButton, QLabel, QDialogButtonBox, QFileDialog, QApplication,
-    QMessageBox, QColorDialog, QGroupBox, QScrollArea
+    QMessageBox, QColorDialog, QGroupBox, QScrollArea,
+    QListWidget, QStackedWidget, QSplitter
 )
 from PySide6.QtCore import Qt, QUrl, QProcess
 from PySide6.QtGui import QColor, QDesktopServices
@@ -61,7 +62,8 @@ class VentanaConfiguracion(QDialog):
     def __init__(self, parent=None, pestaña_inicial: int = 0, ventana_explorador=None):
         super().__init__(parent)
         self.setWindowTitle("Configuración")
-        self.setMinimumSize(560, 520)
+        self.setMinimumSize(900, 560)
+        self.resize(980, 640)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
 
         # Pedido explícito: "Reanalizar biblioteca" (tab Diagnóstico)
@@ -73,36 +75,62 @@ class VentanaConfiguracion(QDialog):
         self._construir_ui()
         self._cargar_valores_en_ui()
 
-        if 0 <= pestaña_inicial < self.tabs.count():
-            self.tabs.setCurrentIndex(pestaña_inicial)
+        if 0 <= pestaña_inicial < self.lista.count():
+            self.lista.setCurrentRow(pestaña_inicial)
 
     # ------------------------------------------------------------------
     def _construir_ui(self):
         layout = QVBoxLayout(self)
 
-        self.tabs = QTabWidget()
         # Pedido explícito ("rediseñá... el mejor diseño posible para
-        # no perderse"): orden de pestañas agrupado por TEMA en vez de
-        # por orden de aparición histórico —
+        # no perderse"): de pestañas arriba a una LISTA a la izquierda +
+        # panel a la derecha (Opción B de las dos maquetas que se le
+        # mostraron a Santiago antes de tocar código — elegida sobre
+        # la de árbol agrupado, "más directa, un solo click"). El
+        # ORDEN sigue siendo el mismo agrupado por tema de la ronda
+        # anterior —
         # (1) procesamiento de audio del aire: Audio / Fade / Procesador FM;
         # (2) comportamiento de reproducción/contenido: Reproducción /
         #     Enlatados / Rutas;
         # (3) identidad de la app: General / Apariencia;
         # (4) administración/mantenimiento: Control remoto /
         #     Actualizaciones / Diagnóstico (las dos últimas, "acciones
-        #     de una vez cada tanto", quedan al final a propósito).
-        self.tabs.addTab(self._crear_tab_audio(), "Audio")
-        self.tabs.addTab(self._crear_tab_fade(), "Fade / Transiciones")
-        self.tabs.addTab(self._crear_tab_procesador_fm(), "🎚 Procesador FM")
-        self.tabs.addTab(self._crear_tab_reproduccion(), "Reproducción y Automatización")
-        self.tabs.addTab(self._crear_tab_enlatados(), "Enlatados")
-        self.tabs.addTab(self._crear_tab_rutas(), "Rutas")
-        self.tabs.addTab(self._crear_tab_general(), "General")
-        self.tabs.addTab(self._crear_tab_apariencia(), "Apariencia")
-        self.tabs.addTab(self._crear_tab_control_remoto(), "Control remoto")
-        self.tabs.addTab(self._crear_tab_actualizaciones(), "Actualizaciones")
-        self.tabs.addTab(self._crear_tab_diagnostico(), "Diagnóstico")
-        layout.addWidget(self.tabs)
+        #     de una vez cada tanto", quedan al final a propósito) —
+        # ya no hace falta un separador visual de grupo (la lista es
+        # plana, pedido explícito), el orden mismo alcanza para que
+        # las secciones relacionadas queden juntas.
+        secciones = (
+            ("🔊", "Audio", self._crear_tab_audio),
+            ("🎛", "Fade / Transiciones", self._crear_tab_fade),
+            ("🎚", "Procesador FM", self._crear_tab_procesador_fm),
+            ("▶", "Reproducción y Automatización", self._crear_tab_reproduccion),
+            ("📦", "Enlatados", self._crear_tab_enlatados),
+            ("📁", "Rutas", self._crear_tab_rutas),
+            ("⚙", "General", self._crear_tab_general),
+            ("🎨", "Apariencia", self._crear_tab_apariencia),
+            ("📡", "Control remoto", self._crear_tab_control_remoto),
+            ("⬇", "Actualizaciones", self._crear_tab_actualizaciones),
+            ("🩺", "Diagnóstico", self._crear_tab_diagnostico),
+        )
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        self.lista = QListWidget()
+        self.lista.setObjectName("listaSeccionesConfiguracion")
+        self.lista.setMinimumWidth(230)
+        self.lista.setMaximumWidth(280)
+        self.stack = QStackedWidget()
+        for icono, nombre, constructor in secciones:
+            self.lista.addItem(f"{icono}  {nombre}")
+            self.stack.addWidget(constructor())
+        self.lista.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.lista.setCurrentRow(0)
+
+        splitter.addWidget(self.lista)
+        splitter.addWidget(self.stack)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter)
 
         botones = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
