@@ -344,14 +344,31 @@ class PanelReproductor(QWidget):
     def agregar_item(
         self, titulo: str, duracion: str, codigo: str, ruta: str = "",
         punto_inicio_ms: int = 0, punto_fin_ms: int = None, ganancia_db: float = 0.0,
+        item_destino=None,
     ):
+        """`item_destino`, si se pasa, es el ítem sobre el que se soltó
+        el archivo (pedido explícito: "debe ir donde posiciono el mouse
+        y suelto el botón") — se inserta JUSTO DESPUÉS de ese ítem, en
+        vez de ir siempre al final. Un Pisador anidado (hijo) como
+        destino se resuelve a su padre (acá solo hay posiciones de
+        nivel superior). `None` (soltado en hueco vacío, o cualquier
+        llamador que no pasa nada — ej. el refill del Musicalizador)
+        conserva el comportamiento de siempre: al final."""
         item = QTreeWidgetItem([titulo, duracion, codigo])
         item.setData(0, ROL_ESTADO_ITEM, ESTADO_NORMAL)
         item.setData(0, Qt.ItemDataRole.UserRole, ruta)
         item.setData(0, ROL_ANALISIS_AUDIO, {
             "punto_inicio_ms": punto_inicio_ms, "punto_fin_ms": punto_fin_ms, "ganancia_db": ganancia_db,
         })
-        self.tree.addTopLevelItem(item)
+        indice = -1
+        if item_destino is not None:
+            if item_destino.parent() is not None:
+                item_destino = item_destino.parent()
+            indice = self.tree.indexOfTopLevelItem(item_destino)
+        if indice >= 0:
+            self.tree.insertTopLevelItem(indice + 1, item)
+        else:
+            self.tree.addTopLevelItem(item)
         self._scroll_al_final_con_aire()
         return item
 

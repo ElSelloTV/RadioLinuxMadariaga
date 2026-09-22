@@ -321,14 +321,22 @@ class VentanaMusicalizador(QDialog):
             return
         item = dialogo.resultado()
         if item:
+            # Pedido explícito: un ítem nuevo se agrega JUSTO DEBAJO
+            # del seleccionado en la lista (antes siempre iba al
+            # final, sin importar dónde estuviera parado el operador
+            # armando el formato) — sin nada seleccionado, sigue yendo
+            # al final, como antes.
+            fila = self._fila_actual()
+            indice = fila + 1 if fila >= 0 else len(self._items_en_edicion)
             # Pedido explícito: agregar varios ítems Aleatorio de una
             # (2, 3, 4, 5...) — cada copia es un dict independiente
             # (misma categoría), la serie los resuelve a archivos
             # distintos entre sí (rutas_a_evitar, ya existente).
             cantidad = dialogo.resultado_cantidad()
-            for _ in range(cantidad):
-                self._items_en_edicion.append(dict(item))
+            for offset in range(cantidad):
+                self._items_en_edicion.insert(indice + offset, dict(item))
             self._refrescar_lista_items()
+            self.lista_items.setCurrentItem(self.lista_items.topLevelItem(indice + cantidad - 1))
 
     def _editar_item(self):
         fila = self._fila_actual()

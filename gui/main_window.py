@@ -258,9 +258,14 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         # Configuración: antes un botón simple (siempre abría la
-        # pestaña de Audio) — ahora un desplegable con las 5 pestañas,
-        # reemplazando al viejo menú "Herramientas" que tenía los
-        # mismos 5 accesos (mismo contenido, una fila menos).
+        # pestaña de Audio) — ahora un desplegable con accesos
+        # directos a las pestañas más usadas, reemplazando al viejo
+        # menú "Herramientas". Bug real ya documentado (ver CLAUDE.md,
+        # "El botón 'Actualizar'..." y el episodio de este mismo
+        # desplegable con "Procesador" en el medio): estos índices son
+        # ÍNDICES DE PESTAÑA — si el orden de `_construir_ui()` (más
+        # arriba, en ventana_configuracion.py) cambia, HAY QUE
+        # actualizar esta lista en el mismo cambio, nunca por separado.
         boton_config = QToolButton()
         boton_config.setText("⚙ Configuración")
         boton_config.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -268,9 +273,10 @@ class MainWindow(QMainWindow):
         for texto, indice_tab in (
             ("Configuración de audio...", 0),
             ("Tiempos de Fade...", 1),
-            ("Rutas de archivos...", 2),
+            ("🎚 Procesador FM...", 2),
             ("Reproducción y Automatización...", 3),
-            ("Preferencias generales...", 4),
+            ("Rutas de archivos...", 5),
+            ("Preferencias generales...", 6),
         ):
             accion_tab = self._crear_accion(texto)
             accion_tab.triggered.connect(lambda checked=False, i=indice_tab: self.abrir_configuracion(i))
@@ -675,12 +681,18 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Pisador agregado a: {item_destino.text(0)}", 3000)
             return
 
-        # Pedido explícito: agregar un ítem a mano (arrastrando) es la
-        # ÚNICA excepción a "Ventana 2 siempre reproduce el FMT en
-        # memoria" — corta el modo Musicalizador para que no compita
-        # con lo que el operador acaba de poner.
-        self.gestor_emision.detener_musicalizador()
-
+        # Bug real corregido (pedido explícito, verificado): agregar un
+        # ítem a mano SOLÍA cortar el ciclo continuo del Musicalizador
+        # por completo (`detener_musicalizador()`), pensado en su
+        # momento para que un refill no "compitiera" con lo recién
+        # puesto — pero el refill de `_generar_serie_musicalizador()`
+        # SOLO agrega al final, nunca borra ni pisa nada ya cargado, así
+        # que ese temor nunca aplicaba de verdad. En la práctica, cortar
+        # el Musicalizador acá hacía que la carga automática del FMT
+        # dejara de reponerse para siempre después de UN solo arrastre
+        # manual, hasta que algo disparara un Comando FMT de nuevo — ya
+        # NO se corta: el ítem soltado se inserta donde corresponda y
+        # el ciclo del formato activo sigue reponiéndose solo.
         titulo = os.path.splitext(os.path.basename(ruta))[0]
         duracion = obtener_duracion_formateada(ruta)
         self.ventana_emision.agregar_item(
@@ -688,6 +700,7 @@ class MainWindow(QMainWindow):
             (registro or {}).get("punto_inicio_ms") or 0,
             (registro or {}).get("punto_fin_ms"),
             (registro or {}).get("ganancia_db") or 0.0,
+            item_destino,
         )
         self.statusBar().showMessage(f"Agregado a Emisión: {titulo}", 3000)
 
@@ -857,6 +870,7 @@ class MainWindow(QMainWindow):
             (registro or {}).get("punto_inicio_ms") or 0,
             (registro or {}).get("punto_fin_ms"),
             (registro or {}).get("ganancia_db") or 0.0,
+            item_destino,
         )
 
     # ------------------------------------------------------------------
