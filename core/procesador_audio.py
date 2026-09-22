@@ -348,6 +348,7 @@ context.modules = [
                 audio.position = [ FL FR ]
             }}
         }}
+        flags = [ ifexists nofail ]
     }}
 ]
 """
@@ -379,6 +380,7 @@ context.modules = [
                 audio.position = [ FL FR ]
             }}
         }}
+        flags = [ ifexists nofail ]
     }}
 ]
 """
