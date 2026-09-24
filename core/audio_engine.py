@@ -193,13 +193,36 @@ class EnrutadorPactl(QObject):
         self._cola = []
         self._procesando = False
 
-    def reclamar(self, nombre_sink: str, al_listo_para_reproducir, sigue_vigente=None):
+    def reclamar(self, nombre_sink: str, al_listo_para_reproducir, sigue_vigente=None,
+                 al_confirmar_enrutado=None):
         """Encola un pedido para el sink `nombre_sink`. Cuando le
         toca el turno (nunca antes de que el pedido anterior haya
         terminado), toma la foto de "qué ya existía" y RECIÉN AHÍ
         llama a `al_listo_para_reproducir()` — es responsabilidad de
         quien llama hacer el `self._player.play()` real DENTRO de ese
         callback, nunca antes de encolar.
+
+        `al_confirmar_enrutado` (pedido explícito, reporte real en
+        vivo: "hice un previo en la ventana 3... al pasar de ítem
+        automáticamente en la ventana 2, comenzó a salir por la
+        salida de audio del previo... por un segundo"): callback
+        opcional, llamado UNA VEZ que este pedido puntual terminó de
+        resolverse — sea por el camino rápido (el enrutado DIRECTO de
+        libVLC ya dejó el stream en el sink correcto), por el camino
+        de respaldo (`_mover()` ya confirmó el `pactl move-sink-input`),
+        por agotar `MAX_INTENTOS` sin encontrar nada, o porque el
+        pedido se volvió obsoleto (`sigue_vigente` en `False`) — en
+        CUALQUIERA de esos casos, mediante `_terminar_job_actual()`.
+        Existe porque entre que `al_listo_para_reproducir()` dispara
+        el `play()` real y que ESTE módulo confirma/corrige a qué sink
+        quedó atado el stream nuevo, hay una ventana real (mínimo
+        `ESPERA_REINTENTO_MS`, hasta varios segundos si `pactl`
+        responde lento) durante la cual el audio puede estar sonando
+        por el sink que PipeWire haya considerado "default" en ese
+        instante — no necesariamente el correcto. `MotorAudio.
+        reproducir()` usa esto para arrancar MUDO y recién subir el
+        volumen acá, cerrando esa ventana de raíz (ver
+        `_arrancar_reproduccion_real()`).
 
         `sigue_vigente` (pedido explícito, "arreglá eso del hueco real
         y concreto, para que no vuelva a fallar" — bug real de campo,
@@ -226,6 +249,7 @@ class EnrutadorPactl(QObject):
         self._cola.append({
             "sink": nombre_sink, "al_listo": al_listo_para_reproducir,
             "sigue_vigente": sigue_vigente or (lambda: True),
+            "al_confirmar_enrutado": al_confirmar_enrutado,
             "intento": 0, "ids_previos": None,
         })
         self._procesar_siguiente_si_libre()
@@ -405,7 +429,15 @@ class EnrutadorPactl(QObject):
 
     def _terminar_job_actual(self):
         if self._cola:
-            self._cola.pop(0)
+            job = self._cola.pop(0)
+            callback_confirmado = job.get("al_confirmar_enrutado")
+            if callback_confirmado is not None:
+                # Único punto de salida real de un job (éxito por
+                # camino rápido, por respaldo, por agotar intentos, o
+                # por quedar obsoleto) -- acá es donde MotorAudio se
+                # entera de que ya es seguro subir el volumen (ver
+                # reclamar() más arriba).
+                callback_confirmado()
         self._procesando = False
         self._procesar_siguiente_si_libre()
 
@@ -719,6 +751,19 @@ class MotorAudio(QObject):
         # comportamiento es IDÉNTICO a como era antes: arranca ya
         # mismo, sin ninguna cola de por medio.
         momento_pedido_reproducir = time.monotonic()
+        # Contenedor mutable -- lo escribe _arrancar_reproduccion_real()
+        # con la función real de "subir el volumen" recién definida ahí
+        # adentro (necesita `volumen_final`, calculado en ese momento),
+        # y lo lee _al_confirmar_enrutado() más abajo, que se pasa a
+        # EnrutadorPactl.reclamar() ANTES de que _arrancar_reproduccion_
+        # real() siquiera se haya ejecutado -- ver la nota del bug real
+        # más abajo, dentro de _arrancar_reproduccion_real().
+        _enrutador_pactl_confirmacion = {}
+
+        def _al_confirmar_enrutado():
+            aplicar = _enrutador_pactl_confirmacion.get("aplicar")
+            if aplicar is not None:
+                aplicar()
 
         def _arrancar_reproduccion_real():
             if self._generacion_reproduccion != generacion_de_esta_reproduccion:
@@ -752,11 +797,39 @@ class MotorAudio(QObject):
             if ganancia_db:
                 from core.analizador_audio import volumen_ajustado_por_ganancia
                 volumen_final = volumen_ajustado_por_ganancia(volumen_base, ganancia_db)
-            if duracion_declick_ms > 0:
+
+            def _aplicar_volumen_real():
+                if self._generacion_reproduccion != generacion_de_esta_reproduccion:
+                    return  # una reproducción MÁS NUEVA ya reemplazó esta
+                if duracion_declick_ms > 0:
+                    self.set_volumen(0)
+                    self.fade_volumen_a(volumen_final, duracion_declick_ms / 1000.0)
+                else:
+                    self.set_volumen(volumen_final)
+
+            if _es_nombre_pactl_directo(self._id_dispositivo):
+                # Bug real reportado en vivo, al aire ("hice un previo
+                # en la ventana 3... al pasar de ítem automáticamente
+                # en la ventana 2, comenzó a salir por la salida de
+                # audio del previo... por un segundo"): entre este
+                # play() y que EnrutadorPactl confirme/corrija a qué
+                # sink quedó atado el stream nuevo hay una ventana real
+                # (ver el docstring de EnrutadorPactl.reclamar) -- si
+                # en ESE instante PipeWire considera "default" un sink
+                # distinto del elegido (ej. porque el operador acaba de
+                # usar el ▶ Previo, activando ESE dispositivo), el
+                # audio puede emitirse ahí un momento antes de la
+                # corrección. Se arranca MUDO (nunca en volumen 100 por
+                # defecto de un motor recién creado) y recién se sube
+                # el volumen real cuando EnrutadorPactl confirma que el
+                # enrutado ya está resuelto (`al_confirmar_enrutado`,
+                # llamado siempre, incluso si tuvo que rendirse tras
+                # MAX_INTENTOS -- mejor sonar posiblemente mal
+                # enrutado que quedar mudo para siempre).
                 self.set_volumen(0)
-                self.fade_volumen_a(volumen_final, duracion_declick_ms / 1000.0)
+                _enrutador_pactl_confirmacion["aplicar"] = _aplicar_volumen_real
             else:
-                self.set_volumen(volumen_final)
+                _aplicar_volumen_real()
 
             # El seek necesita que el media ya haya arrancado a
             # reproducirse; libvlc lo tolera con un pequeño retardo.
@@ -804,6 +877,7 @@ class MotorAudio(QObject):
             _enrutador_pactl().reclamar(
                 self._id_dispositivo, _arrancar_reproduccion_real,
                 sigue_vigente=lambda: self._generacion_reproduccion == generacion_de_esta_reproduccion,
+                al_confirmar_enrutado=_al_confirmar_enrutado,
             )
         else:
             _arrancar_reproduccion_real()
