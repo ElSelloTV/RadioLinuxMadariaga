@@ -808,6 +808,47 @@ class MotorAudio(QObject):
         else:
             _arrancar_reproduccion_real()
 
+    def reconectar_tras_reinicio_audio(self):
+        """Recupera la reproducción EN CURSO tras un reinicio del
+        servidor de audio del sistema (PipeWire/pipewire-pulse/
+        wireplumber) — ej. "✅ Aplicar"/"🔇 Bypass" de Configuración →
+        Procesador FM, que reinicia esos 3 servicios a propósito para
+        tomar el .conf nuevo (ver core/procesador_audio.py). Ese
+        reinicio mata TODA conexión de audio que este motor tuviera
+        abierta — sin esto, el ítem que estaba sonando en ese instante
+        queda "vivo" (el reproductor sigue creyendo que está
+        reproduciendo, avanza la posición) pero MUDO para siempre,
+        hasta que algo dispare un `reproducir()` nuevo — típicamente el
+        operador saltando a mano al próximo ítem (reporte real,
+        Santiago: "aprieto Bypass y deja mudo... tengo que pasar al
+        siguiente ítem, que macana").
+
+        Mismo mecanismo YA probado en este archivo — un `stop()`
+        seguido de un `play()` fuerza a libVLC a desarmar y volver a
+        crear de cero la salida de audio (aout), ver
+        `_aplicar_dispositivo_salida()` — pero acá se preserva la
+        posición y el volumen actuales en vez de reiniciar el ítem
+        desde el principio: se lee `get_time()` y se lo vuelve a pasar
+        como `punto_inicio_ms` de un `reproducir()` nuevo sobre el
+        mismo archivo ya cargado (`ruta=None`), con `ganancia_db=0.0`
+        y `volumen_base` puesto directo en el volumen YA nivelado que
+        este motor tenía (`_volumen_deseado`) — evita recalcular/
+        reaplicar la ganancia del ítem dos veces.
+
+        No hace nada si este motor no tiene nada sonando en este
+        instante (`esta_reproduciendo()` en `False`) — un motor
+        detenido/pausado no necesita "reconectar" nada, el próximo
+        `reproducir()` normal ya va a arrancar limpio."""
+        if not self._disponible or not self.esta_reproduciendo():
+            return
+        posicion_ms = max(0, self._player.get_time())
+        self.reproducir(
+            punto_inicio_ms=posicion_ms,
+            punto_fin_ms=self._punto_fin_ms,
+            ganancia_db=0.0,
+            volumen_base=self._volumen_deseado,
+        )
+
     def pausar(self):
         if not self._disponible:
             return

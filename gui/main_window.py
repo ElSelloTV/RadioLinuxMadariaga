@@ -2001,6 +2001,48 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def abrir_configuracion(self, pestaña: int = 0):
         dialogo = VentanaConfiguracion(self, pestaña_inicial=pestaña, ventana_explorador=self.ventana_explorador)
+        dialogo.aplicado_procesador_fm.connect(self._reconectar_audio_tras_reinicio_pipewire)
         if dialogo.exec() == VentanaConfiguracion.DialogCode.Accepted:
             self._aplicar_configuracion_en_vivo()
             self.statusBar().showMessage("Configuración guardada y aplicada (sin cortar la reproducción).", 4000)
+
+    def _reconectar_audio_tras_reinicio_pipewire(self):
+        """Conectado a VentanaConfiguracion.aplicado_procesador_fm
+        (ver gui/panel_procesador_audio.py) -- pedido explícito, reporte
+        real de Santiago: "aprieto Bypass y deja mudo, y debo pasar al
+        siguiente ítem, que macana, porque tengo que salir de esa
+        ventana y luego volver". "Aplicar"/"Bypass" del Procesador FM
+        reinician PipeWire/pipewire-pulse/wireplumber a propósito para
+        tomar el .conf nuevo -- eso mata cualquier conexión de audio ya
+        abierta, dejando MUDO (pero "vivo") cualquier ítem que estuviera
+        sonando en ese instante en Ventana 1/2/Auxiliar/Preescucha.
+
+        En vez de obligar al operador a saltar a mano al próximo ítem
+        para recuperar sonido, se reconecta SOLO lo que de verdad siga
+        "sonando" (esta_reproduciendo() en cada motor -- ver
+        MotorAudio.reconectar_tras_reinicio_audio(), preserva posición
+        y volumen, no reinicia nada desde el principio). Diferido un
+        instante (systemctl --user restart ya espera a que los 3
+        servicios terminen de levantar antes de devolver el control,
+        pero wireplumber puede tardar un pelo más en terminar de
+        reconocer los dispositivos -- mismo margen de seguridad que ya
+        usa el resto de la app para "dale un instante al sistema")."""
+        def _reconectar():
+            motores = [
+                self.gestor_publicidad.motor,
+                self.gestor_publicidad.motor_anuncio_manual,
+                self.gestor_emision.motor,
+                self.gestor_emision.motor_pisador,
+                self.gestor_emision.motor_anuncio_manual,
+                self.gestor_explorador.motor,
+            ]
+            if self._gestor_auxiliar is not None:
+                motores.extend([
+                    self._gestor_auxiliar.motor,
+                    self._gestor_auxiliar.motor_pisador,
+                    self._gestor_auxiliar.motor_anuncio_manual,
+                ])
+            for motor in motores:
+                motor.reconectar_tras_reinicio_audio()
+
+        QTimer.singleShot(600, _reconectar)

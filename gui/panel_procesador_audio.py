@@ -153,6 +153,19 @@ class GrupoEfecto(QGroupBox):
 
 
 class PanelProcesadorAudio(QWidget):
+    # Pedido explícito, reporte real ("aprieto Bypass y deja mudo...
+    # tengo que pasar al siguiente ítem, que macana, porque tengo que
+    # salir de esa ventana y luego volver"): tanto "Aplicar" como
+    # "Bypass" reinician PipeWire/pipewire-pulse/wireplumber para tomar
+    # el .conf nuevo (core/procesador_audio.py) -- eso mata TODA
+    # conexión de audio abierta, incluida la del ítem que esté sonando
+    # en ese instante en Ventana 1/2/Auxiliar. Esta señal avisa a
+    # MainWindow (la única con referencias a los gestores/motores
+    # reales) para que los reconecte solos -- ver
+    # MotorAudio.reconectar_tras_reinicio_audio() y
+    # MainWindow._reconectar_audio_tras_reinicio_pipewire().
+    reinicio_pipewire_aplicado = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._datos = procesador_audio.cargar_datos()
@@ -399,6 +412,8 @@ class PanelProcesadorAudio(QWidget):
         exito, mensaje = self._aplicar_texto(texto, ruta)
         self.btn_bypass.setChecked(False)
         self.btn_bypass.setText("🔇 Bypass (sin efectos)")
+        if exito:
+            self.reinicio_pipewire_aplicado.emit()
         (QMessageBox.information if exito else QMessageBox.warning)(self, "Aplicar procesador FM", mensaje)
         self.lbl_estado.setText(mensaje)
 
@@ -435,4 +450,5 @@ class PanelProcesadorAudio(QWidget):
             self.btn_bypass.setText(
                 "🔊 Quitar Bypass (volver a los efectos)" if activado else "🔇 Bypass (sin efectos)"
             )
+            self.reinicio_pipewire_aplicado.emit()
         self.lbl_estado.setText(mensaje)

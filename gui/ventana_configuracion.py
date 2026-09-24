@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QColorDialog, QGroupBox, QScrollArea,
     QListWidget, QStackedWidget, QSplitter
 )
-from PySide6.QtCore import Qt, QUrl, QProcess
+from PySide6.QtCore import Qt, QUrl, QProcess, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 
 from config.settings import (
@@ -59,6 +59,12 @@ from gui.panel_procesador_audio import PanelProcesadorAudio
 
 
 class VentanaConfiguracion(QDialog):
+    # Reemitida desde PanelProcesadorAudio.reinicio_pipewire_aplicado
+    # (ver gui/panel_procesador_audio.py) -- MainWindow la escucha para
+    # reconectar los motores de audio que hayan quedado mudos tras el
+    # reinicio de PipeWire que dispara "Aplicar"/"Bypass".
+    aplicado_procesador_fm = Signal()
+
     def __init__(self, parent=None, pestaña_inicial: int = 0, ventana_explorador=None):
         super().__init__(parent)
         self.setWindowTitle("Configuración")
@@ -307,7 +313,9 @@ class VentanaConfiguracion(QDialog):
     # Tab: Rutas
     # ------------------------------------------------------------------
     def _crear_tab_procesador_fm(self) -> QWidget:
-        return PanelProcesadorAudio(parent=self)
+        panel = PanelProcesadorAudio(parent=self)
+        panel.reinicio_pipewire_aplicado.connect(self.aplicado_procesador_fm)
+        return panel
 
     def _crear_tab_rutas(self) -> QWidget:
         widget = QWidget()
