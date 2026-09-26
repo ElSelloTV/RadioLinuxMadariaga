@@ -63,7 +63,17 @@ from config.settings import (
 # CANAL, donde detenga todas las reproducciones y emita SOLO el audio
 # del siguiente streaming" -- ver VentanaExplorador.solicitud_audio_canal
 # y MainWindow._on_solicitud_audio_canal() más abajo.
-URL_AUDIO_CANAL = "https://elsellotvmax.com.ar:9443/elsellotv.m3u8"
+# Cambiado a RTSP local (pedido explícito, "el delay es menor" --
+# confirmar en producción): antes era el HLS externo
+# "https://elsellotvmax.com.ar:9443/elsellotv.m3u8" -- ese m3u8, por
+# diseño, bufferiza varios segundos de segmentos antes de reproducir
+# (robustez sobre internet público, no baja latencia) y además viaja
+# de ida y vuelta a un servidor externo. Un RTSP a una IP de la LAN
+# no tiene ese colchón de segmentos ni el viaje a internet, así que
+# debería sonar bastante más "en vivo". Si vuelve a hacer falta el
+# streaming viejo (ej. el codificador de 192.168.1.150 no responde),
+# alcanza con volver a pegar la URL de arriba en esta misma constante.
+URL_AUDIO_CANAL = "rtsp://192.168.1.150/12"
 
 
 class MainWindow(QMainWindow):
