@@ -3,7 +3,7 @@
 > 🚧 **PROYECTO EN DESARROLLO.** Uso en producción bajo tu propio
 > riesgo — puede haber cambios frecuentes y funciones incompletas.
 >
-> **Última actualización:** 2026-09-24
+> **Última actualización:** 2026-09-26
 
 Automatización radial para Linux (simil Dinesat), en
 Python + PySide6 + VLC. Publicidad, música y explorador de medios,
