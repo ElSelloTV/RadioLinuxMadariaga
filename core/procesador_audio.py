@@ -53,6 +53,7 @@ import tempfile
 from config.settings import (
     registrar_evento, registrar_error,
     cargar_procesador_audio, guardar_procesador_audio,
+    registrar_reinicio_pipewire,
 )
 
 TIMEOUT_SEGUNDOS = 20.0
@@ -448,4 +449,13 @@ def escribir_y_recargar(texto_conf: str, ruta_archivo: str) -> tuple[bool, str]:
         return False, mensaje
 
     registrar_evento(f"Procesador FM: '{ruta_real}' aplicado, PipeWire reiniciado.")
+    # Pedido explícito, reporte real: "cerré el programa sin problemas,
+    # cuando lo volví a abrir se bloqueó la barra [de tareas]" --
+    # systemctl ya confirmó que los 3 servicios están "activos", pero
+    # wireplumber puede tardar un poco más en re-enlazar cada
+    # dispositivo de verdad. Esta marca le avisa a EnrutadorPactl
+    # (core/audio_engine.py) que, si algo intenta hablarle a pactl en
+    # los próximos segundos, convenga esperar un margen extra antes de
+    # sumarle más tráfico a un PipeWire que todavía se está asentando.
+    registrar_reinicio_pipewire()
     return True, "Aplicado -- PipeWire se reinició con la configuración nueva."

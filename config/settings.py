@@ -12,6 +12,7 @@ import copy
 import json
 import os
 import tempfile
+import time
 from datetime import date
 
 DIRECTORIO_CONFIG = os.path.join(os.path.dirname(__file__), "data")
@@ -26,6 +27,7 @@ ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
 ARCHIVO_HISTORIAL_REPRODUCCION = os.path.join(DIRECTORIO_CONFIG, "historial_reproduccion.txt")
 ARCHIVO_ROTACION_CATEGORIAS = os.path.join(DIRECTORIO_CONFIG, "rotacion_categorias.json")
 ARCHIVO_PROCESADOR_AUDIO = os.path.join(DIRECTORIO_CONFIG, "procesador_audio.json")
+ARCHIVO_REINICIO_PIPEWIRE = os.path.join(DIRECTORIO_CONFIG, "ultimo_reinicio_pipewire.json")
 # Pedido explícito ("achicar el log a 2 días y no 3"): la rotación
 # siempre fue por TAMAÑO, nunca por fecha (no hay ningún concepto de
 # "días" en el propio mecanismo) — 2MB, en el uso real de Santiago,
@@ -1117,3 +1119,45 @@ def cargar_procesador_audio() -> dict:
 
 def guardar_procesador_audio(datos: dict):
     _guardar_json_atomico(ARCHIVO_PROCESADOR_AUDIO, datos)
+
+
+# ----------------------------------------------------------------------
+# Marca de "PipeWire se acaba de reiniciar" -- pedido explícito, reporte
+# real: "recién tuve que hacer un cambio [en el Procesador FM], cerré el
+# programa sin problemas, cuando lo volví a abrir se bloqueó la barra
+# [de tareas de TDE/Q4OS]". "✅ Aplicar"/"🔇 Bypass" del Procesador FM
+# (core/procesador_audio.py:escribir_y_recargar) hacen
+# `systemctl --user restart pipewire pipewire-pulse wireplumber` --
+# reinician TODO el audio de la sesión, no solo el de esta app, y
+# wireplumber puede tardar unos segundos más que lo que `systemctl`
+# garantiza en volver a reconocer/re-enlazar cada dispositivo (más
+# notorio en el hardware real de la radio, un AMD Sempron 2650 de 2
+# núcleos). Si en esa ventana esta misma app (recién abierta, o
+# retomando sola una reproducción) ya está lanzando `pactl` a los
+# tumbos (ver EnrutadorPactl en core/audio_engine.py), le suma presión
+# a un PipeWire que todavía se está asentando -- contribuyendo a que
+# la barra de tareas (que también depende de PipeWire para su propio
+# applet de volumen) tarde más en responder. Archivo chico, SOLO esta
+# marca -- nunca compartido con procesador_audio.json (ese lo
+# sobreescribe entero la UI en cada guardado de preset, así que
+# cualquier dato ahí adentro que la UI no conozca se perdería solo).
+# ----------------------------------------------------------------------
+def registrar_reinicio_pipewire():
+    _guardar_json_atomico(ARCHIVO_REINICIO_PIPEWIRE, {"epoch": time.time()})
+
+
+def segundos_desde_ultimo_reinicio_pipewire() -> float | None:
+    """`None` si no hay ningún reinicio registrado (o el archivo está
+    corrupto/falta -- fail-open, nunca forzar una espera de más por un
+    dato roto). Nunca negativo (un reloj del sistema corrido hacia
+    atrás no debe producir una espera "infinita")."""
+    if not os.path.exists(ARCHIVO_REINICIO_PIPEWIRE):
+        return None
+    try:
+        with open(ARCHIVO_REINICIO_PIPEWIRE, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+        epoch = float(datos.get("epoch"))
+    except (json.JSONDecodeError, OSError, TypeError, ValueError) as error:
+        registrar_error(f"Error leyendo marca de reinicio de PipeWire: {error}")
+        return None
+    return max(0.0, time.time() - epoch)

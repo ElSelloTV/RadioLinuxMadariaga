@@ -27,7 +27,10 @@ import time
 import vlc
 from PySide6.QtCore import QObject, Signal, QTimer, QProcess
 
-from config.settings import registrar_evento, cargar_configuracion
+from config.settings import (
+    registrar_evento, cargar_configuracion,
+    segundos_desde_ultimo_reinicio_pipewire,
+)
 
 
 def _es_nombre_pactl_directo(id_dispositivo) -> bool:
@@ -178,10 +181,41 @@ class EnrutadorPactl(QObject):
     resultado distinto (el stream terminó en el sink de esa sesión
     remota, no en el pedido) — otra razón más para que la radio SIEMPRE
     corra en la sesión física (ya forzado desde otra ronda, ver
-    `core/sesion_display.py`)."""
+    `core/sesion_display.py`).
+
+    (6) Margen de cortesía tras un reinicio DELIBERADO de PipeWire
+    (pedido explícito, reporte real: "recién tuve que hacer un cambio
+    [en el Procesador FM], cerré el programa sin problemas, cuando lo
+    volví a abrir se bloqueó la barra [de tareas de TDE/Q4OS]"). "✅
+    Aplicar"/"🔇 Bypass" del Procesador FM (core/procesador_audio.py)
+    hacen `systemctl --user restart pipewire pipewire-pulse
+    wireplumber` a propósito -- eso reinicia TODO el audio de la
+    sesión, no solo esta app, y wireplumber puede tardar unos segundos
+    de más (más notorio en el hardware real de la radio, un AMD
+    Sempron 2650 de 2 núcleos) en terminar de re-enlazar cada
+    dispositivo, aunque `systemctl` ya haya reportado los 3 servicios
+    como activos. Si justo en esa ventana esta misma app (recién
+    abierta, o retomando sola una reproducción) ya está lanzando
+    `pactl` por acá, le suma presión de más a un PipeWire que todavía
+    se está asentando -- un factor real que puede contribuir a que la
+    barra de tareas (que TAMBIÉN depende de PipeWire para su propio
+    applet de volumen) tarde más en responder. `_procesar_siguiente_
+    si_libre()` consulta `config.settings.segundos_desde_ultimo_
+    reinicio_pipewire()` (una marca que `escribir_y_recargar()` deja
+    tras CADA reinicio exitoso) antes de disparar el primer `pactl` de
+    cualquier pedido -- si el reinicio fue hace menos de
+    `MARGEN_SEGUNDOS_TRAS_REINICIO_PIPEWIRE`, difiere el inicio real
+    (vía `QTimer.singleShot`, nunca bloqueante) hasta completar ese
+    margen. Solo importa en los segundos posteriores a un Aplicar/
+    Bypass -- en uso normal (sin reinicio reciente) no agrega ninguna
+    demora, el chequeo es una simple lectura de archivo."""
 
     MAX_INTENTOS = 20
     ESPERA_REINTENTO_MS = 150
+    # Margen de cortesía tras un reinicio reciente de PipeWire -- ver
+    # punto (6) más arriba. Nunca bloqueante: si vence, simplemente
+    # deja de aplicar ningún margen extra.
+    MARGEN_SEGUNDOS_TRAS_REINICIO_PIPEWIRE = 6.0
     # Tope duro por invocación de `pactl` -- ver punto (3) más arriba.
     # Un `pactl` sano responde en milisegundos; 3s ya es una demora
     # anormal (PipeWire degradado/colgado), y esperar más solo demora
@@ -257,8 +291,29 @@ class EnrutadorPactl(QObject):
     def _procesar_siguiente_si_libre(self):
         if self._procesando or not self._cola:
             return
+        restante_ms = self._margen_pendiente_tras_reinicio_pipewire_ms()
+        if restante_ms > 0:
+            # Punto (6) del docstring de la clase: PipeWire se reinició
+            # hace poco (Aplicar/Bypass del Procesador FM) -- esperar
+            # el resto del margen ANTES de lanzar el primer `pactl` de
+            # este pedido, en vez de sumarle presión mientras todavía
+            # se está asentando. Nunca marca `_procesando = True` acá
+            # -- si entretanto llega otro `reclamar()`, su propio
+            # intento de procesar la cola ve el mismo margen pendiente
+            # y reprograma su propio diferido sin duplicar trabajo.
+            QTimer.singleShot(restante_ms, self._procesar_siguiente_si_libre)
+            return
         self._procesando = True
         self._listar_sink_inputs(self._al_tener_snapshot_inicial)
+
+    def _margen_pendiente_tras_reinicio_pipewire_ms(self) -> int:
+        transcurridos = segundos_desde_ultimo_reinicio_pipewire()
+        if transcurridos is None:
+            return 0
+        restante = self.MARGEN_SEGUNDOS_TRAS_REINICIO_PIPEWIRE - transcurridos
+        if restante <= 0:
+            return 0
+        return int(restante * 1000) + 50  # +50ms de colchón contra el redondeo
 
     def _ejecutar_pactl_con_timeout(self, argumentos: list, callback_salida):
         """Corre `pactl argumentos` async, con un watchdog de
