@@ -67,18 +67,35 @@ arrancar cada vuelta nueva (primera vez que se usa la categoría, O la
 vuelta anterior ya se agotó), nunca a mitad de una vuelta en curso (el
 orden ya comprometido de una vuelta sigue caminándose tal cual hasta
 agotarla, como siempre). De paso, `_orden_barajado_por_artista()`
-agrupa por `registro["artista"]` (cuando está cargado) y separa
-EXPLÍCITAMENTE el grupo dominante del resto -- protección extra para
-categorías con metadata de artista real: incluso con un shuffle
-verdadero, una categoría MUY dominada por un solo artista puede seguir
-dejando tramos largos consecutivos por pura probabilidad (el
-"problema del shuffle de Spotify") -- ver el docstring de esa función
-para el detalle completo de los 4 intentos que hicieron falta hasta
-dar con un espaciado que no dependa de la suerte del sorteo. Si
-`artista` está vacío en todos los registros (el caso real de estas
-descargas, sin metadata separada de artista), degrada solo a un
-shuffle plano de toda la lista -- nunca peor que antes, ya resuelve el
-caso real reportado.
+agrupa por una clave que separa EXPLÍCITAMENTE el grupo dominante del
+resto -- protección extra: incluso con un shuffle verdadero, una
+categoría MUY dominada por un solo grupo puede seguir dejando tramos
+largos consecutivos por pura probabilidad (el "problema del shuffle de
+Spotify") -- ver el docstring de esa función para el detalle completo
+de los 4 intentos que hicieron falta hasta dar con un espaciado que no
+dependa de la suerte del sorteo.
+
+Segunda vuelta de este mismo bug (reporte real posterior, con captura
+de Ventana 2: dos registros de "La Oreja de Van Gogh - El Primer..."
+-- mismo título, pero ARCHIVOS/rutas DISTINTOS -- sonaron uno atrás
+del otro): la agrupación de arriba usaba SOLO `registro["artista"]` —
+pero en el uso real, el campo "Artista" del alta casi nunca se
+completa (las descargas ya traen el artista escrito DENTRO del propio
+título, ej. "La Oreja de Van Gogh - El Primer Día" -- ver también
+`DialogoAgregarArchivo`, el campo queda en blanco si no se tipea a
+mano), así que `_clave_agrupacion()` devolvía "" para prácticamente
+TODOS los registros de una categoría así -- `_orden_barajado_por_
+artista()` degradaba siempre al caso "un solo grupo" (shuffle plano,
+CERO protección contra que dos copias del mismo tema queden
+adyacentes, por más que el shuffle en sí ya funcionara bien desde el
+fix anterior). Corregido: `_clave_agrupacion()` (renombrada, ya no es
+solo "artista") usa el artista SI está cargado, y si no, cae al
+TÍTULO normalizado -- dos registros con el mismo título (sean o no el
+mismo archivo) quedan agrupados igual, y entran al mismo reparto
+parejo que ya protegía a un artista dominante. Si además el título
+también estuviera vacío en todos los registros (caso degenerado, no
+visto en la práctica), vuelve a caer al shuffle plano de siempre --
+nunca peor que antes de este segundo fix.
 --------------------------------------------------------
 """
 
@@ -92,18 +109,32 @@ def _clave_categoria(ruta_categoria: list) -> str:
     return " > ".join(ruta_categoria or [])
 
 
-def _clave_artista(registro: dict) -> str:
-    return (registro.get("artista") or "").strip().casefold()
+def _clave_agrupacion(registro: dict) -> str:
+    """Clave usada para agrupar y DISPERSAR ítems "parecidos" a lo
+    largo de la vuelta (ver `_orden_barajado_por_artista()` más abajo
+    y la nota del segundo bug real en el docstring del módulo): usa
+    `registro["artista"]` si está cargado -- sigue siendo la señal más
+    precisa cuando existe -- y si no, cae al `registro["titulo"]`
+    normalizado, para agrupar igual dos registros que son, a efectos
+    prácticos, "el mismo tema" aunque vivan en archivos/rutas
+    distintos (el caso real: una descarga duplicada, o el mismo tema
+    importado dos veces)."""
+    artista = (registro.get("artista") or "").strip().casefold()
+    if artista:
+        return artista
+    return (registro.get("titulo") or "").strip().casefold()
 
 
 def _orden_barajado_por_artista(rutas: list, mapa: dict) -> list:
-    """Arma el orden de una vuelta NUEVA -- agrupa por artista e
-    intercala entre grupos, en vez de un shuffle plano sobre toda la
-    lista (ver la nota del bug real más arriba). Cada grupo se baraja
-    aparte primero. Sin metadata de artista (todos los registros con
-    `artista` vacío) degrada a un único grupo -- un shuffle plano de
-    toda la lista, ya suficiente para el caso real reportado (títulos
-    con el mismo prefijo, sin artista cargado aparte).
+    """Arma el orden de una vuelta NUEVA -- agrupa por
+    `_clave_agrupacion()` (artista, o título si no hay artista
+    cargado) e intercala entre grupos, en vez de un shuffle plano
+    sobre toda la lista (ver la nota de los 2 bugs reales más arriba).
+    Cada grupo se baraja aparte primero. Sin NINGUNA clave utilizable
+    (artista Y título vacíos en todos los registros -- caso
+    degenerado) degrada a un único grupo -- un shuffle plano de toda
+    la lista, ya mejor que el orden alfabético fijo de antes del
+    primer fix.
 
     Bug real corregido ANTES de llegar a Santiago (atrapado por un
     test dedicado con un caso adversarial: 15 archivos de un artista +
@@ -149,7 +180,7 @@ def _orden_barajado_por_artista(rutas: list, mapa: dict) -> list:
     anteriores."""
     grupos = defaultdict(list)
     for ruta in rutas:
-        grupos[_clave_artista(mapa.get(ruta, {}))].append(ruta)
+        grupos[_clave_agrupacion(mapa.get(ruta, {}))].append(ruta)
     for lista in grupos.values():
         random.shuffle(lista)
 
