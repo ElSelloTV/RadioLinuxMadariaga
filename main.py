@@ -29,7 +29,7 @@ from core.instancia_unica import adquirir_bloqueo_instancia_unica
 from core.sesion_display import (
     es_sesion_fisica_esperada, descripcion_sesion_actual, DISPLAY_FISICO_ESPERADO,
 )
-from core.actualizador import asegurar_lanzadores_escritorio
+from core.actualizador import asegurar_lanzadores_escritorio, asegurar_tarea_cron_mantenimiento
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
 
@@ -147,6 +147,15 @@ def main():
         asegurar_lanzadores_escritorio()
     except Exception as error:
         registrar_error(f"No se pudieron instalar/refrescar los lanzadores de escritorio: {error}")
+
+    # Mantenimiento diario automático (pedido explícito: "programemos
+    # que a las 2am todos los dias haga una depuración... cargue el
+    # LOG en GitHub") — mismo criterio de arriba: instala/refresca sola
+    # la entrada de crontab, nunca debe poder frenar el arranque.
+    try:
+        asegurar_tarea_cron_mantenimiento()
+    except Exception as error:
+        registrar_error(f"No se pudo instalar/refrescar la tarea de mantenimiento diario (cron): {error}")
 
     registrar_evento("Aplicación iniciada")
 

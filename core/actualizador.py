@@ -370,3 +370,76 @@ def asegurar_lanzadores_escritorio() -> None:
                         pass
             except OSError:
                 pass
+
+
+# ------------------------------------------------------------------
+# Mantenimiento diario automático (pedido explícito: "Como la radio se
+# detiene a las 00 horas todos los dias, programemos que a las 2am
+# todos los dias haga una 'depuración'... cargue el LOG en GitHub")
+# -- mismo criterio ya establecido arriba para los lanzadores de
+# escritorio: cualquier setup a nivel de sistema operativo (acá, una
+# entrada de crontab) tiene que instalarse SOLO desde Python en el
+# arranque de la app, porque el botón "Actualizar" de Configuración
+# (el único camino real que usa Santiago) nunca corre `instalar.sh` ni
+# ningún script a mano -- documentar "agregá esto al crontab" no
+# sirve, en la práctica eso nunca se ejecuta.
+# ------------------------------------------------------------------
+_MARCA_CRON_MANTENIMIENTO = "radio-tuyu-mantenimiento-diario"
+
+
+def asegurar_tarea_cron_mantenimiento() -> None:
+    """Instala/refresca, de forma idempotente, una entrada de crontab
+    que corre `core/mantenimiento_diario.py` todos los días a las 2am
+    -- mismo espíritu que `asegurar_lanzadores_escritorio()` más
+    arriba: silenciosa (nunca rompe el arranque de la radio si algo
+    falla -- sin `crontab` instalado, sin el servicio de cron activo,
+    sin permisos, lo que sea) y auto-corrige sola si la ruta de
+    instalación cambió (ej. se movió el checkout a otra carpeta).
+    Idempotente: si la entrada ya está instalada tal cual, no vuelve a
+    tocar el crontab en cada arranque."""
+    raiz = _raiz_app()
+    script = os.path.join(raiz, "core", "mantenimiento_diario.py")
+    if not os.path.isfile(script):
+        return  # checkout parcial/roto -- no hay nada que programar
+
+    # Log de "bootstrap" separado del log interno de la app (mismo
+    # criterio que iniciar.sh -> log_lanzador.txt): si algo falla ANTES
+    # de que el script llegue a importar config.settings (python
+    # equivocado, checkout roto), esto es lo único que queda para
+    # diagnosticarlo -- el log interno (log_aplicacion.txt, el que se
+    # sube a GitHub) sigue siendo donde quedan las 3 tareas en sí.
+    log_bootstrap = os.path.join(raiz, "config", "data", "log_cron_mantenimiento.txt")
+    linea_nueva = (
+        f"0 2 * * * {sys.executable} {script} >> {log_bootstrap} 2>&1 "
+        f"# {_MARCA_CRON_MANTENIMIENTO}"
+    )
+
+    try:
+        resultado = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
+        # "no crontab for <usuario>" sale con returncode != 0 -- se
+        # trata igual que un crontab vacío (el stdout ya viene vacío
+        # en ese caso), es el único motivo real por el que `-l` falla
+        # en la práctica si el comando SÍ existe.
+        actual = resultado.stdout or ""
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        return  # sin `crontab` disponible en este sistema -- degradar limpio
+
+    lineas_actuales = [linea for linea in actual.splitlines() if linea.strip()]
+    if linea_nueva in lineas_actuales:
+        return  # ya estaba instalada tal cual -- nada que tocar
+
+    lineas_nuevas = [linea for linea in lineas_actuales if _MARCA_CRON_MANTENIMIENTO not in linea]
+    lineas_nuevas.append(linea_nueva)
+    contenido_nuevo = "\n".join(lineas_nuevas) + "\n"
+
+    try:
+        os.makedirs(os.path.dirname(log_bootstrap), exist_ok=True)
+    except OSError:
+        pass
+
+    try:
+        subprocess.run(
+            ["crontab", "-"], input=contenido_nuevo, text=True, capture_output=True, timeout=5,
+        )
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        pass
