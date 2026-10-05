@@ -273,8 +273,23 @@ class VentanaConfiguracion(QDialog):
             "Fade-out corto al terminar naturalmente una tanda y encadenar\n"
             "con la siguiente dentro del mismo bloque de Ventana 1."
         )
+        # Interruptor explícito (pedido explícito: "no tengo opción de
+        # destildar el fade de la ventana 1 para probar si es eso o
+        # no") — mismo patrón ya usado para "Nivelado de volumen
+        # activado". El motor ya trataba 0ms como "desactivado", pero
+        # apagar acá NO pisa el número guardado (a diferencia de
+        # poner el spinbox en 0 a mano y tener que volver a tipearlo).
+        self.chk_fade_out_v1 = QCheckBox("Fade OUT activado")
+        self.chk_fade_out_v1.setToolTip(
+            "Apagado = ningún fade-out automático en Ventana 1, los ítems\n"
+            "cortan directo al terminar (corte seco). Útil para probar si\n"
+            "el fade influye en algún problema puntual sin perder el valor\n"
+            "en milisegundos configurado arriba."
+        )
+        self.chk_fade_out_v1.toggled.connect(self._on_toggle_fade_out_v1)
 
         form_v1.addRow("Fade IN al arrancar un ítem:", self.spin_fade_in_declick_v1)
+        form_v1.addRow(self.chk_fade_out_v1)
         form_v1.addRow("Fade OUT al terminar un ítem:", self.spin_fade_out_v1)
         layout.addWidget(grupo_v1)
 
@@ -552,6 +567,13 @@ class VentanaConfiguracion(QDialog):
         aplicando algo mientras el interruptor está en OFF."""
         self.spin_objetivo_lufs.setEnabled(activo)
         self.spin_techo_pico.setEnabled(activo)
+
+    def _on_toggle_fade_out_v1(self, activo: bool):
+        """Mismo criterio que _on_toggle_nivelado_activado -- apagar
+        el fade OUT de Ventana 1 no toca el número en milisegundos
+        configurado, solo lo deja sin efecto (ver fade_out_v1_activado,
+        core/playlist_manager.py:_chequear_fade_out_automatico)."""
+        self.spin_fade_out_v1.setEnabled(activo)
 
     # ------------------------------------------------------------------
     # Tab: General
@@ -1392,6 +1414,8 @@ class VentanaConfiguracion(QDialog):
         self.spin_techo_pico.setValue(reproduccion["nivelado_techo_pico_dbfs"])
         self._on_toggle_nivelado_activado(self.chk_nivelado_activado.isChecked())
         self.spin_fade_out_v1.setValue(reproduccion["duracion_fade_out_v1_ms"])
+        self.chk_fade_out_v1.setChecked(reproduccion.get("fade_out_v1_activado", True))
+        self._on_toggle_fade_out_v1(self.chk_fade_out_v1.isChecked())
         self.spin_fade_in_declick_v1.setValue(reproduccion["duracion_fade_in_declick_v1_ms"])
         self.spin_buffer_caching.setValue(reproduccion["duracion_buffer_caching_ms"])
         self.spin_retardo_arranque.setValue(reproduccion["retardo_arranque_ms"])
@@ -1486,6 +1510,7 @@ class VentanaConfiguracion(QDialog):
         self._config["reproduccion"]["nivelado_loudness_lufs_objetivo"] = self.spin_objetivo_lufs.value()
         self._config["reproduccion"]["nivelado_techo_pico_dbfs"] = self.spin_techo_pico.value()
         self._config["reproduccion"]["duracion_fade_out_v1_ms"] = self.spin_fade_out_v1.value()
+        self._config["reproduccion"]["fade_out_v1_activado"] = self.chk_fade_out_v1.isChecked()
         self._config["reproduccion"]["duracion_fade_in_declick_v1_ms"] = self.spin_fade_in_declick_v1.value()
         self._config["reproduccion"]["duracion_buffer_caching_ms"] = self.spin_buffer_caching.value()
         self._config["reproduccion"]["retardo_arranque_ms"] = self.spin_retardo_arranque.value()

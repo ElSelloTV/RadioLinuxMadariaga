@@ -1055,6 +1055,7 @@ class MainWindow(QMainWindow):
             persistir=True,
             duracion_fade_out_v1_ms=reproduccion["duracion_fade_out_v1_ms"],
             duracion_fade_in_declick_ms=reproduccion["duracion_fade_in_declick_v1_ms"],
+            fade_out_v1_activado=reproduccion.get("fade_out_v1_activado", True),
             ventana_explorador=self.ventana_explorador,
         )
         # Comando FMT (pedido explícito, encadenado con el
@@ -1745,6 +1746,7 @@ class MainWindow(QMainWindow):
         self.gestor_publicidad.avanzar_en_error = reproduccion["avanzar_automaticamente_en_error"]
         self.gestor_publicidad.reintentos_maximos = max(1, reproduccion["reintentos_antes_de_detener"])
         self.gestor_publicidad.duracion_fade_out_v1_ms = reproduccion["duracion_fade_out_v1_ms"]
+        self.gestor_publicidad.fade_out_v1_activado = reproduccion.get("fade_out_v1_activado", True)
         self.gestor_publicidad.duracion_fade_in_declick_ms = reproduccion["duracion_fade_in_declick_v1_ms"]
         for motor in (self.gestor_publicidad.motor, self.gestor_publicidad.motor_anuncio_manual):
             if motor.id_dispositivo() != id_dispositivo_master:

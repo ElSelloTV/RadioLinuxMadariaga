@@ -109,6 +109,7 @@ class GestorPublicidad:
         persistir: bool = False,
         duracion_fade_out_v1_ms: int = 500,
         duracion_fade_in_declick_ms: int = 60,
+        fade_out_v1_activado: bool = True,
         ventana_explorador=None,
     ):
         self.ventana = ventana_publicidad
@@ -136,6 +137,10 @@ class GestorPublicidad:
         # fade-in en el entrante — pedido explícito, "el fade es
         # siempre OUT, no usaremos el fade IN").
         self.duracion_fade_out_v1_ms = duracion_fade_out_v1_ms
+        # Interruptor explícito (pedido explícito, "no tengo opción de
+        # destildar el fade de la ventana 1 para probar") — además del
+        # 0ms de arriba, que el motor ya trataba como "desactivado".
+        self.fade_out_v1_activado = fade_out_v1_activado
         # Pedido explícito ("un mínimo tartamudeo, un clip de sonido al
         # inicio de los ítems... un leve fade de inicio"): rampa de
         # milisegundos al ARRANCAR cada ítem (no un fade musical, ver
@@ -308,7 +313,7 @@ class GestorPublicidad:
         evita redispararse en cada tick)."""
         if self._fundido_en_curso or self._stop_diferido_armado:
             return
-        if self.duracion_fade_out_v1_ms <= 0:
+        if not self.fade_out_v1_activado or self.duracion_fade_out_v1_ms <= 0:
             return
         item_actual = self.ventana.item_reproduciendo()
         if item_actual is None or item_actual is self._item_fade_out_v1_disparado:
