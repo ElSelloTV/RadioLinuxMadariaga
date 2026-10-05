@@ -112,6 +112,17 @@ CONFIG_POR_DEFECTO = {
         # "duracion_fade_segundos" de Fade/Transiciones, que es en
         # segundos y es para el crossfade/fundido manual de Ventana 2).
         "duracion_fade_out_v1_ms": 500,
+        # Interruptor on/off explícito (pedido explícito, investigando
+        # "cuando llega a la Hora, los minutos no llegan a
+        # reproducirse": "no tengo opción de destildar el fade de la
+        # ventana 1 para probar si es eso o no") — mismo patrón ya
+        # usado para "Nivelado de volumen activado". El motor YA
+        # trataba `duracion_fade_out_v1_ms <= 0` como "desactivado",
+        # pero esto lo hace explícito sin perder el número guardado al
+        # apagarlo (a diferencia de poner el spinbox en 0 a mano).
+        # Default True: una instalación existente nunca cambia de
+        # comportamiento sola.
+        "fade_out_v1_activado": True,
         # Pedido explícito, ronda posterior ("perfeccioná el fundido...
         # el inicio sin silencio inicial con un fundido muy breve de
         # 400ms"): esto YA NO es un simple anti-click de milisegundos,

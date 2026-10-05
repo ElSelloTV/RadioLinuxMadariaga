@@ -544,6 +544,24 @@ VENTANA_MINIMA_SEGURA_MS = 500
 # por debajo de eso ni vale la pena loguear (ruido).
 UMBRAL_DEMORA_REPRODUCCION_SOSPECHOSA_SEGUNDOS = 1.5
 
+# Diagnóstico separado del de arriba (pedido explícito, investigando
+# "en Ventana 1, cuando llega a la Hora, los minutos no llegan a
+# reproducirse"): el umbral de arriba mide cuánto tardó en dispararse
+# el `play()` en sí (la cola de EnrutadorPactl puede demorarlo) — pero
+# con un dispositivo "pactl directo" (el caso real de Santiago, el
+# sink virtual del Procesador FM) el audio arranca MUDO (volumen 0) y
+# recién se sube al volumen real cuando EnrutadorPactl CONFIRMA a qué
+# sink quedó atado el stream -- ver `_al_confirmar_enrutado` más abajo.
+# Esa confirmación puede demorar (cola compartida con el resto de la
+# app, pactl lento) MÁS que la duración TOTAL de un clip corto (los
+# clips de voz del Comando HTH -- HORA/MINUTOS/TEMPERATURA/HUMEDAD --
+# suelen durar bien menos de 1s), en cuyo caso el clip entero suena
+# y termina MUDO, indistinguible para el operador de "no se
+# reprodujo". Umbral más bajo que el de arriba a propósito: acá
+# importa detectar demoras bastante más chicas, porque un clip corto
+# las sufre mucho más que un tema de varios minutos.
+UMBRAL_DEMORA_VOLUMEN_AUDIBLE_SOSPECHOSA_SEGUNDOS = 0.4
+
 
 def _argumentos_vlc(duracion_buffer_caching_ms: int, audio_cfg: dict = None) -> list:
     """Argumentos de la instancia de libVLC (pedido explícito, "para
@@ -856,6 +874,21 @@ class MotorAudio(QObject):
             def _aplicar_volumen_real():
                 if self._generacion_reproduccion != generacion_de_esta_reproduccion:
                     return  # una reproducción MÁS NUEVA ya reemplazó esta
+                # Diagnóstico -- ver UMBRAL_DEMORA_VOLUMEN_AUDIBLE_
+                # SOSPECHOSA_SEGUNDOS más arriba. Con un dispositivo
+                # pactl-directo, acá es RECIÉN donde el volumen deja de
+                # estar en 0 (mudo desde el play()) -- si esto tardó
+                # más que la duración del propio clip, sonó entero y
+                # mudo. Nunca se dispara para una demora chica/normal.
+                demora_audible_segundos = time.monotonic() - momento_pedido_reproducir
+                if demora_audible_segundos > UMBRAL_DEMORA_VOLUMEN_AUDIBLE_SOSPECHOSA_SEGUNDOS:
+                    registrar_evento(
+                        f"MotorAudio: '{self._ruta_actual}' tardó {demora_audible_segundos:.2f}s en "
+                        f"volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo "
+                        f"mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, "
+                        f"sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o "
+                        f"pactl lento)"
+                    )
                 if duracion_declick_ms > 0:
                     self.set_volumen(0)
                     self.fade_volumen_a(volumen_final, duracion_declick_ms / 1000.0)
