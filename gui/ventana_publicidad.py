@@ -48,7 +48,7 @@ from gui.styles import (
 )
 from config.settings import (
     cargar_configuracion, titulo_bloque_sin_prefijo_hora, registrar_reproduccion,
-    ruta_con_prefijo_reemplazado,
+    ruta_con_prefijo_reemplazado, texto_visible_parametro_comando,
 )
 
 # Rol de dato propio: hora "HH:mm:ss" guardada en el nodo de bloque
@@ -398,8 +398,15 @@ class VentanaPublicidad(QWidget):
 
         STOP/PLAY (pedido explícito) no tienen parámetro que mostrar —
         `parametro=""` renderiza solo "▶ STOP"/"▶ PLAY", sin el ": "
-        colgando que quedaría con el formato de FMT/HTH/ENLATADO."""
-        titulo = f"▶ {tipo_comando}: {parametro}" if parametro else f"▶ {tipo_comando}"
+        colgando que quedaría con el formato de FMT/HTH/ENLATADO.
+
+        Para ENLATADO, `parametro` es el `id` ESTABLE del slot (lo que
+        persiste y lo que resuelve el motor) — el texto VISIBLE
+        resuelve ese id contra el NOMBRE actual del slot (ver
+        config.settings.texto_visible_parametro_comando), nunca al
+        revés."""
+        texto_parametro = texto_visible_parametro_comando(tipo_comando, parametro)
+        titulo = f"▶ {tipo_comando}: {texto_parametro}" if parametro else f"▶ {tipo_comando}"
         hijo = QTreeWidgetItem([titulo, "—", "—"])
         hijo.setData(0, Qt.ItemDataRole.UserRole, "")
         hijo.setData(0, ROL_ESTADO_ITEM, ESTADO_NORMAL)

@@ -215,11 +215,14 @@ class ClienteControlRemoto:
         que el botón local "🎵 Agregar ciclo FMT por tiempo..."."""
         return self._pedir("emision_agregar_ciclo_fmt", {"nombre_formato": nombre_formato, "minutos": minutos})
 
-    def listar_enlatados(self) -> dict:
-        """Camino de categoría configurado para cada slot ENLATADO
-        1-5 (Configuración → Enlatados, lado servidor) — usado por el
-        Programador remoto para mostrar de un vistazo qué categoría
-        le corresponde a cada número al insertar el comando."""
+    def listar_enlatados(self) -> list:
+        """Lista completa de slots ENLATADO configurados (dicts con
+        id/nombre/tipo/categoria_ruta/url_carpeta — Configuración →
+        Enlatados, lado servidor) — usado por el Programador remoto
+        para mostrar de un vistazo qué tiene configurado cada uno al
+        insertar el comando, y para resolver el nombre visible de uno
+        ya insertado (el `id` es lo único que viaja guardado, nunca
+        el nombre)."""
         respuesta = self._pedir("listar_enlatados")
         if not respuesta.get("ok"):
             raise ErrorControlRemoto(respuesta.get("error", "listar_enlatados falló"))

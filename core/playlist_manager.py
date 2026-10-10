@@ -47,8 +47,9 @@ from core.rotacion_categoria import elegir_por_rotacion, marcar_reproducido_por_
 from config.settings import (
     cargar_playlist_publicidad, guardar_playlist_publicidad, registrar_error, registrar_evento,
     titulo_bloque_sin_prefijo_hora, vigencia_activa, registrar_reproduccion,
-    cargar_configuracion, categoria_de_enlatado,
+    cargar_configuracion, obtener_enlatado,
 )
+from core.sincronizador_drive import listar_archivos_sincronizados
 
 DEBOUNCE_GUARDADO_PUBLICIDAD_MS = 500
 # Paridad con Dinesat: el botón verde hace de "Siguiente con fundido"
@@ -129,6 +130,17 @@ class GestorPublicidad:
         # por _avanzar() hasta que se agota.
         self._reproduciendo_hth = False
         self._cola_hth = []
+        # Cola de reproducción INTERNA de un Comando ENLATADO tipo
+        # "drive" en curso (ver _reproducir_comando_enlatado) — varios
+        # archivos de un programa en bloques (ej. "BLOQUE 1".."BLOQUE
+        # 4") que suenan uno atrás del otro con el MISMO MotorAudio,
+        # sin pasar por _avanzar() hasta que se agota. A diferencia de
+        # HTH (clips de voz concatenados SIN fade, como palabras de
+        # una frase), acá cada archivo SÍ lleva el fade-in de siempre
+        # (duracion_fade_in_declick_ms) — son bloques de programa
+        # completos, no una frase continua.
+        self._reproduciendo_enlatado = False
+        self._cola_enlatado = []
         # Fade OUT automático y corto entre tandas (pedido explícito,
         # "bien pegados uno a otro, incluso 500 milisegundos de
         # fade... el fade OUT de la ventana 1") — configurable en ms,
@@ -333,6 +345,10 @@ class GestorPublicidad:
         # debería sonar un clip más después de un Stop manual.
         self._reproduciendo_hth = False
         self._cola_hth = []
+        # Mismo criterio defensivo, para un Comando ENLATADO tipo
+        # "drive" a mitad de su secuencia de archivos.
+        self._reproduciendo_enlatado = False
+        self._cola_enlatado = []
         self.ventana.set_indicador_en_vivo(False)
         # Pedido explícito: la barra de progreso no debe quedar
         # "pegada" en la posición donde se detuvo — Stop la reinicia.
@@ -562,6 +578,10 @@ class GestorPublicidad:
         # secuencia nunca pasa por acá, ver _reproducir_siguiente_clip_hth().
         self._reproduciendo_hth = False
         self._cola_hth = []
+        # Mismo criterio: un arranque fresco invalida una secuencia de
+        # Comando ENLATADO (drive) que hubiera quedado a medias.
+        self._reproduciendo_enlatado = False
+        self._cola_enlatado = []
         if self.ventana.es_comando(item):
             tipo_comando = self.ventana.tipo_comando_de_item(item)
             if tipo_comando == TIPO_COMANDO_HTH:
@@ -735,24 +755,32 @@ class GestorPublicidad:
         registrar_evento(f"Publicidad: ítem aleatorio '{item.text(0)}' -> '{registro.get('titulo', '')}'")
 
     # ------------------------------------------------------------------
-    # Comando ENLATADO 1-5 (pedido explícito): "programas 'enlatados'
-    # que se cargan semanalmente... El comando ENLATADO pondrá
-    # solamente en reproducción el último archivo cargado en la
-    # categoría ya configurada... Terminado seguirá con lo que haya
-    # luego del comando, sea separador, etc, u otro FMT."
+    # Comando ENLATADO (pedido explícito): "programas 'enlatados' que
+    # se cargan semanalmente... El comando ENLATADO pondrá solamente
+    # en reproducción el último archivo cargado en la categoría ya
+    # configurada... Terminado seguirá con lo que haya luego del
+    # comando, sea separador, etc, u otro FMT." Ronda de unificación
+    # con Drive ("pongamoslo a la par de Enlatado... deben tratarse
+    # como un Enlatado más, ya que es lo mismo, solo cambia el
+    # método"): cada slot (ver config.settings.listar_enlatados()) es
+    # de tipo "categoria" (el original, un solo archivo — el último
+    # cargado) o "drive" (nuevo — TODOS los archivos ya sincronizados
+    # de una carpeta de Google Drive, en orden alfabético/natural, ver
+    # core/sincronizador_drive.py — la sincronización real corre
+    # aparte, de madrugada, nunca "en caliente" al momento de sonar).
     #
     # A diferencia del Comando FMT (nunca ocupa tiempo de aire — solo
     # dispara un callback y sigue directo) y a diferencia de HTH (cola
-    # de varios clips en un motor dedicado), ENLATADO es más parecido
-    # al Ítem Aleatorio: resuelve UN archivo real de una categoría
-    # configurada y lo reproduce con el motor PRINCIPAL, exactamente
-    # como cualquier tanda normal — el avance al próximo ítem del
-    # bloque ocurre solo, en el fin NATURAL de esa reproducción (mismo
-    # camino de siempre: motor.finalizo_item -> _on_fin_de_item ->
-    # _avanzar()), sin ninguna lógica especial acá.
+    # de clips de VOZ concatenados SIN fade, como palabras de una
+    # frase), ENLATADO reproduce con el motor PRINCIPAL, exactamente
+    # como cualquier tanda normal, CON el fade-in de siempre entre
+    # archivo y archivo (son bloques de programa completos, no una
+    # frase continua) — el avance al próximo ítem del bloque ocurre
+    # solo, cuando se agota la lista completa (mismo camino de
+    # siempre: motor.finalizo_item -> _on_fin_de_item -> _avanzar()).
     #
-    # "Último archivo cargado" se resuelve por ORDEN DE ALTA (el
-    # último registro de la categoría, nunca recursivo a
+    # Tipo "categoria": "último archivo cargado" se resuelve por ORDEN
+    # DE ALTA (el último registro de la categoría, nunca recursivo a
     # subcategorías — confirmado con Santiago: "podés trabajarlo según
     # el número ID de código... a partir de la semana que viene cuando
     # cargue otro archivo, el comando lo tomará como nuevo"), sin
@@ -761,46 +789,70 @@ class GestorPublicidad:
     # categoría (ver VentanaExplorador._completar_alta_archivo), así
     # que el último elemento SIEMPRE es el más reciente.
     # ------------------------------------------------------------------
-    def _resolver_ultimo_de_enlatado(self, numero):
-        """Último registro cargado en la categoría configurada para el
-        slot ENLATADO `numero` (Configuración → Enlatados). `None` si
-        el slot no está configurado, la categoría ya no existe (fue
-        renombrada/eliminada), o está vacía — el comando se saltea sin
-        romper la emisión, mismo criterio que un ítem Aleatorio de
-        categoría vacía."""
+    def _resolver_contenido_enlatado(self, id_slot) -> list:
+        """Lista de archivos a reproducir para el slot ENLATADO
+        `id_slot` — UN solo archivo (el último cargado) si es tipo
+        "categoria", o TODOS los ya sincronizados de Drive (en orden)
+        si es tipo "drive". Lista VACÍA si no hay nada que reproducir
+        (slot sin configurar, categoría/carpeta inexistente o vacía) —
+        el comando se saltea sin romper la emisión, mismo criterio que
+        un ítem Aleatorio de categoría vacía."""
+        slot = obtener_enlatado(cargar_configuracion(), id_slot)
+        if slot is None:
+            return []
+
+        if slot.get("tipo") == "drive":
+            return listar_archivos_sincronizados(id_slot)
+
+        # Tipo "categoria" (default también para cualquier slot
+        # migrado del formato viejo, que SIEMPRE era de este tipo).
         if self._ventana_explorador is None:
-            return None
-        ruta_categoria = categoria_de_enlatado(cargar_configuracion(), numero)
+            return []
+        ruta_categoria = slot.get("categoria_ruta")
         if not ruta_categoria:
-            return None
+            return []
         item_categoria = self._ventana_explorador.buscar_categoria_por_ruta(ruta_categoria)
         if item_categoria is None:
-            return None
+            return []
         registros = self._ventana_explorador.listar_registros_de_categoria(item_categoria, recursivo=False)
-        return registros[-1] if registros else None
+        return [registros[-1]] if registros else []
 
     def _reproducir_comando_enlatado(self, item):
-        numero = self.ventana.parametro_comando_de_item(item)
-        registro = self._resolver_ultimo_de_enlatado(numero)
-        if registro is None:
-            # Sin categoría configurada, categoría inexistente, o
-            # vacía: nunca romper la emisión, se saltea sin sonar nada
-            # y sigue directo con el próximo ítem real del bloque.
+        id_slot = self.ventana.parametro_comando_de_item(item)
+        archivos = self._resolver_contenido_enlatado(id_slot)
+
+        self.ventana.marcar_reproduciendo_item(item)
+        self._item_fade_out_v1_disparado = None
+        siguiente = self.ventana.tree.itemBelow(item)
+        while siguiente is not None and not self._item_valido(siguiente):
+            siguiente = self.ventana.tree.itemBelow(siguiente)
+        self.ventana.marcar_siguiente_item(siguiente)
+
+        if not archivos:
+            # Sin configurar, categoría/carpeta inexistente, o vacía:
+            # nunca romper la emisión, se saltea sin sonar nada y
+            # sigue directo con el próximo ítem real del bloque.
             registrar_evento(
-                f"Publicidad: Comando ENLATADO {numero} salteado "
-                "(sin categoría configurada, o categoría vacía/inexistente)"
+                f"Publicidad: Comando ENLATADO {id_slot} salteado "
+                "(sin configurar, o categoría/carpeta vacía/inexistente)"
             )
-            self.ventana.marcar_reproduciendo_item(item)
-            siguiente = self.ventana.tree.itemBelow(item)
-            while siguiente is not None and not self._item_valido(siguiente):
-                siguiente = self.ventana.tree.itemBelow(siguiente)
-            self.ventana.marcar_siguiente_item(siguiente)
             self._avanzar()
             return
 
         self.ventana.tree.setCurrentItem(item)
-        self.ventana.marcar_reproduciendo_item(item)
-        self._item_fade_out_v1_disparado = None
+        # Ícono "ya reproducido" solo, sin tocar el historial acá — el
+        # ítem del árbol es un placeholder sin ruta propia (mismo
+        # criterio que el Ítem Aleatorio), el historial se registra a
+        # mano con los datos de CADA archivo REAL resuelto, al
+        # reproducirse.
+        self.ventana.marcar_icono_reproducido_item(item)
+        registrar_evento(f"Publicidad: Comando ENLATADO {id_slot} -> {len(archivos)} archivo(s)")
+        self._reproduciendo_enlatado = True
+        self._cola_enlatado = list(archivos)
+        self._reproducir_siguiente_archivo_enlatado()
+
+    def _reproducir_siguiente_archivo_enlatado(self):
+        registro = self._cola_enlatado.pop(0)
         self.motor.reproducir(
             registro.get("ruta", ""),
             punto_inicio_ms=registro.get("punto_inicio_ms") or 0,
@@ -810,15 +862,9 @@ class GestorPublicidad:
             duracion_declick_ms=self.duracion_fade_in_declick_ms,
         )
         self.ventana.set_indicador_en_vivo(True)
-        # Ícono "ya reproducido" solo, sin tocar el historial acá —
-        # el ítem del árbol es un placeholder sin ruta propia (mismo
-        # criterio que el Ítem Aleatorio), el historial se registra a
-        # mano con los datos del archivo REAL resuelto, abajo.
-        self.ventana.marcar_icono_reproducido_item(item)
         registrar_reproduccion(
             "Publicidad", registro.get("titulo", ""), registro.get("codigo", ""), registro.get("ruta", ""),
         )
-        registrar_evento(f"Publicidad: Comando ENLATADO {numero} -> '{registro.get('titulo', '')}'")
 
     # ------------------------------------------------------------------
     # Comandos STOP / PLAY (pedido explícito): "apagar todo" y
@@ -1203,13 +1249,22 @@ class GestorPublicidad:
         evento es el que avisa que un clip terminó — se sigue con el
         próximo clip de la cola en vez de tratarlo como el fin de una
         tanda real, y recién cuando la cola se agota se vuelve al
-        flujo normal (_avanzar())."""
+        flujo normal (_avanzar()). Mismo criterio, cola aparte, para
+        un Comando ENLATADO tipo "drive" reproduciendo varios archivos
+        de un programa en bloques."""
         self._fallos_consecutivos = 0
         if self._reproduciendo_hth:
             if self._cola_hth:
                 self._reproducir_siguiente_clip_hth()
             else:
                 self._reproduciendo_hth = False
+                self._avanzar()
+            return
+        if self._reproduciendo_enlatado:
+            if self._cola_enlatado:
+                self._reproducir_siguiente_archivo_enlatado()
+            else:
+                self._reproduciendo_enlatado = False
                 self._avanzar()
             return
         self._avanzar()
@@ -1233,6 +1288,18 @@ class GestorPublicidad:
             registrar_evento("Publicidad: comando HTH interrumpido por error de reproducción, salteando el resto")
             self._reproduciendo_hth = False
             self._cola_hth = []
+            self._avanzar()
+            return
+        if self._reproduciendo_enlatado:
+            # Mismo criterio: un archivo roto/corrupto a mitad de un
+            # Comando ENLATADO (drive) aborta el resto de esa
+            # secuencia y sigue directo con el próximo ítem real —
+            # evita que una cascada de reintentos (pensada para tandas
+            # sueltas) se dispare sobre varios archivos del mismo
+            # programa en bloques.
+            registrar_evento("Publicidad: Comando ENLATADO interrumpido por error de reproducción, salteando el resto")
+            self._reproduciendo_enlatado = False
+            self._cola_enlatado = []
             self._avanzar()
             return
         if not self.avanzar_en_error:

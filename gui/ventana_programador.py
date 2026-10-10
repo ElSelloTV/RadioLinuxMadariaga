@@ -115,7 +115,7 @@ from core.audio_engine import obtener_duracion_formateada, MotorAudio
 from config.settings import (
     guardar_programacion, listar_programaciones, obtener_programacion, eliminar_programacion,
     titulo_bloque_sin_prefijo_hora, DIAS_SEMANA_ETIQUETAS, NOMBRES_DIAS_SEMANA, cargar_configuracion,
-    dias_que_comparten_contenido,
+    dias_que_comparten_contenido, texto_visible_parametro_comando,
 )
 
 DIAS_SEMANA = DIAS_SEMANA_ETIQUETAS
@@ -636,8 +636,12 @@ class VentanaProgramador(QDialog):
         Musicalizador Avanzado) — mismo concepto que
         VentanaPublicidad.agregar_comando(), acá en el editor del
         Programador. STOP/PLAY (sin parámetro) renderizan sin el ": "
-        colgando, mismo criterio que en Ventana 1."""
-        titulo = f"▶ {tipo_comando}: {parametro}" if parametro else f"▶ {tipo_comando}"
+        colgando, mismo criterio que en Ventana 1. Para ENLATADO, el
+        parámetro guardado es el `id` estable del slot — el texto
+        VISIBLE resuelve ese id contra su nombre ACTUAL (ver
+        config.settings.texto_visible_parametro_comando)."""
+        texto_parametro = texto_visible_parametro_comando(tipo_comando, parametro)
+        titulo = f"▶ {tipo_comando}: {texto_parametro}" if parametro else f"▶ {tipo_comando}"
         hijo = QTreeWidgetItem([titulo, "—", "—"])
         hijo.setData(0, Qt.ItemDataRole.UserRole, "")
         hijo.setData(0, ROL_ES_COMANDO, True)

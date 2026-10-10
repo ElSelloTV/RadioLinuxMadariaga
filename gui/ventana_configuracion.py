@@ -45,14 +45,14 @@ from PySide6.QtGui import QColor, QDesktopServices
 from config.settings import (
     cargar_configuracion, guardar_configuracion, registrar_error,
     ARCHIVO_LOG, ARCHIVO_HISTORIAL_REPRODUCCION,
-    categoria_de_enlatado,
+    listar_enlatados,
 )
 from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
 
-NUMEROS_ENLATADO = ("1", "2", "3", "4", "5")
 from core.audio_engine import MotorAudio
 from core import actualizador
 from core import reinicio_sistema
+from core.sincronizador_drive import sincronizar_fuente_drive, listar_archivos_sincronizados
 from gui.styles import LISTA_GENEROS
 from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 from gui.panel_procesador_audio import PanelProcesadorAudio
@@ -1306,13 +1306,25 @@ class VentanaConfiguracion(QDialog):
         self.txt_control_remoto_token.setText(secrets.token_hex(16))
 
     # ------------------------------------------------------------------
-    # Tab: Enlatados — Comando ENLATADO 1-5 (pedido explícito:
-    # "programas 'enlatados' que se cargan semanalmente... cada
-    # enlatado (hasta 5) será configurado desde Configuraciones,
-    # eligiendo de un menú desplegable la categoría donde se irán
-    # guardando"). Acá SOLO se elige la categoría de cada slot — el
-    # comando en sí se inserta desde Ventana 1/el Programador/el
-    # Programador remoto (satélite), eligiendo el número (ver
+    # Tab: Enlatados — lista crecedora de slots con nombre propio
+    # (pedido explícito: "programas 'enlatados' que se cargan
+    # semanalmente... hasta 5 posibilidades... necesite más, 7 u 8 y
+    # hasta 10" + "pongamoslo a la par de Enlatado, ya que también
+    # debemos ponerle categoria" — unificación de la carpeta de Google
+    # Drive con el mecanismo de categoría local, ya que para el motor
+    # de reproducción (ver GestorPublicidad._resolver_contenido_enlatado
+    # en core/playlist_manager.py) es "lo mismo, solo cambia el
+    # método"). Reemplaza los viejos 5 casilleros numerados fijos
+    # ("Enlatado 1".."5") por una lista crecedora de entradas con
+    # NOMBRE propio ("Sentiargentina", "Noticias", etc.) — cada una de
+    # tipo "Categoría local" (mismo comportamiento de siempre: el
+    # ÚLTIMO archivo cargado ahí) o "Carpeta de Drive" (sincroniza los
+    # archivos de una carpeta PÚBLICA de Google Drive, en orden,
+    # reproducidos uno detrás del otro — pedido explícito, "exporta los
+    # bloques del programa grabado... según el nombre los ordena
+    # alfabéticamente, y los reproduce"). El comando en sí se inserta
+    # desde Ventana 1/el Programador/el Programador remoto (satélite),
+    # eligiendo el slot por NOMBRE (ver
     # gui/dialogo_insertar_comando_enlatado.py).
     # ------------------------------------------------------------------
     def _crear_tab_enlatados(self) -> QWidget:
@@ -1320,68 +1332,227 @@ class VentanaConfiguracion(QDialog):
         layout = QVBoxLayout(widget)
 
         lbl_intro = QLabel(
-            "Comando ENLATADO 1 a 5 (Ventana 1 / Programador / Programador "
-            "remoto): al llegar la reproducción a ese comando, reproduce el "
-            "ÚLTIMO archivo cargado en la categoría configurada acá para ese "
-            "slot — pensado para programas \"enlatados\" que se cargan "
-            "semanalmente en una categoría fija del Explorador. Solo la "
-            "categoría exacta (no recorre subcategorías)."
+            "Comando ENLATADO (Ventana 1 / Programador / Programador remoto): "
+            "al llegar la reproducción a ese comando, reproduce el contenido "
+            "del slot elegido acá -- \"Categoría local\" reproduce el ÚLTIMO "
+            "archivo cargado en una categoría del Explorador (solo la "
+            "categoría exacta, no recorre subcategorías); \"Carpeta de "
+            "Drive\" sincroniza (una vez por día, en segundo plano, de "
+            "madrugada) los archivos de una carpeta PÚBLICA de Google Drive "
+            "y los reproduce todos en orden alfabético/numérico, uno detrás "
+            "del otro -- pensado para programas grabados en varios bloques."
         )
         lbl_intro.setWordWrap(True)
         layout.addWidget(lbl_intro)
 
-        grupo = QGroupBox("📦 Categoría por slot")
-        form = QFormLayout(grupo)
+        self._entradas_enlatados = []  # copia de trabajo, poblada en _cargar_valores_en_ui()
 
-        self._rutas_enlatados = {}
-        self._lbl_enlatado = {}
-        self._btn_elegir_enlatado = {}
-        for numero in NUMEROS_ENLATADO:
-            fila = QHBoxLayout()
-            btn_elegir = QPushButton("Elegir categoría...")
-            btn_elegir.clicked.connect(lambda _checked=False, n=numero: self._elegir_categoria_enlatado(n))
-            lbl = QLabel("(sin configurar)")
-            btn_quitar = QPushButton("✕")
-            btn_quitar.setFixedWidth(28)
-            btn_quitar.setToolTip("Quitar la categoría configurada para este ENLATADO")
-            btn_quitar.clicked.connect(lambda _checked=False, n=numero: self._quitar_categoria_enlatado(n))
-            if self._ventana_explorador is None:
-                btn_elegir.setEnabled(False)
-            fila.addWidget(btn_elegir)
-            fila.addWidget(lbl, 1)
-            fila.addWidget(btn_quitar)
-            self._lbl_enlatado[numero] = lbl
-            self._btn_elegir_enlatado[numero] = btn_elegir
-            form.addRow(f"Enlatado {numero}:", self._envolver_layout(fila))
+        grupo = QGroupBox("📦 Enlatados")
+        contenido = QHBoxLayout(grupo)
 
-        layout.addWidget(grupo)
+        # Columna izquierda: la lista de slots + Nuevo/Eliminar.
+        columna_lista = QVBoxLayout()
+        self.lista_enlatados = QListWidget()
+        self.lista_enlatados.currentRowChanged.connect(self._on_fila_enlatado_seleccionada)
+        columna_lista.addWidget(self.lista_enlatados, 1)
+        fila_botones_lista = QHBoxLayout()
+        btn_nuevo_enlatado = QPushButton("➕ Nuevo")
+        btn_nuevo_enlatado.clicked.connect(self._nuevo_enlatado)
+        btn_eliminar_enlatado = QPushButton("✕ Eliminar")
+        btn_eliminar_enlatado.clicked.connect(self._eliminar_enlatado_seleccionado)
+        fila_botones_lista.addWidget(btn_nuevo_enlatado)
+        fila_botones_lista.addWidget(btn_eliminar_enlatado)
+        columna_lista.addLayout(fila_botones_lista)
+        contenido.addLayout(columna_lista, 1)
+
+        # Columna derecha: detalle del slot seleccionado.
+        self._panel_detalle_enlatado = QWidget()
+        self._panel_detalle_enlatado.setEnabled(False)
+        form_detalle = QFormLayout(self._panel_detalle_enlatado)
+
+        self.txt_nombre_enlatado = QLineEdit()
+        self.txt_nombre_enlatado.textEdited.connect(self._on_nombre_enlatado_editado)
+        form_detalle.addRow("Nombre:", self.txt_nombre_enlatado)
+
+        self.combo_tipo_enlatado = QComboBox()
+        self.combo_tipo_enlatado.addItem("Categoría local", "categoria")
+        self.combo_tipo_enlatado.addItem("Carpeta de Drive", "drive")
+        self.combo_tipo_enlatado.currentIndexChanged.connect(self._on_tipo_enlatado_cambiado)
+        form_detalle.addRow("Tipo:", self.combo_tipo_enlatado)
+
+        self.stack_tipo_enlatado = QStackedWidget()
+
+        pagina_categoria = QWidget()
+        fila_categoria = QHBoxLayout(pagina_categoria)
+        fila_categoria.setContentsMargins(0, 0, 0, 0)
+        btn_elegir_categoria = QPushButton("Elegir categoría...")
+        btn_elegir_categoria.clicked.connect(self._elegir_categoria_enlatado)
         if self._ventana_explorador is None:
-            nota = QLabel("No hay acceso al Explorador (Ventana 3) en esta sesión.")
+            btn_elegir_categoria.setEnabled(False)
+        self.lbl_categoria_enlatado = QLabel("(sin configurar)")
+        fila_categoria.addWidget(btn_elegir_categoria)
+        fila_categoria.addWidget(self.lbl_categoria_enlatado, 1)
+        self.stack_tipo_enlatado.addWidget(pagina_categoria)
+
+        pagina_drive = QWidget()
+        layout_drive = QVBoxLayout(pagina_drive)
+        layout_drive.setContentsMargins(0, 0, 0, 0)
+        self.txt_url_drive_enlatado = QLineEdit()
+        self.txt_url_drive_enlatado.setPlaceholderText("https://drive.google.com/drive/folders/...")
+        self.txt_url_drive_enlatado.textEdited.connect(self._on_url_drive_enlatado_editada)
+        layout_drive.addWidget(self.txt_url_drive_enlatado)
+        fila_sincronizar = QHBoxLayout()
+        btn_sincronizar_drive = QPushButton("🔄 Sincronizar ahora")
+        btn_sincronizar_drive.clicked.connect(self._sincronizar_drive_ahora)
+        self.lbl_estado_drive_enlatado = QLabel("")
+        self.lbl_estado_drive_enlatado.setWordWrap(True)
+        fila_sincronizar.addWidget(btn_sincronizar_drive)
+        fila_sincronizar.addWidget(self.lbl_estado_drive_enlatado, 1)
+        layout_drive.addLayout(fila_sincronizar)
+        self.stack_tipo_enlatado.addWidget(pagina_drive)
+
+        form_detalle.addRow(self.stack_tipo_enlatado)
+        contenido.addWidget(self._panel_detalle_enlatado, 2)
+
+        layout.addWidget(grupo, 1)
+        if self._ventana_explorador is None:
+            nota = QLabel(
+                "No hay acceso al Explorador (Ventana 3) en esta sesión -- "
+                "los slots de tipo \"Categoría local\" no se pueden editar acá."
+            )
             nota.setObjectName("lblTituloBloqueActivo")
+            nota.setWordWrap(True)
             layout.addWidget(nota)
-        layout.addStretch()
         return widget
 
-    def _elegir_categoria_enlatado(self, numero: str):
-        if self._ventana_explorador is None:
+    def _texto_lista_enlatado(self, entrada: dict) -> str:
+        icono = "☁" if entrada.get("tipo") == "drive" else "📁"
+        return f"{icono} {entrada.get('nombre') or '(sin nombre)'}"
+
+    def _entrada_enlatado_actual(self) -> dict | None:
+        fila = self.lista_enlatados.currentRow()
+        if fila < 0 or fila >= len(self._entradas_enlatados):
+            return None
+        return self._entradas_enlatados[fila]
+
+    def _nuevo_enlatado(self):
+        import secrets
+        entrada = {
+            "id": secrets.token_hex(8), "nombre": "Nuevo enlatado",
+            "tipo": "categoria", "categoria_ruta": None, "url_carpeta": "",
+        }
+        self._entradas_enlatados.append(entrada)
+        self.lista_enlatados.addItem(self._texto_lista_enlatado(entrada))
+        self.lista_enlatados.setCurrentRow(self.lista_enlatados.count() - 1)
+        self.txt_nombre_enlatado.setFocus()
+        self.txt_nombre_enlatado.selectAll()
+
+    def _eliminar_enlatado_seleccionado(self):
+        fila = self.lista_enlatados.currentRow()
+        if fila < 0:
+            return
+        entrada = self._entradas_enlatados[fila]
+        respuesta = QMessageBox.question(
+            self, "Eliminar enlatado",
+            f"¿Eliminar el slot \"{entrada.get('nombre')}\"? Si hay un Comando "
+            "ENLATADO ya insertado en algún bloque que lo use, va a quedar "
+            "apuntando a un slot inexistente y se saltea sin sonar nada.",
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+        del self._entradas_enlatados[fila]
+        self.lista_enlatados.takeItem(fila)
+
+    def _on_fila_enlatado_seleccionada(self, _fila: int):
+        entrada = self._entrada_enlatado_actual()
+        self._panel_detalle_enlatado.setEnabled(entrada is not None)
+        if entrada is None:
+            return
+        self.txt_nombre_enlatado.blockSignals(True)
+        self.txt_nombre_enlatado.setText(entrada.get("nombre") or "")
+        self.txt_nombre_enlatado.blockSignals(False)
+
+        indice_tipo = self.combo_tipo_enlatado.findData(entrada.get("tipo") or "categoria")
+        self.combo_tipo_enlatado.blockSignals(True)
+        self.combo_tipo_enlatado.setCurrentIndex(max(indice_tipo, 0))
+        self.combo_tipo_enlatado.blockSignals(False)
+        self.stack_tipo_enlatado.setCurrentIndex(max(indice_tipo, 0))
+
+        self._actualizar_etiqueta_categoria_enlatado(entrada)
+        self.txt_url_drive_enlatado.blockSignals(True)
+        self.txt_url_drive_enlatado.setText(entrada.get("url_carpeta") or "")
+        self.txt_url_drive_enlatado.blockSignals(False)
+        self._actualizar_estado_drive_enlatado(entrada)
+
+    def _on_nombre_enlatado_editado(self, texto: str):
+        entrada = self._entrada_enlatado_actual()
+        if entrada is None:
+            return
+        entrada["nombre"] = texto
+        self.lista_enlatados.item(self.lista_enlatados.currentRow()).setText(self._texto_lista_enlatado(entrada))
+
+    def _on_tipo_enlatado_cambiado(self, indice: int):
+        entrada = self._entrada_enlatado_actual()
+        if entrada is None:
+            return
+        entrada["tipo"] = self.combo_tipo_enlatado.itemData(indice)
+        self.stack_tipo_enlatado.setCurrentIndex(max(indice, 0))
+        self.lista_enlatados.item(self.lista_enlatados.currentRow()).setText(self._texto_lista_enlatado(entrada))
+        if entrada["tipo"] == "drive":
+            self._actualizar_estado_drive_enlatado(entrada)
+
+    def _elegir_categoria_enlatado(self):
+        entrada = self._entrada_enlatado_actual()
+        if entrada is None or self._ventana_explorador is None:
             return
         dialogo = DialogoSeleccionarCategoria(
             self._ventana_explorador.tree_categorias,
-            categoria_inicial=self._rutas_enlatados.get(numero),
-            titulo=f"Categoría para ENLATADO {numero}", parent=self,
+            categoria_inicial=entrada.get("categoria_ruta"),
+            titulo=f"Categoría para \"{entrada.get('nombre')}\"", parent=self,
         )
         if dialogo.exec() != DialogoSeleccionarCategoria.DialogCode.Accepted:
             return
-        self._rutas_enlatados[numero] = dialogo.ruta_elegida()
-        self._actualizar_etiqueta_enlatado(numero)
+        entrada["categoria_ruta"] = dialogo.ruta_elegida()
+        self._actualizar_etiqueta_categoria_enlatado(entrada)
 
-    def _quitar_categoria_enlatado(self, numero: str):
-        self._rutas_enlatados[numero] = None
-        self._actualizar_etiqueta_enlatado(numero)
+    def _actualizar_etiqueta_categoria_enlatado(self, entrada: dict):
+        ruta = entrada.get("categoria_ruta")
+        self.lbl_categoria_enlatado.setText(" / ".join(ruta) if ruta else "(sin configurar)")
 
-    def _actualizar_etiqueta_enlatado(self, numero: str):
-        ruta = self._rutas_enlatados.get(numero)
-        self._lbl_enlatado[numero].setText(" / ".join(ruta) if ruta else "(sin configurar)")
+    def _on_url_drive_enlatado_editada(self, texto: str):
+        entrada = self._entrada_enlatado_actual()
+        if entrada is None:
+            return
+        entrada["url_carpeta"] = texto
+
+    def _actualizar_estado_drive_enlatado(self, entrada: dict):
+        archivos = listar_archivos_sincronizados(entrada.get("id"))
+        if archivos:
+            self.lbl_estado_drive_enlatado.setText(f"{len(archivos)} archivo(s) ya sincronizados.")
+        else:
+            self.lbl_estado_drive_enlatado.setText(
+                "Todavía sin sincronizar (se sincroniza solo, de madrugada, o con "
+                "el botón de al lado)."
+            )
+
+    def _sincronizar_drive_ahora(self):
+        entrada = self._entrada_enlatado_actual()
+        if entrada is None:
+            return
+        url = (entrada.get("url_carpeta") or "").strip()
+        if not url:
+            QMessageBox.warning(self, "Sincronizar", "Pegá primero el enlace de la carpeta de Drive.")
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            resultado = sincronizar_fuente_drive(entrada.get("id"), url, self._config)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if resultado.get("ok"):
+            QMessageBox.information(self, "Sincronizar", resultado.get("mensaje", "Listo."))
+        else:
+            QMessageBox.warning(self, "Sincronizar", resultado.get("mensaje", "No se pudo sincronizar."))
+        self._actualizar_estado_drive_enlatado(entrada)
 
     # ------------------------------------------------------------------
     def _cargar_valores_en_ui(self):
@@ -1452,9 +1623,12 @@ class VentanaConfiguracion(QDialog):
         self.spin_fuente_emision.setValue(tamanos_fuente["emision"])
         self.spin_fuente_explorador.setValue(tamanos_fuente["explorador"])
 
-        for numero in NUMEROS_ENLATADO:
-            self._rutas_enlatados[numero] = categoria_de_enlatado(self._config, numero)
-            self._actualizar_etiqueta_enlatado(numero)
+        # Copia de trabajo -- el guardado real recién reemplaza
+        # self._config["enlatados"] en _guardar_y_cerrar().
+        self._entradas_enlatados = [dict(e) for e in listar_enlatados(self._config)]
+        self.lista_enlatados.clear()
+        for entrada in self._entradas_enlatados:
+            self.lista_enlatados.addItem(self._texto_lista_enlatado(entrada))
 
     def _seleccionar_en_combo(self, combo: QComboBox, valor: str):
         indice = combo.findData(valor)
@@ -1542,9 +1716,7 @@ class VentanaConfiguracion(QDialog):
             "explorador": self.spin_fuente_explorador.value(),
         }
 
-        self._config.setdefault("enlatados", {})
-        for numero in NUMEROS_ENLATADO:
-            self._config["enlatados"][numero] = {"categoria_ruta": self._rutas_enlatados.get(numero)}
+        self._config["enlatados"] = [dict(e) for e in self._entradas_enlatados]
 
         guardar_configuracion(self._config)
         self.accept()

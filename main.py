@@ -29,7 +29,10 @@ from core.instancia_unica import adquirir_bloqueo_instancia_unica
 from core.sesion_display import (
     es_sesion_fisica_esperada, descripcion_sesion_actual, DISPLAY_FISICO_ESPERADO,
 )
-from core.actualizador import asegurar_lanzadores_escritorio, asegurar_tarea_cron_mantenimiento
+from core.actualizador import (
+    asegurar_lanzadores_escritorio, asegurar_tarea_cron_mantenimiento,
+    asegurar_tarea_cron_sincronizar_drive,
+)
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
 
@@ -156,6 +159,15 @@ def main():
         asegurar_tarea_cron_mantenimiento()
     except Exception as error:
         registrar_error(f"No se pudo instalar/refrescar la tarea de mantenimiento diario (cron): {error}")
+
+    # Sincronización de los slots ENLATADO tipo "drive" (Configuración
+    # → Enlatados), de madrugada, ANTES de que les toque sonar en
+    # cualquier bloque horario -- mismo criterio de arriba, nunca debe
+    # poder frenar el arranque.
+    try:
+        asegurar_tarea_cron_sincronizar_drive()
+    except Exception as error:
+        registrar_error(f"No se pudo instalar/refrescar la tarea de sincronización de Drive (cron): {error}")
 
     registrar_evento("Aplicación iniciada")
 
