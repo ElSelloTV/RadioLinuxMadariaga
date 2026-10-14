@@ -52,7 +52,7 @@ from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
 from core.audio_engine import MotorAudio
 from core import actualizador
 from core import reinicio_sistema
-from core.sincronizador_drive import sincronizar_fuente_drive, listar_archivos_sincronizados
+from core.sincronizador_drive import listar_archivos_sincronizados
 from gui.styles import LISTA_GENEROS
 from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 from gui.panel_procesador_audio import PanelProcesadorAudio
@@ -1402,11 +1402,11 @@ class VentanaConfiguracion(QDialog):
         self.txt_url_drive_enlatado.textEdited.connect(self._on_url_drive_enlatado_editada)
         layout_drive.addWidget(self.txt_url_drive_enlatado)
         fila_sincronizar = QHBoxLayout()
-        btn_sincronizar_drive = QPushButton("🔄 Sincronizar ahora")
-        btn_sincronizar_drive.clicked.connect(self._sincronizar_drive_ahora)
+        self.btn_sincronizar_drive = QPushButton("🔄 Sincronizar ahora")
+        self.btn_sincronizar_drive.clicked.connect(self._sincronizar_drive_ahora)
         self.lbl_estado_drive_enlatado = QLabel("")
         self.lbl_estado_drive_enlatado.setWordWrap(True)
-        fila_sincronizar.addWidget(btn_sincronizar_drive)
+        fila_sincronizar.addWidget(self.btn_sincronizar_drive)
         fila_sincronizar.addWidget(self.lbl_estado_drive_enlatado, 1)
         layout_drive.addLayout(fila_sincronizar)
         self.stack_tipo_enlatado.addWidget(pagina_drive)
@@ -1536,6 +1536,16 @@ class VentanaConfiguracion(QDialog):
             )
 
     def _sincronizar_drive_ahora(self):
+        """Bug real corregido (reportado por Santiago: "al intentar
+        descargar el drive se quedó 'trabado' el programa"): esto
+        corría `sincronizar_fuente_drive()` DIRECTO en el hilo de la
+        GUI -- una descarga real (red + análisis de audio por
+        archivo) puede tardar lo suficiente como para sentirse
+        colgado. Ahora corre en PROCESO APARTE vía QProcess, con una
+        barra de progreso gráfica real -- mismo mecanismo YA probado
+        para "Reanalizar biblioteca" (ver _reanalizar_biblioteca más
+        arriba) -- el programa entero sigue respondiendo mientras
+        sincroniza, sin importar cuánto tarde."""
         entrada = self._entrada_enlatado_actual()
         if entrada is None:
             return
@@ -1543,16 +1553,80 @@ class VentanaConfiguracion(QDialog):
         if not url:
             QMessageBox.warning(self, "Sincronizar", "Pegá primero el enlace de la carpeta de Drive.")
             return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            resultado = sincronizar_fuente_drive(entrada.get("id"), url, self._config)
-        finally:
-            QApplication.restoreOverrideCursor()
+
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core", "sincronizador_drive.py")
+        # --url se pasa EXPLÍCITO (nunca releído de disco por
+        # --slot-id) -- así usa el link recién tipeado en la UI,
+        # incluso antes de apretar "Guardar".
+        argumentos = [script, "--slot-id", str(entrada.get("id")), "--url", url]
+
+        self._entrada_sincronizando_drive = entrada
+        self._dialogo_sincronizar_drive = DialogoPreloadBiblioteca(
+            1, parent=self, titulo="Sincronizando Drive",
+            texto=f"Sincronizando \"{entrada.get('nombre')}\" desde Google Drive...",
+            nota="Corre en un proceso aparte -- el programa sigue respondiendo mientras tanto.",
+        )
+        self._dialogo_sincronizar_drive.show()
+
+        self._buffer_stdout_sincronizar_drive = ""
+        self._resultado_sincronizar_drive = None
+        self._proceso_sincronizar_drive = QProcess(self)
+        self._proceso_sincronizar_drive.setProgram(sys.executable)
+        self._proceso_sincronizar_drive.setArguments(argumentos)
+        self._proceso_sincronizar_drive.readyReadStandardOutput.connect(self._leer_progreso_sincronizar_drive)
+        self._proceso_sincronizar_drive.finished.connect(self._al_terminar_sincronizar_drive)
+        self.btn_sincronizar_drive.setEnabled(False)
+        self._proceso_sincronizar_drive.start()
+
+    def _leer_progreso_sincronizar_drive(self):
+        """Parsea las líneas "PROGRESO hechos total" / "RESULTADO
+        {json}" que imprime core/sincronizador_drive.py -- mismo
+        parser que _leer_progreso_reanalisis, bufferea hasta tener una
+        línea completa."""
+        self._buffer_stdout_sincronizar_drive += bytes(
+            self._proceso_sincronizar_drive.readAllStandardOutput()
+        ).decode("utf-8", errors="replace")
+        while "\n" in self._buffer_stdout_sincronizar_drive:
+            linea, self._buffer_stdout_sincronizar_drive = self._buffer_stdout_sincronizar_drive.split("\n", 1)
+            linea = linea.strip()
+            if linea.startswith("PROGRESO "):
+                partes = linea.split()
+                if len(partes) == 3:
+                    try:
+                        hechos, total = int(partes[1]), int(partes[2])
+                    except ValueError:
+                        continue
+                    if self._dialogo_sincronizar_drive is not None:
+                        self._dialogo_sincronizar_drive.actualizar(hechos, total)
+            elif linea.startswith("RESULTADO "):
+                try:
+                    self._resultado_sincronizar_drive = json.loads(linea[len("RESULTADO "):])
+                except ValueError:
+                    pass
+
+    def _al_terminar_sincronizar_drive(self, _codigo_salida, _estado_salida):
+        if self._dialogo_sincronizar_drive is not None:
+            self._dialogo_sincronizar_drive.close()
+            self._dialogo_sincronizar_drive = None
+        self.btn_sincronizar_drive.setEnabled(True)
+
+        resultado = self._resultado_sincronizar_drive
+        if resultado is None:
+            error = bytes(self._proceso_sincronizar_drive.readAllStandardError()).decode("utf-8", errors="replace").strip()
+            resultado = {"ok": False, "mensaje": error or "El proceso de sincronización terminó sin resultado (ver log)."}
+
         if resultado.get("ok"):
             QMessageBox.information(self, "Sincronizar", resultado.get("mensaje", "Listo."))
         else:
             QMessageBox.warning(self, "Sincronizar", resultado.get("mensaje", "No se pudo sincronizar."))
-        self._actualizar_estado_drive_enlatado(entrada)
+
+        # Si el operador cambió de slot seleccionado mientras corría la
+        # sincronización, la etiqueta de estado de ESE slot (el que
+        # tenía el foco al terminar) no corresponde a lo que se acaba
+        # de sincronizar -- solo se refresca si siguen siendo el mismo.
+        if self._entrada_sincronizando_drive is not None and self._entrada_enlatado_actual() is self._entrada_sincronizando_drive:
+            self._actualizar_estado_drive_enlatado(self._entrada_sincronizando_drive)
+        self._entrada_sincronizando_drive = None
 
     # ------------------------------------------------------------------
     def _cargar_valores_en_ui(self):
