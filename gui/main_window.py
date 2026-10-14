@@ -55,7 +55,7 @@ from config.settings import (
     listar_programaciones, obtener_programacion, guardar_programacion,
     cargar_musicalizador, listar_formatos, obtener_formato,
     guardar_formato, eliminar_formato, renombrar_formato,
-    categoria_de_enlatado,
+    listar_enlatados,
     ARCHIVO_LOG,
 )
 
@@ -1261,14 +1261,17 @@ class MainWindow(QMainWindow):
             return self._reiniciar_pc_forzado_remoto()
         return {"ok": False, "error": f"Acción desconocida: {accion}"}
 
-    def _listar_enlatados_remoto(self) -> dict:
-        """Camino de categoría configurado para cada slot ENLATADO
-        1-5 (Configuración → Enlatados), para que el Programador
-        remoto pueda mostrar de un vistazo qué categoría le
-        corresponde a cada número — mismo criterio que ya usa
-        `gui/dialogo_insertar_comando_enlatado.py` del lado local."""
-        config = cargar_configuracion()
-        return {numero: categoria_de_enlatado(config, numero) for numero in ("1", "2", "3", "4", "5")}
+    def _listar_enlatados_remoto(self) -> list:
+        """Lista completa de slots ENLATADO configurados (id/nombre/
+        tipo/categoria_ruta/url_carpeta), para que el Programador
+        remoto pueda mostrar de un vistazo qué tiene configurado cada
+        uno Y resolver el nombre visible de un Comando ya insertado
+        (ver satelite/dialogo_programador_remoto.py:_texto_item) —
+        mismo criterio que ya usa
+        `gui/dialogo_insertar_comando_enlatado.py` del lado local. El
+        `id` de cada entrada es lo que viaja como `parametro_comando`,
+        NUNCA el nombre (que puede cambiar si se renombra el slot)."""
+        return listar_enlatados(cargar_configuracion())
 
     def _alternar_automatico_remoto(self, activar: bool) -> dict:
         """Prende/apaga el Automático de Ventana 1 -- mismo mecanismo

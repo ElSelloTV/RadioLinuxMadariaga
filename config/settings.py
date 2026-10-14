@@ -228,26 +228,37 @@ CONFIG_POR_DEFECTO = {
         "puerto": 8765,
         "token": "",
     },
-    # Comando ENLATADO 1-5 (pedido explícito: "programas 'enlatados'
-    # que se cargan semanalmente... el comando ENLATADO pondrá
-    # solamente en reproducción el último archivo cargado en la
-    # categoría ya configurada"). Cada slot guarda el CAMINO de
-    # nombres de UNA categoría exacta (nunca recursivo a
-    # subcategorías, confirmado con Santiago) — `None` = sin
-    # configurar todavía, el comando se saltea sin sonar nada (ver
-    # GestorPublicidad._resolver_ultimo_de_enlatado en
-    # core/playlist_manager.py). "Último archivo cargado" se resuelve
-    # por ORDEN de alta (el último `registro` de la lista de esa
-    # categoría, no una fecha guardada aparte — confirmado con
-    # Santiago que el código correlativo/orden de alta ya alcanza,
-    # sin necesitar un campo de fecha nuevo en la biblioteca).
-    "enlatados": {
-        "1": {"categoria_ruta": None},
-        "2": {"categoria_ruta": None},
-        "3": {"categoria_ruta": None},
-        "4": {"categoria_ruta": None},
-        "5": {"categoria_ruta": None},
-    },
+    # Comando ENLATADO — lista GROWABLE de slots con nombre propio
+    # (pedido explícito, ronda de unificación con Drive: "pongamoslo a
+    # la par de Enlatado... deben tratarse como un Enlatado más, ya
+    # que es lo mismo, solo cambia el método" — reemplaza el diseño
+    # original de 5 casilleros numerados fijos, que se quedaba corto
+    # apenas Santiago necesitó un 6to). Cada entrada es un dict:
+    #   {"id": "1", "nombre": "Enlatado 1", "tipo": "categoria"|"drive",
+    #    "categoria_ruta": [...]|None, "url_carpeta": ""}
+    # `id` es ESTABLE (nunca se renombra solo) — es el valor que viaja
+    # como `parametro_comando` en cualquier bloque/programación ya
+    # guardada, así que cambiarle el nombre a un slot (o cambiarlo de
+    # tipo) nunca rompe un Comando ENLATADO ya insertado.
+    # - tipo "categoria" (el original): al reproducirse, toma el
+    #   ÚLTIMO archivo cargado en `categoria_ruta` (por orden de alta,
+    #   nunca recursivo a subcategorías — confirmado con Santiago que
+    #   el orden de alta ya alcanza, sin necesitar un campo de fecha
+    #   nuevo en la biblioteca).
+    # - tipo "drive" (nuevo, pedido explícito: "con un enlace de
+    #   Google Drive... carpeta dentro del enlace, exporta los bloques
+    #   del programa grabado... según el nombre los ordena
+    #   alfabéticamente, y los reproduce"): al reproducirse, toma
+    #   TODOS los archivos YA SINCRONIZADOS (nunca en caliente, ver
+    #   core/sincronizador_drive.py — la sincronización real corre
+    #   aparte, de madrugada) de la carpeta de Drive pública
+    #   configurada en `url_carpeta`, en orden alfabético/natural, y
+    #   los reproduce uno atrás del otro.
+    # Ver config.settings.listar_enlatados()/obtener_enlatado() y
+    # GestorPublicidad._resolver_contenido_enlatado() en
+    # core/playlist_manager.py. Lista vacía por defecto — una
+    # instalación nueva no trae ningún slot de ejemplo.
+    "enlatados": [],
 }
 
 
@@ -319,12 +330,95 @@ def _guardar_json_atomico(ruta: str, datos, compacto: bool = False):
 def _fusionar_con_defecto(config_guardada: dict) -> dict:
     """Completa con los valores por defecto cualquier clave/sección nueva
     que no exista todavía en un config_general.json guardado con una
-    versión anterior de la app (evita KeyError al agregar settings)."""
+    versión anterior de la app (evita KeyError al agregar settings).
+
+    "enlatados" se procesa APARTE (no entra en el `{**defecto,
+    **guardado}` genérico de abajo): es una LISTA, no una sección de
+    claves sueltas — mezclarla con ese spread rompería con
+    `TypeError: argument of type 'list' is not a mapping`."""
     resultado = {}
     for seccion, valores_defecto in CONFIG_POR_DEFECTO.items():
+        if seccion == "enlatados":
+            continue
         valores_guardados = config_guardada.get(seccion, {})
         resultado[seccion] = {**valores_defecto, **valores_guardados}
+    resultado["enlatados"] = _migrar_enlatados_formato_viejo(config_guardada.get("enlatados", []))
     return resultado
+
+
+def _migrar_enlatados_formato_viejo(valor) -> list:
+    """Compat hacia atrás: una instalación de ANTES de la ronda de
+    unificación con Drive guardaba "enlatados" como un dict FIJO de 5
+    claves ("1".."5"), cada una con un `categoria_ruta` opcional — acá
+    se convierte, en memoria, al formato nuevo (lista growable con
+    nombre+tipo por entrada, ver CONFIG_POR_DEFECTO más arriba).
+    Preserva el `id` viejo (la clave "1".."5") de cualquier slot que
+    YA tuviera una categoría real configurada, para que un Comando
+    ENLATADO ya insertado en algún bloque/programación siga
+    resolviendo exactamente a la misma categoría de siempre — los
+    slots que nunca se configuraron (categoria_ruta vacío) se
+    descartan, para no ensuciar la lista nueva con casilleros
+    "fantasma" que el operador nunca llegó a usar.
+
+    Si `valor` YA es una lista (instalación nueva, o una vieja que ya
+    pasó por esta migración y se volvió a guardar), se devuelve tal
+    cual — la migración es un paso único, no se repite de más."""
+    if isinstance(valor, list):
+        return valor
+    if not isinstance(valor, dict):
+        return []
+    resultado = []
+    for id_slot, datos in valor.items():
+        ruta = (datos or {}).get("categoria_ruta")
+        if not ruta:
+            continue
+        resultado.append({
+            "id": str(id_slot), "nombre": f"Enlatado {id_slot}",
+            "tipo": "categoria", "categoria_ruta": list(ruta), "url_carpeta": "",
+        })
+    return resultado
+
+
+def listar_enlatados(config: dict) -> list:
+    """Lista completa de slots ENLATADO configurados (ya migrada al
+    formato nuevo si hiciera falta) — usada por la UI de Configuración,
+    el diálogo de inserción (local y remoto) y el sincronizador de
+    Drive."""
+    return _migrar_enlatados_formato_viejo(config.get("enlatados") or [])
+
+
+def obtener_enlatado(config: dict, id_slot) -> dict | None:
+    """Config completa (nombre/tipo/categoria_ruta/url_carpeta) del
+    slot ENLATADO `id_slot` — `None` si no existe. Reemplaza a la
+    vieja `categoria_de_enlatado()` (que solo devolvía la ruta de
+    categoría, pensada para cuando el único tipo posible era local)."""
+    id_slot = str(id_slot)
+    for entrada in listar_enlatados(config):
+        if str(entrada.get("id")) == id_slot:
+            return entrada
+    return None
+
+
+def texto_visible_parametro_comando(tipo_comando: str, parametro: str, config: dict | None = None) -> str:
+    """El texto que se dibuja en el árbol para el parámetro de un
+    Comando (ej. el "Folclore" de "▶ FMT: Folclore") — SOLO difiere del
+    parámetro crudo para ENLATADO: ahí `parametro` es el `id` ESTABLE
+    del slot (nunca cambia, aunque el operador renombre el slot
+    después — es lo que persiste en playlist_publicidad.json/
+    programacion.json y lo que resuelve el motor de reproducción), así
+    que hay que resolverlo contra el NOMBRE actual del slot para
+    mostrarlo — se recalcula cada vez que el árbol se reconstruye
+    (cargar_bloques()/_cargar_programacion_existente()), así que
+    renombrar un slot corrige el texto visible la próxima vez que se
+    carga, sin tocar nada guardado. Para FMT/HTH/STOP/PLAY, el
+    parámetro YA es un texto humano (nombre de formato, "HORA", etc.)
+    — se devuelve tal cual."""
+    if tipo_comando != "ENLATADO" or not parametro:
+        return parametro
+    slot = obtener_enlatado(config if config is not None else cargar_configuracion(), parametro)
+    if slot is None:
+        return f"{parametro} (slot eliminado)"
+    return slot.get("nombre") or parametro
 
 
 def cargar_configuracion() -> dict:
@@ -394,19 +488,6 @@ def parametros_nivelado(config: dict) -> tuple:
         reproduccion.get("nivelado_loudness_lufs_objetivo", -16.0),
         reproduccion.get("nivelado_techo_pico_dbfs", -1.0),
     )
-
-
-def categoria_de_enlatado(config: dict, numero) -> list | None:
-    """Camino de categoría configurado para el slot ENLATADO `numero`
-    ("1" a "5", ver Configuración → Enlatados) — `None` si ese slot
-    todavía no se configuró, o si el config guardado es viejo/parcial
-    (fail-open, mismo criterio que el resto de estos helpers: nunca
-    romper por una clave faltante, el comando simplemente se saltea
-    sin sonar nada)."""
-    enlatados = config.get("enlatados") or {}
-    slot = enlatados.get(str(numero)) or {}
-    ruta = slot.get("categoria_ruta")
-    return list(ruta) if ruta else None
 
 
 def _rotar_archivo_si_corresponde(ruta: str):

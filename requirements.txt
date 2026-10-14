@@ -14,3 +14,10 @@ audioop-lts>=0.2.1; python_version >= "3.13"
 # (promedio dBFS) para ese archivo puntual, nunca rompe el alta.
 pyloudnorm>=0.2.0
 numpy>=1.24.0
+# Sincronización de carpetas PÚBLICAS de Google Drive para los slots
+# ENLATADO tipo "drive" (Configuración → Enlatados) -- pedido
+# explícito ("¿es posible integrarlo con un enlace de Google
+# Drive?"). Opcional en los hechos: si falta,
+# core/sincronizador_drive.py degrada limpio (avisa en el log y en la
+# UI "Falta instalar gdown"), nunca rompe el resto de la app.
+gdown>=5.2.0

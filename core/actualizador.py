@@ -385,20 +385,27 @@ def asegurar_lanzadores_escritorio() -> None:
 # sirve, en la práctica eso nunca se ejecuta.
 # ------------------------------------------------------------------
 _MARCA_CRON_MANTENIMIENTO = "radio-tuyu-mantenimiento-diario"
+_MARCA_CRON_SINCRONIZAR_DRIVE = "radio-tuyu-sincronizar-drive-enlatados"
 
 
-def asegurar_tarea_cron_mantenimiento() -> None:
-    """Instala/refresca, de forma idempotente, una entrada de crontab
-    que corre `core/mantenimiento_diario.py` todos los días a las 2am
-    -- mismo espíritu que `asegurar_lanzadores_escritorio()` más
-    arriba: silenciosa (nunca rompe el arranque de la radio si algo
-    falla -- sin `crontab` instalado, sin el servicio de cron activo,
-    sin permisos, lo que sea) y auto-corrige sola si la ruta de
-    instalación cambió (ej. se movió el checkout a otra carpeta).
-    Idempotente: si la entrada ya está instalada tal cual, no vuelve a
-    tocar el crontab en cada arranque."""
+def _asegurar_entrada_cron(marca: str, horario_cron: str, script_relativo: str, nombre_log_bootstrap: str) -> None:
+    """Instala/refresca, de forma idempotente, UNA entrada de crontab
+    identificada por `marca` -- helper compartido, extraído de la
+    única entrada que existía antes de esta ronda
+    (`asegurar_tarea_cron_mantenimiento`, 2am) para no duplicar esta
+    lógica al sumar una segunda (`asegurar_tarea_cron_sincronizar_drive`,
+    0:30am, ver más abajo). Mismo espíritu que
+    `asegurar_lanzadores_escritorio()` más arriba: silenciosa (nunca
+    rompe el arranque de la radio si algo falla -- sin `crontab`
+    instalado, sin el servicio de cron activo, sin permisos, lo que
+    sea) y auto-corrige sola si la ruta de instalación cambió (ej. se
+    movió el checkout a otra carpeta). Idempotente: si la entrada ya
+    está instalada tal cual, no vuelve a tocar el crontab en cada
+    arranque -- y nunca toca ninguna OTRA entrada (identificada por su
+    propia marca), sea de esta app o de cualquier otra cosa que el
+    operador tenga programada."""
     raiz = _raiz_app()
-    script = os.path.join(raiz, "core", "mantenimiento_diario.py")
+    script = os.path.join(raiz, script_relativo)
     if not os.path.isfile(script):
         return  # checkout parcial/roto -- no hay nada que programar
 
@@ -407,12 +414,9 @@ def asegurar_tarea_cron_mantenimiento() -> None:
     # de que el script llegue a importar config.settings (python
     # equivocado, checkout roto), esto es lo único que queda para
     # diagnosticarlo -- el log interno (log_aplicacion.txt, el que se
-    # sube a GitHub) sigue siendo donde quedan las 3 tareas en sí.
-    log_bootstrap = os.path.join(raiz, "config", "data", "log_cron_mantenimiento.txt")
-    linea_nueva = (
-        f"0 2 * * * {sys.executable} {script} >> {log_bootstrap} 2>&1 "
-        f"# {_MARCA_CRON_MANTENIMIENTO}"
-    )
+    # sube a GitHub) sigue siendo donde quedan las tareas en sí.
+    log_bootstrap = os.path.join(raiz, "config", "data", nombre_log_bootstrap)
+    linea_nueva = f"{horario_cron} {sys.executable} {script} >> {log_bootstrap} 2>&1 # {marca}"
 
     try:
         resultado = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
@@ -428,7 +432,7 @@ def asegurar_tarea_cron_mantenimiento() -> None:
     if linea_nueva in lineas_actuales:
         return  # ya estaba instalada tal cual -- nada que tocar
 
-    lineas_nuevas = [linea for linea in lineas_actuales if _MARCA_CRON_MANTENIMIENTO not in linea]
+    lineas_nuevas = [linea for linea in lineas_actuales if marca not in linea]
     lineas_nuevas.append(linea_nueva)
     contenido_nuevo = "\n".join(lineas_nuevas) + "\n"
 
@@ -443,3 +447,29 @@ def asegurar_tarea_cron_mantenimiento() -> None:
         )
     except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
         pass
+
+
+def asegurar_tarea_cron_mantenimiento() -> None:
+    """Instala/refresca la entrada de crontab que corre
+    `core/mantenimiento_diario.py` todos los días a las 2am."""
+    _asegurar_entrada_cron(
+        _MARCA_CRON_MANTENIMIENTO, "0 2 * * *",
+        os.path.join("core", "mantenimiento_diario.py"), "log_cron_mantenimiento.txt",
+    )
+
+
+def asegurar_tarea_cron_sincronizar_drive() -> None:
+    """Instala/refresca la entrada de crontab que corre
+    `core/sincronizador_drive.py` todos los días a las 00:30 -- 30
+    minutos ANTES del mantenimiento de las 2am, y bien lejos del
+    horario real de emisión, para que los slots ENLATADO tipo "drive"
+    (Configuración → Enlatados) ya estén listos y verificados ANTES de
+    que les toque sonar en cualquier bloque horario del día -- pedido
+    explícito: "entre las 00 y 5am se pueden hacer todas las tareas
+    diarias... a las 00:30 horas preparar los enlatados... no lo
+    pensaba que los reproduzca 'en caliente', deben estar preparados
+    para su momento ya listos"."""
+    _asegurar_entrada_cron(
+        _MARCA_CRON_SINCRONIZAR_DRIVE, "30 0 * * *",
+        os.path.join("core", "sincronizador_drive.py"), "log_cron_sincronizar_drive.txt",
+    )

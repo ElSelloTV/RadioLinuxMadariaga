@@ -46,9 +46,11 @@ class DialogoProgramadorRemoto(QDialog):
         self._cliente = cliente
         self._bloques = []
         self._categorias = []
+        self._enlatados = []  # lista de dicts {id, nombre, tipo, ...} -- ver _cargar_enlatados
         self._portapapeles = []
         self._construir_ui()
         self._cargar_categorias()
+        self._cargar_enlatados()
 
     # ------------------------------------------------------------------
     def _construir_ui(self):
@@ -153,6 +155,17 @@ class DialogoProgramadorRemoto(QDialog):
         except ErrorControlRemoto as error:
             QMessageBox.warning(self, "Control remoto", str(error))
 
+    def _cargar_enlatados(self):
+        """Lista de slots ENLATADO (ver listar_enlatados() del
+        cliente/servidor) -- se recarga cada vez que se abre el
+        diálogo de inserción, así un slot creado/renombrado DESDE
+        Configuración mientras el Programador remoto ya estaba
+        abierto queda reflejado sin tener que cerrarlo y reabrirlo."""
+        try:
+            self._enlatados = self._cliente.listar_enlatados()
+        except ErrorControlRemoto:
+            self._enlatados = []  # fail-open: el comando ya insertado se sigue mostrando por su id crudo
+
     # ------------------------------------------------------------------
     def _refrescar_arbol(self):
         # Recordar qué estaba seleccionado ANTES de reconstruir el
@@ -203,10 +216,21 @@ class DialogoProgramadorRemoto(QDialog):
             "fecha_inicio": None, "fecha_fin": None,
         }
 
-    @staticmethod
-    def _texto_item(item: dict) -> str:
+    def _texto_item(self, item: dict) -> str:
         if item.get("es_comando"):
-            return f"▶ {item.get('tipo_comando')}: {item.get('parametro_comando')}"
+            tipo_comando = item.get("tipo_comando")
+            parametro = item.get("parametro_comando")
+            texto_parametro = parametro
+            if tipo_comando == "ENLATADO" and parametro:
+                # El parámetro guardado es el `id` ESTABLE del slot
+                # (nunca el nombre, que puede cambiar) -- se resuelve
+                # contra la lista YA traída por RPC para mostrar el
+                # nombre actual, mismo criterio que
+                # config.settings.texto_visible_parametro_comando del
+                # lado local.
+                slot = next((e for e in self._enlatados if e.get("id") == parametro), None)
+                texto_parametro = (slot.get("nombre") if slot else None) or f"{parametro} (slot eliminado)"
+            return f"▶ {tipo_comando}: {texto_parametro}"
         if item.get("es_aleatorio"):
             categoria = " / ".join(item.get("categoria_aleatorio") or [])
             return f"🎲 Aleatorio: {categoria}"
@@ -387,21 +411,28 @@ class DialogoProgramadorRemoto(QDialog):
         if i_bloque is None:
             QMessageBox.information(self, "Comando ENLATADO", "Primero creá un bloque horario.")
             return
-        try:
-            enlatados = self._cliente.listar_enlatados()
-        except ErrorControlRemoto as error:
-            QMessageBox.warning(self, "Control remoto", str(error))
+        self._cargar_enlatados()  # refresca contra lo que haya en Configuración AHORA
+        if not self._enlatados:
+            QMessageBox.information(
+                self, "Comando ENLATADO",
+                "Todavía no hay ningún Enlatado creado. Creá uno primero en "
+                "Configuración → 📦 Enlatados, desde la app principal (categoría "
+                "local o carpeta de Google Drive).",
+            )
             return
         opciones = []
-        for numero in ("1", "2", "3", "4", "5"):
-            ruta = enlatados.get(numero)
-            etiqueta = f"{numero} — " + (" / ".join(ruta) if ruta else "(sin configurar)")
-            opciones.append(etiqueta)
+        for entrada in self._enlatados:
+            if entrada.get("tipo") == "drive":
+                detalle = "☁ Drive" if entrada.get("url_carpeta") else "☁ Drive (sin enlace)"
+            else:
+                ruta = entrada.get("categoria_ruta")
+                detalle = ("📁 " + " / ".join(ruta)) if ruta else "📁 (sin categoría)"
+            opciones.append(f"{entrada.get('nombre')} — {detalle}")
         elegido, ok = QInputDialog.getItem(self, "Insertar Comando ENLATADO", "Slot:", opciones, editable=False)
         if not ok:
             return
-        numero = elegido.split(" — ", 1)[0]
-        item = {"es_comando": True, "tipo_comando": "ENLATADO", "parametro_comando": numero}
+        id_slot = self._enlatados[opciones.index(elegido)].get("id")
+        item = {"es_comando": True, "tipo_comando": "ENLATADO", "parametro_comando": id_slot}
         indice = self._indice_insercion(i_bloque)
         if indice is None:
             self._bloques[i_bloque]["items"].append(item)
