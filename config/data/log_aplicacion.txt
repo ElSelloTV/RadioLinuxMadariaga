@@ -3976,3 +3976,285 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 [2026-10-14 02:00:01] [INFO] Mantenimiento diario: espacio libre en disco OK -- 8.5GB
 [2026-10-14 02:00:01] [INFO] analizador_audio: ventana reproducible sospechosamente chica (1220ms de 1600ms) en '/tmp/tmpk1cs553d.wav' -- se descarta el recorte de silencio para este archivo, suena completo.
 [2026-10-14 02:00:06] [INFO] Mantenimiento diario: motor de audio (recorte de silencio) OK
+[2026-10-14 02:00:12] [INFO] Mantenimiento diario: subida del log a GitHub -- FALLÓ: El log se guardó en un commit local, pero no se pudo subir a GitHub (revisá conexión/credenciales): To https://github.com/ElSelloTV/RadioLinuxMadariaga
+ ! [rejected]        main -> main (non-fast-forward)
+error: falló el empuje de algunas referencias a 'https://github.com/ElSelloTV/RadioLinuxMadariaga'
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart. If you want to integrate the remote changes,
+hint: use 'git pull' before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+[2026-10-14 02:00:12] [INFO] Mantenimiento diario (2am): terminado
+[2026-10-14 02:01:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 02:01:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 91})
+[2026-10-14 02:16:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 02:16:22] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 92})
+[2026-10-14 02:31:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 02:31:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 92})
+[2026-10-14 02:46:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 02:46:22] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 92})
+[2026-10-14 03:01:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 03:01:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 92})
+[2026-10-14 03:16:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 03:16:22] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 92})
+[2026-10-14 03:31:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 03:31:22] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 92})
+[2026-10-14 03:46:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 03:46:22] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 92})
+[2026-10-14 04:01:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 04:01:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 04:16:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 04:16:22] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 04:31:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 04:31:22] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 04:46:16] [INFO] Diagnóstico de recursos: 176 descriptores de archivo abiertos (40 conexiones PulseAudio vía memfd)
+[2026-10-14 04:46:32] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 05:01:13] [INFO] Aplicación iniciada
+[2026-10-14 05:01:15] [INFO] MotorAudio: aplicando audio_output_device_set(None, 'fm_processing_input') (id guardado en config: 'fm_processing_input')
+[2026-10-14 05:01:15] [INFO] MotorAudio: aplicando audio_output_device_set(None, 'fm_processing_input') (id guardado en config: 'fm_processing_input')
+[2026-10-14 05:01:15] [INFO] MotorAudio: aplicando audio_output_device_set(None, 'fm_processing_input') (id guardado en config: 'fm_processing_input')
+[2026-10-14 05:01:16] [INFO] Playlist de Emisión restaurada: 7 ítem(s)
+[2026-10-14 05:01:16] [INFO] MotorAudio: aplicando audio_output_device_set(None, 'fm_processing_input') (id guardado en config: 'fm_processing_input')
+[2026-10-14 05:01:16] [INFO] MotorAudio: aplicando audio_output_device_set(None, 'fm_processing_input') (id guardado en config: 'fm_processing_input')
+[2026-10-14 05:01:16] [INFO] Playlist de Publicidad restaurada: 22 bloque(s)
+[2026-10-14 05:01:16] [INFO] MotorAudio: aplicando audio_output_device_set(None, 'alsa_output.pci-0000_00_14.2.analog-stereo') (id guardado en config: 'alsa_output.pci-0000_00_14.2.analog-stereo')
+[2026-10-14 05:01:17] [INFO] Publicidad: programación de hoy cargada automáticamente ('ROTATIVA  MIERCOLES Y JUEVES')
+[2026-10-14 05:01:17] [INFO] Diagnóstico de recursos: 61 descriptores de archivo abiertos (12 conexiones PulseAudio vía memfd)
+[2026-10-14 05:01:17] [INFO] Control remoto: servidor escuchando en 127.0.0.1:8765
+[2026-10-14 05:01:18] [INFO] Inicio: arranca Emisión (Automático activo, esperando el próximo bloque horario)
+[2026-10-14 05:01:18] [INFO] Play (Emisión persistir=True) fila=0
+[2026-10-14 05:01:19] [INFO] Automático: Emisión arrancada desde el ítem armado, con fundido de entrada
+[2026-10-14 05:01:19] [INFO] Prioridad de proceso: devuelta a la normal (sin reproducción activa)
+[2026-10-14 05:01:19] [INFO] MotorAudio: movido sink-input 133 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:01:19] [INFO] MotorAudio: '/home/radio/Música/Música/Lentos/Viejos/LEN00234 - y2mate.com - Maria Marta Serralima La Mala de la Novela.MP3' tardó 0.79s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:01:20] [INFO] analizador_audio: ventana reproducible sospechosamente chica (1220ms de 1600ms) en '/tmp/tmpfb0dwmb_.wav' -- se descarta el recorte de silencio para este archivo, suena completo.
+[2026-10-14 05:01:26] [INFO] Prioridad de proceso: el sistema operativo no permite elevar la prioridad (nice -5) sin privilegios -- se sigue en la prioridad normal de siempre, sin que esto rompa nada. Para habilitarlo hace falta una regla en /etc/security/limits.d/ (o correr el programa con permisos que lo permitan). Detalle: [Errno 13] Permiso denegado
+[2026-10-14 05:01:27] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 05:04:39] [INFO] Pisador: disparado sobre fila 1 ('/home/radio/Música/Música/Lentos/Viejos/LEN00865 - AMIGO ROBERTO CARLOS.mp3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00007 - Gran Exito en Algo de Vos.mp3' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 05:04:39] [INFO] MotorAudio: movido sink-input 143 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:04:40] [INFO] MotorAudio: movido sink-input 153 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:04:40] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00007 - Gran Exito en Algo de Vos.mp3' tardó 0.83s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:04:43] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 05:08:01] [INFO] MotorAudio: movido sink-input 163 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:10:31] [INFO] MotorAudio: movido sink-input 173 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:10:31] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/RELATOS/REL00006 - 6 - Viuda.mp3' tardó 0.45s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:12:40] [INFO] Pisador: disparado sobre fila 4 ('/home/radio/Música/Música/Lentos/Viejos/LEN00257 - y2mate.com - Nuestra luna gris Patricia Juan versión 1995 NACI PARA TI.MP3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00013 - Te lleva [31446314].WAV' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 05:12:40] [INFO] MotorAudio: movido sink-input 183 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:12:41] [INFO] MotorAudio: movido sink-input 194 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:12:41] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00013 - Te lleva [31446314].WAV' tardó 1.04s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:12:47] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 05:15:25] [INFO] Musicalizador: generados 7 ítem(s) del formato 'ALGO DE VOS'
+[2026-10-14 05:15:26] [INFO] MotorAudio: movido sink-input 204 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:16:17] [INFO] Diagnóstico de recursos: 62 descriptores de archivo abiertos (12 conexiones PulseAudio vía memfd)
+[2026-10-14 05:16:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 05:18:37] [INFO] MotorAudio: movido sink-input 214 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:18:39] [INFO] MotorAudio: movido sink-input 224 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:18:39] [INFO] MotorAudio: '/home/radio/Música/Música/Lentos/Viejos/LEN00890 - PENUMBRAS SANDRO.mp3' tardó 0.42s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:22:12] [INFO] Pisador: disparado sobre fila 8 ('/home/radio/Música/Música/Lentos/Viejos/LEN00899 - Salvatore Adamo - En Mi Canasta.mp3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00011 - Canciones que buscan [31386314].WAV' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 05:22:12] [INFO] MotorAudio: movido sink-input 234 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:22:12] [INFO] MotorAudio: '/home/radio/Música/Música/Lentos/Viejos/LEN00899 - Salvatore Adamo - En Mi Canasta.mp3' tardó 0.43s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:22:13] [INFO] MotorAudio: movido sink-input 244 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:22:13] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00011 - Canciones que buscan [31386314].WAV' tardó 0.86s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:22:16] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 05:24:12] [INFO] MotorAudio: movido sink-input 254 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:27:38] [INFO] MotorAudio: movido sink-input 264 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:30:17] [INFO] Pisador: disparado sobre fila 11 ('/home/radio/Música/Música/Lentos/Viejos/LEN00259 - y2mate.com - pappo desconfío de la vida.MP3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00008 - Momento de Un gran.mp3' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 05:30:18] [INFO] MotorAudio: movido sink-input 274 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:30:18] [INFO] MotorAudio: '/home/radio/Música/Música/Lentos/Viejos/LEN00259 - y2mate.com - pappo desconfío de la vida.MP3' tardó 0.41s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:30:18] [INFO] MotorAudio: movido sink-input 284 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:30:18] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00008 - Momento de Un gran.mp3' tardó 0.81s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:30:22] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 05:31:17] [INFO] Diagnóstico de recursos: 62 descriptores de archivo abiertos (12 conexiones PulseAudio vía memfd)
+[2026-10-14 05:31:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 05:32:55] [INFO] Stop (Emisión persistir=True)
+[2026-10-14 05:32:55] [INFO] Publicidad: disparando bloque automático '05:30:47 - TANDA - Rotativa'
+[2026-10-14 05:32:55] [INFO] Publicidad: Comando PLAY -- activando Automático e iniciando la reproducción
+[2026-10-14 05:32:55] [INFO] Publicidad: Stop
+[2026-10-14 05:32:55] [INFO] Publicidad: bloque automático finalizado
+[2026-10-14 05:32:55] [INFO] Play (Emisión persistir=True) fila=11
+[2026-10-14 05:32:55] [INFO] Pisador: disparado sobre fila 11 ('/home/radio/Música/Música/Lentos/Viejos/LEN00259 - y2mate.com - pappo desconfío de la vida.MP3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00008 - Momento de Un gran.mp3' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 05:32:55] [INFO] Automático: Emisión arrancada desde el ítem armado, con fundido de entrada
+[2026-10-14 05:32:55] [INFO] Play (Emisión persistir=True) fila=11
+[2026-10-14 05:32:55] [INFO] Pisador: cancelado — se avanzó de tema antes de que terminara solo
+[2026-10-14 05:32:55] [INFO] Pisador: disparado sobre fila 11 ('/home/radio/Música/Música/Lentos/Viejos/LEN00259 - y2mate.com - pappo desconfío de la vida.MP3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00008 - Momento de Un gran.mp3' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 05:32:56] [INFO] MotorAudio: movido sink-input 296 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:32:56] [INFO] MotorAudio: '/home/radio/Música/Música/Lentos/Viejos/LEN00259 - y2mate.com - pappo desconfío de la vida.MP3' tardó 0.45s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:32:56] [INFO] MotorAudio: movido sink-input 306 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:32:56] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00008 - Momento de Un gran.mp3' tardó 0.89s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:33:00] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 05:35:33] [INFO] Musicalizador: generados 7 ítem(s) del formato 'ALGO DE VOS'
+[2026-10-14 05:35:33] [INFO] MotorAudio: movido sink-input 316 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:39:26] [INFO] MotorAudio: movido sink-input 326 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:39:32] [INFO] MotorAudio: movido sink-input 336 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:39:32] [INFO] MotorAudio: '/home/radio/Música/Música/Lentos/Viejos/LEN00228 - y2mate.com - Maria Marta Serralima Compárame Con Ella Compárame Con el.MP3' tardó 0.40s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:42:32] [INFO] Pisador: disparado sobre fila 15 ('/home/radio/Música/Música/Lentos/Viejos/LEN00169 - y2mate.com - José Vélez Procuro olvidarte.MP3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00008 - Momento de Un gran.mp3' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 05:42:32] [INFO] MotorAudio: movido sink-input 346 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:42:32] [INFO] MotorAudio: '/home/radio/Música/Música/Lentos/Viejos/LEN00169 - y2mate.com - José Vélez Procuro olvidarte.MP3' tardó 0.43s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:42:32] [INFO] MotorAudio: movido sink-input 356 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:42:32] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00008 - Momento de Un gran.mp3' tardó 0.84s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:42:36] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 05:46:17] [INFO] Diagnóstico de recursos: 58 descriptores de archivo abiertos (11 conexiones PulseAudio vía memfd)
+[2026-10-14 05:46:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 05:46:26] [INFO] MotorAudio: movido sink-input 366 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:50:06] [INFO] MotorAudio: movido sink-input 376 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:50:06] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/RELATOS/REL00004 - 3 - Crece Busca Persiste.mp3' tardó 0.41s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:52:00] [INFO] Pisador: disparado sobre fila 18 ('/home/radio/Música/Música/Lentos/Viejos/LEN00260 - ENDULZAME LOS OIDOS.mp3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00012 - Pura emoción [31406314].WAV' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 05:52:01] [INFO] MotorAudio: movido sink-input 386 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:52:01] [INFO] MotorAudio: movido sink-input 396 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:52:01] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/ALGO_DE_VOS/PISADORES/PIS00012 - Pura emoción [31406314].WAV' tardó 0.81s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 05:52:06] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 05:57:15] [INFO] Musicalizador: generados 7 ítem(s) del formato 'ALGO DE VOS'
+[2026-10-14 05:57:16] [INFO] MotorAudio: movido sink-input 406 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 05:57:16] [INFO] MotorAudio: '/home/radio/Música/Música/Lentos/Viejos/LEN00813 - Camilo Sesto - Jamás.mp3' tardó 0.41s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:00:32] [INFO] Stop (Emisión persistir=True)
+[2026-10-14 06:00:32] [INFO] Publicidad: disparando bloque automático '06:00:00 - Nuevo bloque'
+[2026-10-14 06:00:32] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Separadores / Arte' -> 'Mix-T-55'
+[2026-10-14 06:00:32] [INFO] MotorAudio: movido sink-input 416 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:00:32] [INFO] MotorAudio: '/home/radio/Música/Separadores/Arte/ART00007 - Mix-T-55.mp3' tardó 0.47s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:01:00] [INFO] Publicidad: comando HTH HORA -> 2 clip(s)
+[2026-10-14 06:01:00] [INFO] MotorAudio: movido sink-input 426 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:01:03] [INFO] MotorAudio: movido sink-input 436 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:01:04] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: HTH / JINGLE' -> 'JINGLE CORTO NUEVO'
+[2026-10-14 06:01:04] [INFO] MotorAudio: movido sink-input 446 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:01:04] [INFO] MotorAudio: '/home/radio/Música/HTH/JINGLE/TAN00226 - JINGLE CORTO NUEVO.WAV' tardó 0.46s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:01:17] [INFO] Diagnóstico de recursos: 58 descriptores de archivo abiertos (11 conexiones PulseAudio vía memfd)
+[2026-10-14 06:01:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 06:01:35] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Separadores / Arte' -> 'ARTE 3'
+[2026-10-14 06:01:35] [INFO] MotorAudio: movido sink-input 456 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:01:35] [INFO] MotorAudio: '/home/radio/Música/Separadores/Arte/ARTE 3.MP3' tardó 0.47s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:01:51] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Tandas / Promo Programas' -> 'Promo Nueva Mañana'
+[2026-10-14 06:01:52] [INFO] MotorAudio: movido sink-input 466 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:01:52] [INFO] MotorAudio: '/home/radio/Música/Tandas/Promo Programas/Promo Nueva Mañana.MP3' tardó 0.47s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:02:27] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Tandas / Promo Programas' -> 'Spot Folclore a las 6'
+[2026-10-14 06:02:27] [INFO] MotorAudio: movido sink-input 476 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:02:27] [INFO] MotorAudio: '/home/radio/Música/Tandas/Promo Programas/FOL00001 - Spot Folclore a las 6.WAV' tardó 0.48s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:02:53] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Publicidad' -> 'SValiente'
+[2026-10-14 06:02:54] [INFO] MotorAudio: movido sink-input 486 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:02:54] [INFO] MotorAudio: '/home/radio/Música/Publicidad/PUB00033 - SValiente.MP3' tardó 0.46s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:03:24] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Publicidad' -> 'Portal ElSello.info'
+[2026-10-14 06:03:24] [INFO] MotorAudio: movido sink-input 496 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:03:24] [INFO] MotorAudio: '/home/radio/Música/Publicidad/TAN00290 - Portal ElSello.info.wav' tardó 0.48s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:04:01] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Publicidad' -> 'Publi CF '
+[2026-10-14 06:04:01] [INFO] MotorAudio: movido sink-input 506 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:04:01] [INFO] MotorAudio: '/home/radio/Música/Publicidad/PUB00044 - Publi CF.mp3' tardó 0.50s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:04:25] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Tandas / Ventas' -> 'VENTAS NADIA 1'
+[2026-10-14 06:04:26] [INFO] MotorAudio: movido sink-input 516 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:04:26] [INFO] MotorAudio: '/home/radio/Música/Tandas/Ventas/ART00093 - VENTAS NADIA 1.mp3' tardó 0.47s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:05:12] [INFO] Publicidad: comando ejecutado -> FMT FOLCLORE A LAS 6
+[2026-10-14 06:05:12] [INFO] Musicalizador: activado formato 'FOLCLORE A LAS 6' (persistir=True)
+[2026-10-14 06:05:22] [INFO] Musicalizador: generados 25 ítem(s) del formato 'FOLCLORE A LAS 6'
+[2026-10-14 06:05:22] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Separadores' -> 'SEPARADOR 4'
+[2026-10-14 06:05:22] [INFO] MotorAudio: movido sink-input 526 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:05:22] [INFO] MotorAudio: '/home/radio/Música/Separadores/SEPARADOR 4.WAV' tardó 0.54s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:05:37] [INFO] Publicidad: comando HTH TEMPERATURA -> 1 clip(s)
+[2026-10-14 06:05:37] [INFO] MotorAudio: movido sink-input 536 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:05:40] [INFO] Publicidad: comando HTH HUMEDAD -> 1 clip(s)
+[2026-10-14 06:05:41] [INFO] MotorAudio: movido sink-input 546 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:05:43] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Separadores / Arte' -> 'PISADOR 3'
+[2026-10-14 06:05:43] [INFO] MotorAudio: movido sink-input 556 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:05:43] [INFO] MotorAudio: '/home/radio/Música/Separadores/Arte/ART00016 - PISADOR 3.MP3' tardó 0.46s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:05:46] [INFO] Publicidad: reproduciendo 'Tema Completo Madariaga es mi pago'
+[2026-10-14 06:05:47] [INFO] MotorAudio: movido sink-input 566 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:09:06] [INFO] Publicidad: bloque automático finalizado
+[2026-10-14 06:09:06] [INFO] Play (Emisión persistir=True) fila=0
+[2026-10-14 06:09:07] [INFO] Automático: Emisión arrancada desde el ítem armado, con fundido de entrada
+[2026-10-14 06:09:07] [INFO] MotorAudio: movido sink-input 576 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:09:26] [INFO] MotorAudio: movido sink-input 586 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:14:13] [INFO] MotorAudio: movido sink-input 596 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:16:17] [INFO] Diagnóstico de recursos: 58 descriptores de archivo abiertos (11 conexiones PulseAudio vía memfd)
+[2026-10-14 06:16:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 12, 'humedad': 93})
+[2026-10-14 06:17:17] [INFO] MotorAudio: movido sink-input 606 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:20:21] [INFO] Pisador: disparado sobre fila 4 ('/home/radio/Música/Música/Folclore/Variado/FCL00775 - Aguante Barrio.mp3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/FOLCORE A LAS 6/PISADORES/PIS00018 - Estas Escuchando.mp3' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 06:20:22] [INFO] MotorAudio: movido sink-input 616 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:20:22] [INFO] MotorAudio: movido sink-input 626 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:20:22] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/FOLCORE A LAS 6/PISADORES/PIS00018 - Estas Escuchando.mp3' tardó 0.81s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:20:24] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 06:23:43] [INFO] MotorAudio: movido sink-input 636 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:24:27] [INFO] MotorAudio: movido sink-input 646 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:27:27] [INFO] MotorAudio: movido sink-input 656 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:27:40] [INFO] MotorAudio: movido sink-input 666 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:31:17] [INFO] Diagnóstico de recursos: 58 descriptores de archivo abiertos (11 conexiones PulseAudio vía memfd)
+[2026-10-14 06:31:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 13, 'humedad': 93})
+[2026-10-14 06:32:02] [INFO] MotorAudio: movido sink-input 676 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:34:16] [INFO] MotorAudio: movido sink-input 686 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:37:47] [INFO] Pisador: disparado sobre fila 11 ('/home/radio/Música/Música/Folclore/Variado/FCL00777 - Ali Que Paso Cantando Por La Vida - Folklore Argentino.mp3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/FOLCORE A LAS 6/PISADORES/PIS00018 - Estas Escuchando.mp3' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 06:37:47] [INFO] MotorAudio: movido sink-input 696 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:37:47] [INFO] MotorAudio: '/home/radio/Música/Música/Folclore/Variado/FCL00777 - Ali Que Paso Cantando Por La Vida - Folklore Argentino.mp3' tardó 0.40s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:37:47] [INFO] MotorAudio: movido sink-input 706 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:37:47] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/FOLCORE A LAS 6/PISADORES/PIS00018 - Estas Escuchando.mp3' tardó 0.81s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:37:50] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 06:41:33] [INFO] MotorAudio: movido sink-input 716 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:42:17] [INFO] MotorAudio: movido sink-input 726 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:45:16] [INFO] MotorAudio: movido sink-input 736 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:45:20] [INFO] MotorAudio: movido sink-input 746 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:46:17] [INFO] Diagnóstico de recursos: 58 descriptores de archivo abiertos (11 conexiones PulseAudio vía memfd)
+[2026-10-14 06:46:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 13, 'humedad': 92})
+[2026-10-14 06:48:08] [INFO] MotorAudio: movido sink-input 756 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:50:44] [INFO] MotorAudio: movido sink-input 766 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:54:14] [INFO] Pisador: disparado sobre fila 18 ('/home/radio/Música/Música/Folclore/Variado/FCL00779 - Cuando Ya Nadie Te Nombre.mp3') -> '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/FOLCORE A LAS 6/PISADORES/PIS00015 - Desde Madariaga.mp3' (baja de 100 a 61, ducking inmediato)
+[2026-10-14 06:54:14] [INFO] MotorAudio: movido sink-input 776 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:54:14] [INFO] MotorAudio: '/home/radio/Música/Música/Folclore/Variado/FCL00779 - Cuando Ya Nadie Te Nombre.mp3' tardó 0.40s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:54:14] [INFO] MotorAudio: movido sink-input 786 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:54:14] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/FOLCORE A LAS 6/PISADORES/PIS00015 - Desde Madariaga.mp3' tardó 0.70s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:54:18] [INFO] Pisador: terminó solo, el tema principal vuelve a su volumen normal
+[2026-10-14 06:57:22] [INFO] Stop (Emisión persistir=True)
+[2026-10-14 06:57:22] [INFO] Publicidad: disparando bloque automático '06:57:00 - NUEVA MAÑANA'
+[2026-10-14 06:57:22] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Separadores / Arte' -> 'PISADOR 2'
+[2026-10-14 06:57:23] [INFO] MotorAudio: movido sink-input 795 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 06:57:23] [INFO] MotorAudio: '/home/radio/Música/Separadores/Arte/ART00015 - PISADOR 2.MP3' tardó 0.46s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 06:57:24] [INFO] Publicidad: reproduciendo 'Tema Completo Madariaga es mi pago'
+[2026-10-14 06:57:24] [INFO] MotorAudio: movido sink-input 805 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:00:44] [INFO] Publicidad: comando HTH HORA -> 2 clip(s)
+[2026-10-14 07:00:45] [INFO] MotorAudio: movido sink-input 815 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:00:47] [INFO] MotorAudio: movido sink-input 825 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:00:48] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: HTH / JINGLE' -> 'JINGLE NUEVO'
+[2026-10-14 07:00:48] [INFO] MotorAudio: movido sink-input 835 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:00:48] [INFO] MotorAudio: '/home/radio/Música/HTH/JINGLE/JINGLE NUEVO.WAV' tardó 0.46s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 07:01:17] [INFO] Diagnóstico de recursos: 58 descriptores de archivo abiertos (11 conexiones PulseAudio vía memfd)
+[2026-10-14 07:01:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 13, 'humedad': 92})
+[2026-10-14 07:02:01] [INFO] Publicidad: comando ejecutado -> FMT NUEVA MAÑANA
+[2026-10-14 07:02:01] [INFO] Musicalizador: activado formato 'NUEVA MAÑANA' (persistir=True)
+[2026-10-14 07:02:05] [INFO] Musicalizador: generados 44 ítem(s) del formato 'NUEVA MAÑANA'
+[2026-10-14 07:02:05] [INFO] Publicidad: ítem aleatorio '🎲 Aleatorio: Separadores / Arte' -> 'EL MEJOR LUGAR DEL DIAL'
+[2026-10-14 07:02:05] [INFO] MotorAudio: movido sink-input 845 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:02:05] [INFO] MotorAudio: '/home/radio/Música/Separadores/Arte/ART00078 - SIEMPRE CON VOS.mp3' tardó 0.52s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 07:02:09] [INFO] Publicidad: comando HTH TEMPERATURA salteado (falta un clip de voz o no se pudo obtener el clima)
+[2026-10-14 07:02:09] [INFO] Publicidad: comando HTH HUMEDAD -> 1 clip(s)
+[2026-10-14 07:02:10] [INFO] MotorAudio: movido sink-input 855 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:02:12] [INFO] Publicidad: reproduciendo '>>> MENSAJE PRODUCTORES'
+[2026-10-14 07:02:13] [INFO] MotorAudio: movido sink-input 865 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:02:33] [INFO] Publicidad: reproduciendo 'LISANDRO 2'
+[2026-10-14 07:02:33] [INFO] MotorAudio: movido sink-input 875 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:02:58] [INFO] Publicidad: reproduciendo 'PUBLI LEIDAS NUEVA MAÑANA'
+[2026-10-14 07:02:59] [INFO] MotorAudio: movido sink-input 885 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:04:23] [INFO] Publicidad: reproduciendo '2 (2)'
+[2026-10-14 07:04:23] [INFO] MotorAudio: movido sink-input 895 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:04:43] [INFO] Publicidad: reproduciendo 'Sebastian 3'
+[2026-10-14 07:04:44] [INFO] MotorAudio: movido sink-input 905 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:05:27] [INFO] Publicidad: bloque automático finalizado
+[2026-10-14 07:05:27] [INFO] Play (Emisión persistir=True) fila=0
+[2026-10-14 07:05:27] [INFO] Automático: Emisión arrancada desde el ítem armado, con fundido de entrada
+[2026-10-14 07:05:27] [INFO] Publicidad: 'CERES TOLVAS OFF Madariaga - final' armado en punta (rojo)
+[2026-10-14 07:05:28] [INFO] MotorAudio: movido sink-input 915 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:05:28] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/NUEVA MAÑANA/Sonidos/Cortinas/CNM00007 - CORTINA 10.mp3' tardó 0.40s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
+[2026-10-14 07:05:35] [INFO] Stop (Emisión persistir=True)
+[2026-10-14 07:05:36] [INFO] Publicidad: Play (ítem objetivo: CERES TOLVAS OFF Madariaga - final)
+[2026-10-14 07:05:36] [INFO] Publicidad: reproduciendo 'CERES TOLVAS OFF Madariaga - final'
+[2026-10-14 07:05:36] [INFO] MotorAudio: movido sink-input 925 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:06:17] [INFO] Publicidad: reproduciendo 'PINTURERIA INDIGO'
+[2026-10-14 07:06:18] [INFO] MotorAudio: movido sink-input 935 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:06:35] [INFO] Publicidad: reproduciendo 'Apertura Nueva Mañana'
+[2026-10-14 07:06:36] [INFO] MotorAudio: movido sink-input 945 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:07:17] [INFO] Publicidad: reproduciendo 'APERTURA NUEVA MAÑANA'
+[2026-10-14 07:07:18] [INFO] MotorAudio: movido sink-input 955 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:09:46] [INFO] Publicidad: reproduciendo 'Mariposa tecknicolor'
+[2026-10-14 07:09:46] [INFO] MotorAudio: movido sink-input 965 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:13:29] [INFO] Publicidad: reproducción continua detenida — el bloque '08:00:00 - PRIMERA NOTICIA' todavía no llegó a su hora
+[2026-10-14 07:13:29] [INFO] Play (Emisión persistir=True) fila=0
+[2026-10-14 07:13:29] [INFO] Automático: Emisión arrancada desde el ítem armado, con fundido de entrada
+[2026-10-14 07:13:29] [INFO] MotorAudio: movido sink-input 975 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:16:17] [INFO] Diagnóstico de recursos: 59 descriptores de archivo abiertos (11 conexiones PulseAudio vía memfd)
+[2026-10-14 07:16:23] [INFO] Clima: caché actualizada en segundo plano ({'temperatura': 13, 'humedad': 91})
+[2026-10-14 07:16:35] [INFO] MotorAudio: movido sink-input 985 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:19:04] [INFO] MotorAudio: movido sink-input 995 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:22:05] [INFO] MotorAudio: movido sink-input 1006 -> 'fm_processing_input' vía pactl (respaldo -- el enrutado directo no llegó a tiempo, serializado)
+[2026-10-14 07:22:05] [INFO] MotorAudio: '/home/radio/Música/PROGRAMAS - RADIO TUYU/PROGRAMAS/NUEVA MAÑANA/Sonidos/Cortinas/CNM00004 - CORTINA 7.mp3' tardó 0.59s en volverse AUDIBLE (recién ahí se aplicó el volumen real -- hasta acá estuvo mudo) desde que se pidió reproducir() -- si el clip dura menos que esto, sonó entero mudo (ver EnrutadorPactl, cola de enrutado congestionada o pactl lento)
