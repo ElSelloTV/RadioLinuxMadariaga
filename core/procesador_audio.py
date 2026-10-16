@@ -36,12 +36,30 @@ contra `calf-plugins` 0.90.3, el mismo paquete ya usado en la ronda
 52 -- nunca un número inventado).
 
 Orden de la cadena (fijo, no editable desde la UI -- criterio
-estándar de procesamiento de broadcast: primero imagen estéreo y
-"color" del sonido, dinámica al final, LIMITADOR SIEMPRE ÚLTIMO como
-red de seguridad contra saturación):
-    StereoTools -> Deesser -> BassEnhancer -> Exciter -> Compresor -> Limiter
+estándar de procesamiento de broadcast: primero SACAR lo que no sirve
+(corte de graves), después imagen estéreo y "color" del sonido,
+dinámica al final, LIMITADOR SIEMPRE ÚLTIMO como red de seguridad
+contra saturación):
+    Filtro -> StereoTools -> Deesser -> BassEnhancer -> Exciter -> Compresor -> Limiter
 Un efecto "desactivado" simplemente no entra al grafo -- el resto se
 encadena entre sí sin huecos.
+
+"Filtro" (corte de graves -- pedido explícito: "hay temas que tienen
+mucho bombeo de graves que el transmisor no soporta... ¿hay otro
+filtro que podamos aplicar?"): el plugin Calf Filter, en modo
+Highpass, elimina los sub-graves (por debajo de la frecuencia
+elegida) ANTES de que lleguen a cualquier otro procesamiento --
+diagnóstico explicado a Santiago antes de programar: "Refuerzo de
+graves" (BassEnhancer) solo AGREGA graves, nunca corrige los que ya
+vienen en el tema; esto SÍ los recorta. Se eligió por sobre un
+Compresor Multibanda (`MultibandCompressor`, también confirmado
+instalado) como primer paso -- más simple, más bajo riesgo, y suele
+alcanzar solo con esto; el multibanda queda como opción futura si el
+corte de graves solo no es suficiente. Valores por defecto PROPIOS
+(no los de fábrica del plugin, pensados para uso genérico) --
+`mode=4` ("24dB/oct Highpass", confirmado real con `lv2info` contra
+`calf-plugins` en la PC de Santiago) y `freq=40.0` Hz (un punto de
+partida típico de corte de graves en FM, ajustable).
 --------------------------------------------------------
 """
 
@@ -81,15 +99,24 @@ class Parametro:
     `es_db`/`es_bool` le dicen a `_valor_lv2()` cómo convertirlo al
     valor lineal que de verdad espera el puerto LV2 al escribir el
     .conf -- así el preset guardado en JSON siempre queda en unidades
-    humanas, nunca en la escala interna del plugin."""
+    humanas, nunca en la escala interna del plugin.
+
+    `opciones`, si se pasa, es una lista de `(valor_entero, etiqueta)`
+    para un control de TIPO ENUMERACIÓN (ej. "mode" del plugin Filter
+    -- 0="12dB/oct Lowpass", 4="24dB/oct Highpass", etc., confirmado
+    con `lv2info` real contra la instalación de Santiago) -- la UI lo
+    muestra como un combo con las etiquetas humanas en vez de un
+    slider numérico sin sentido; el valor que se escribe al .conf es
+    el entero tal cual (mismo camino que un parámetro numérico común,
+    `valor_lv2()` no necesita ninguna conversión especial para esto)."""
 
     __slots__ = (
         "simbolo", "etiqueta", "minimo", "maximo", "defecto",
-        "decimales", "sufijo", "es_db", "es_bool",
+        "decimales", "sufijo", "es_db", "es_bool", "opciones",
     )
 
     def __init__(self, simbolo, etiqueta, minimo, maximo, defecto,
-                 decimales=1, sufijo="", es_db=False, es_bool=False):
+                 decimales=1, sufijo="", es_db=False, es_bool=False, opciones=None):
         self.simbolo = simbolo
         self.etiqueta = etiqueta
         self.minimo = minimo
@@ -99,6 +126,7 @@ class Parametro:
         self.sufijo = sufijo
         self.es_db = es_db
         self.es_bool = es_bool
+        self.opciones = opciones
 
     def valor_lv2(self, valor_mostrado):
         if self.es_bool:
@@ -127,6 +155,30 @@ class Efecto:
 
 
 CATALOGO = [
+    Efecto(
+        "filtro", "Filtro (corte de graves)",
+        "http://calf.sourceforge.net/plugins/Filter",
+        [
+            Parametro(
+                "mode", "Modo", 0, 12, 4, decimales=0,
+                opciones=[
+                    (0, "12dB/oct Lowpass"), (1, "24dB/oct Lowpass"), (2, "36dB/oct Lowpass"),
+                    (3, "12dB/oct Highpass"), (4, "24dB/oct Highpass"), (5, "36dB/oct Highpass"),
+                    (6, "6dB/oct Bandpass"), (7, "12dB/oct Bandpass"), (8, "18dB/oct Bandpass"),
+                    (9, "6dB/oct Bandreject"), (10, "12dB/oct Bandreject"), (11, "18dB/oct Bandreject"),
+                    (12, "Allpass"),
+                ],
+            ),
+            Parametro("freq", "Frecuencia de corte", 10.0, 20000.0, 40.0, decimales=0, sufijo=" Hz"),
+            Parametro("res", "Resonancia", 0.707, 32.0, 0.707, decimales=3),
+        ],
+        activado_por_defecto=False,
+        descripcion=(
+            "Para probar -- corta los sub-graves (modo Highpass) que el "
+            "transmisor no soporta. A diferencia de \"Bass Enhancer\" (que "
+            "solo AGREGA graves), este los RECORTA de verdad."
+        ),
+    ),
     Efecto(
         "stereo_tools", "Stereo Tools (ancho estéreo)",
         "http://calf.sourceforge.net/plugins/StereoTools",
@@ -271,7 +323,7 @@ def normalizar_preset(preset: dict) -> dict:
 # Generación del texto del .conf
 # ------------------------------------------------------------------
 
-ORDEN_CADENA = ["stereo_tools", "deesser", "bass_enhancer", "exciter", "compresor", "limiter"]
+ORDEN_CADENA = ["filtro", "stereo_tools", "deesser", "bass_enhancer", "exciter", "compresor", "limiter"]
 
 
 def _bloque_control(efecto: Efecto, valores: dict) -> str:

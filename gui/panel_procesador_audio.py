@@ -119,7 +119,13 @@ class GrupoEfecto(QGroupBox):
         form = QFormLayout()
         self._controles = {}
         for p in efecto.parametros:
-            if p.es_bool:
+            if p.opciones is not None:
+                control = QComboBox()
+                for valor, etiqueta in p.opciones:
+                    control.addItem(etiqueta, valor)
+                indice = control.findData(p.defecto)
+                control.setCurrentIndex(indice if indice >= 0 else 0)
+            elif p.es_bool:
                 control = QCheckBox()
                 control.setChecked(bool(p.defecto))
             else:
@@ -138,7 +144,12 @@ class GrupoEfecto(QGroupBox):
     def valores(self) -> dict:
         datos = {"activado": self.isChecked()}
         for simbolo, control in self._controles.items():
-            datos[simbolo] = control.isChecked() if isinstance(control, QCheckBox) else control.valor()
+            if isinstance(control, QComboBox):
+                datos[simbolo] = control.currentData()
+            elif isinstance(control, QCheckBox):
+                datos[simbolo] = control.isChecked()
+            else:
+                datos[simbolo] = control.valor()
         return datos
 
     def establecer_valores(self, valores: dict):
@@ -146,7 +157,11 @@ class GrupoEfecto(QGroupBox):
         for simbolo, control in self._controles.items():
             if simbolo not in valores:
                 continue
-            if isinstance(control, QCheckBox):
+            if isinstance(control, QComboBox):
+                indice = control.findData(valores[simbolo])
+                if indice >= 0:
+                    control.setCurrentIndex(indice)
+            elif isinstance(control, QCheckBox):
                 control.setChecked(bool(valores[simbolo]))
             else:
                 control.establecer_valor(valores[simbolo])
