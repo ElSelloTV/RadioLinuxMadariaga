@@ -214,12 +214,34 @@ def aplicar_actualizacion() -> tuple[bool, str]:
 
 def subir_log_a_git(ruta_log: str) -> tuple[bool, str]:
     """Sube el archivo de log a la rama actual del repositorio (git
-    add + commit + push) — SOLO a pedido manual del operador desde
-    Configuración → Diagnóstico, nunca automático en cada cierre.
+    add + commit + integrar lo nuevo de GitHub + push) — se llama a
+    pedido manual del operador (Configuración → Diagnóstico) Y
+    automático todas las noches (core/mantenimiento_diario.py, 2am).
     config/data/*.txt está en .gitignore a propósito (los datos de
     cada instalación no se versionan solos); acá se usa `git add -f`
-    para saltear ESE ignore puntualmente, solo cuando el operador lo
-    pide de forma explícita. Devuelve (éxito, mensaje)."""
+    para saltear ESE ignore puntualmente. Devuelve (éxito, mensaje).
+
+    Bug real corregido (reportado por Santiago, 2 veces en pocos días:
+    "me dice que ya tengo la última versión instalada" / "antes no
+    pasaba esto, quiero actualizar con el botón como antes"): el commit
+    nocturno del log se hacía SIEMPRE, pero el `git push` de después
+    se rechaza sin ningún reintento ni aviso claro en cuanto GitHub
+    tiene commits nuevos que esta instalación todavía no tiene (lo
+    normal cada vez que se sube una actualización real) — "non-
+    fast-forward". El commit local del log quedaba hecho pero SIN
+    subir, noche tras noche, acumulando una divergencia cada vez más
+    grande hasta que el botón "Actualizar" (que SÍ exige avance
+    limpio, `git pull --ff-only`) quedaba completamente bloqueado y
+    había que resolverlo a mano por terminal. Corregido integrando lo
+    nuevo de GitHub (fetch + merge, NUNCA rebase -- reescribir el
+    historial local sin que haya nadie mirando es más riesgoso) justo
+    DESPUÉS de comprometer el log localmente y ANTES de intentar subir
+    -- mismos 2 commits (el del log, que nunca tocó código, y los de
+    GitHub, que nunca tocan el log) que ya se integraron sin conflicto
+    a mano varias veces con Santiago; si alguna vez SÍ hubiera un
+    conflicto real, el merge se aborta solo (vuelve exactamente a como
+    estaba, con el commit del log intacto) y se avisa con claridad en
+    vez de dejar el repositorio a medio fusionar."""
     if not es_instalacion_git():
         return False, "Esta copia no es una instalación por git."
     if not os.path.isfile(ruta_log):
@@ -237,13 +259,30 @@ def subir_log_a_git(ruta_log: str) -> tuple[bool, str]:
             return False, f"No se pudo agregar el log: {resultado_add.stderr.strip()}"
 
         resultado_status = _ejecutar_git("status", "--porcelain", "--", ruta_relativa)
-        if not resultado_status.stdout.strip():
-            return True, "El log ya estaba actualizado en el repositorio (sin cambios nuevos)."
+        hubo_cambio_en_log = bool(resultado_status.stdout.strip())
+        if hubo_cambio_en_log:
+            marca_tiempo = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            resultado_commit = _ejecutar_git("commit", "-m", f"Log de la aplicación ({marca_tiempo})")
+            if resultado_commit.returncode != 0:
+                return False, f"No se pudo confirmar el commit: {resultado_commit.stderr.strip()}"
 
-        marca_tiempo = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        resultado_commit = _ejecutar_git("commit", "-m", f"Log de la aplicación ({marca_tiempo})")
-        if resultado_commit.returncode != 0:
-            return False, f"No se pudo confirmar el commit: {resultado_commit.stderr.strip()}"
+        # Integrar lo que GitHub tenga de nuevo SIEMPRE, incluso en una
+        # noche sin cambios en el log -- así la rama nunca vuelve a
+        # quedar divergida en silencio hasta que el botón "Actualizar"
+        # se bloquea y hace falta resolverlo a mano por terminal.
+        resultado_fetch = _ejecutar_git("fetch", "origin", rama_actual, timeout=30)
+        if resultado_fetch.returncode != 0:
+            return False, (
+                "El log quedó en un commit local, pero no se pudo conectar con "
+                f"GitHub para integrarlo (revisá la conexión de red): {resultado_fetch.stderr.strip()}"
+            )
+        resultado_merge = _ejecutar_git("merge", "--no-edit", f"origin/{rama_actual}", timeout=30)
+        if resultado_merge.returncode != 0:
+            _ejecutar_git("merge", "--abort")
+            return False, (
+                "El log quedó en un commit local, pero no se pudo integrar con los "
+                f"cambios de GitHub (conflicto real, hay que revisarlo a mano): {resultado_merge.stderr.strip()}"
+            )
 
         resultado_push = _ejecutar_git("push", "origin", rama_actual, timeout=60)
         if resultado_push.returncode != 0:
@@ -252,7 +291,12 @@ def subir_log_a_git(ruta_log: str) -> tuple[bool, str]:
                 f"GitHub (revisá conexión/credenciales): {resultado_push.stderr.strip()}"
             )
 
-        return True, f"Log subido correctamente a la rama '{rama_actual}'."
+        if hubo_cambio_en_log:
+            return True, f"Log subido correctamente a la rama '{rama_actual}'."
+        return True, (
+            f"El log no tenía cambios nuevos, pero la rama '{rama_actual}' "
+            "quedó sincronizada con GitHub."
+        )
 
     except (subprocess.TimeoutExpired, OSError) as error:
         return False, f"Error subiendo el log: {error}"
