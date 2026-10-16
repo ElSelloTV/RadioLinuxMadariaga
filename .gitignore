@@ -9,6 +9,11 @@ config/data/*.json
 config/data/*.ini
 config/data/*.txt
 config/data/*.lock
+# Archivos de audio sincronizados de los slots ENLATADO tipo "drive"
+# (ver core/sincronizador_drive.py) — datos descargados de cada
+# instalación, nunca se versionan (mismo criterio que el resto de
+# config/data/).
+config/data/enlatados_drive/
 
 .vscode/
 .idea/

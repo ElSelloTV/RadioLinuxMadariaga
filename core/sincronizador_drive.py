@@ -4,12 +4,32 @@ core/sincronizador_drive.py
 Sincroniza carpetas PÚBLICAS de Google Drive a una carpeta local, para
 los slots ENLATADO de tipo "drive" (Configuración → Enlatados, ver
 config/settings.py:listar_enlatados()). Corre como PROCESO APARTE
-(mismo criterio de siempre en este proyecto — nunca threading), vía
-cron a las 00:30 (ver core/actualizador.py:
-asegurar_tarea_cron_sincronizar_drive — ANTES de la de las 2am a
-propósito, "entre las 00 y 5am... a las 00:30 preparar los enlatados"),
-desde el botón "Sincronizar ahora" de Configuración, o suelto:
-    venv/bin/python3 -m core.sincronizador_drive
+(mismo criterio de siempre en este proyecto — nunca threading), de
+DOS formas:
+  1. Suelto, sin argumentos, o vía cron a las 00:30 (ver
+     core/actualizador.py: asegurar_tarea_cron_sincronizar_drive —
+     ANTES de la de las 2am a propósito, "entre las 00 y 5am... a las
+     00:30 preparar los enlatados"): sincroniza TODOS los slots tipo
+     "drive" configurados, leyéndolos de disco.
+         venv/bin/python3 -m core.sincronizador_drive
+  2. Con `--slot-id`/`--url`, lanzado por el botón "🔄 Sincronizar
+     ahora" de Configuración → Enlatados vía QProcess: sincroniza UN
+     solo slot, imprimiendo líneas "PROGRESO hechos total"/
+     "RESULTADO {json}" que gui/ventana_configuracion.py lee para una
+     barra de progreso gráfica en vivo.
+
+     Bug real corregido (reportado por Santiago probándolo: "al
+     intentar descargar el drive se quedó 'trabado' el programa"):
+     antes, ese botón llamaba a `sincronizar_fuente_drive()` DIRECTO
+     en el hilo de la GUI — con una descarga real (red + análisis de
+     audio por archivo), podía tardar lo suficiente como para
+     sentirse colgado, mismo síntoma ya corregido antes para el
+     reanálisis de biblioteca completa (ver core/reanalizador_batch.py,
+     mismo mecanismo de QProcess, copiado acá). `--url` se pasa
+     EXPLÍCITO (nunca releído de disco por `--slot-id`) para que
+     "Sincronizar ahora" use el link recién tipeado en la UI, incluso
+     antes de apretar "Guardar" — mismo criterio que ya usa el
+     reanalizador con la tolerancia/umbral tipeados en pantalla.
 
 Pedido explícito, con la estructura REAL confirmada por Santiago
 (carpeta pública compartida con subcarpetas fijas, ej. "SA 4 BLOQUES",
@@ -121,13 +141,18 @@ def listar_archivos_sincronizados(id_slot: str) -> list:
     return resultado
 
 
-def sincronizar_fuente_drive(id_slot: str, url_carpeta: str, config: dict) -> dict:
+def sincronizar_fuente_drive(id_slot: str, url_carpeta: str, config: dict, callback_progreso=None) -> dict:
     """Baja los archivos DIRECTOS (nunca subcarpetas) de `url_carpeta`
     (una carpeta PÚBLICA de Google Drive) y los deja listos para
     `id_slot`. Nunca lanza excepción -- degrada con
     {"ok": False, "mensaje": ...} si algo sale mal, dejando la carpeta
     ya sincronizada de una corrida anterior COMPLETAMENTE INTACTA (ver
-    docstring del módulo)."""
+    docstring del módulo).
+
+    `callback_progreso(hechos, total)`, opcional, se llama después de
+    descargar+analizar CADA archivo -- mismo contrato que
+    core.reanalizador_batch.ejecutar_reanalisis, para que la GUI pueda
+    mostrar una barra de progreso real sin bloquearse."""
     if not url_carpeta:
         return {"ok": False, "mensaje": "Sin URL de carpeta configurada."}
 
@@ -171,8 +196,11 @@ def sincronizar_fuente_drive(id_slot: str, url_carpeta: str, config: dict) -> di
 
         nivelado_activado, objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
         reproduccion = config.get("reproduccion", {})
+        total = len(candidatos)
+        if callback_progreso is not None:
+            callback_progreso(0, total)  # el total ya se conoce -- la barra arranca en 0/N, no "indeterminada"
         analisis = {}
-        for entrada in candidatos:
+        for indice, entrada in enumerate(candidatos):
             nombre = os.path.basename(entrada.path)
             destino = os.path.join(carpeta_staging, nombre)
             gdown.download(id=entrada.id, output=destino, quiet=True)
@@ -191,6 +219,8 @@ def sincronizar_fuente_drive(id_slot: str, url_carpeta: str, config: dict) -> di
                 "punto_fin_ms": resultado_analisis.get("punto_fin_ms"),
                 "ganancia_db": resultado_analisis.get("ganancia_db", 0.0),
             }
+            if callback_progreso is not None:
+                callback_progreso(indice + 1, total)
 
         with open(os.path.join(carpeta_staging, NOMBRE_ARCHIVO_ANALISIS), "w", encoding="utf-8") as f:
             json.dump(analisis, f, ensure_ascii=False)
@@ -244,7 +274,43 @@ def sincronizar_todas_las_fuentes_drive() -> dict:
 
 
 def main():
-    sincronizar_todas_las_fuentes_drive()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Sincroniza los slots ENLATADO de tipo \"drive\" como proceso aparte.",
+    )
+    parser.add_argument(
+        "--slot-id", default=None,
+        help="Id de UN solo slot a sincronizar (junto con --url). Si se omite, sincroniza "
+             "TODOS los slots tipo \"drive\" guardados en Configuración -- uso normal de la "
+             "tarea nocturna de las 00:30.",
+    )
+    parser.add_argument(
+        "--url", default=None,
+        help="Link de la carpeta de Drive para --slot-id -- se usa EXPLÍCITO, nunca releído "
+             "de disco, para que \"Sincronizar ahora\" tome el link recién tipeado aunque "
+             "todavía no se haya apretado Guardar.",
+    )
+    args = parser.parse_args()
+
+    if not args.slot_id:
+        sincronizar_todas_las_fuentes_drive()
+        return
+
+    from config.settings import cargar_configuracion, registrar_evento, registrar_error
+
+    def _progreso(hechos, total):
+        # Línea parseable por la GUI (QProcess.readyReadStandardOutput)
+        # -- también legible corriendo esto suelto en una terminal.
+        print(f"PROGRESO {hechos} {total}", flush=True)
+
+    config = cargar_configuracion()
+    resultado = sincronizar_fuente_drive(args.slot_id, args.url or "", config, callback_progreso=_progreso)
+    print(f"RESULTADO {json.dumps(resultado)}", flush=True)
+    if resultado["ok"]:
+        registrar_evento(f"Sincronización Drive (manual, slot {args.slot_id}): {resultado['mensaje']}")
+    else:
+        registrar_error(f"Sincronización Drive (manual, slot {args.slot_id}) falló: {resultado['mensaje']}")
 
 
 if __name__ == "__main__":
