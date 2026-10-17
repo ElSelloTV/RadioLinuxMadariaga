@@ -562,6 +562,43 @@ UMBRAL_DEMORA_REPRODUCCION_SOSPECHOSA_SEGUNDOS = 1.5
 # las sufre mucho más que un tema de varios minutos.
 UMBRAL_DEMORA_VOLUMEN_AUDIBLE_SOSPECHOSA_SEGUNDOS = 0.4
 
+# Tope duro de MUDO, independiente de cuánto tarde EnrutadorPactl en
+# confirmar -- bug real de campo (Santiago, con el Fade de Ventana 1 ya
+# desactivado: "sigue existiendo el problema" en el Comando HTH HORA).
+# Confirmado en log_aplicacion.txt real (2026-10-15 21:03:40): en medio
+# de una ráfaga de comandos en la transición de hora (bloque automático
+# + separador + HORA + FMT + Musicalizador, todo en ~20s), un solo
+# `pactl list sink-inputs` colgó los 3000ms completos del watchdog de
+# EnrutadorPactl -- MINUTOS 03.MP3 recién se volvió AUDIBLE a los 5.99s.
+# Un clip de voz de 1-2s queda ENTERO mudo mucho antes de que la
+# confirmación llegue -- indistinguible de "no se reprodujo", y el Fade
+# nunca tuvo nada que ver (ver fade_out_v1_activado, investigado y
+# descartado en una ronda anterior: el guard de fade-out de Ventana 1
+# se resetea una sola vez por Comando HTH, nunca toca los clips internos
+# de la cola). El mismo patrón -- varios segundos mudo, hasta 17.6s en
+# el peor caso visto -- también apareció esa noche en temas musicales
+# normales justo después de "Procesador FM: ... PipeWire reiniciado"
+# (el margen de cortesía de MARGEN_SEGUNDOS_TRAS_REINICIO_PIPEWIRE ya
+# absorbe parte de eso, pero no todo si hay reinicios seguidos).
+#
+# UMBRAL_DEMORA_VOLUMEN_AUDIBLE_SOSPECHOSA_SEGUNDOS de arriba solo
+# DIAGNOSTICA el problema después del hecho; esta constante ACTÚA: si
+# EnrutadorPactl no confirmó el enrutado dentro de este plazo,
+# MotorAudio sube el volumen YA MISMO por su cuenta (ver
+# `_arrancar_reproduccion_real()` más abajo) -- arriesgando como mucho
+# una fracción de segundo sonando por el sink que PipeWire tuviera
+# puesto en ese instante (normalmente el mismo de siempre, no
+# necesariamente el equivocado) en vez de perder el clip entero.
+# Elegido bien por encima del rango normal visto en producción
+# (0.4-1.0s, para que esto NUNCA se dispare en uso sano) y bien por
+# debajo del peor caso real (hasta 17.6s) -- mismo criterio de siempre
+# en este archivo: "mejor sonar posiblemente mal enrutado que quedar
+# mudo para siempre" (ya aplicado a EnrutadorPactl mismo; esto lo
+# extiende para que el límite real lo pongan los milisegundos, no los
+# reintentos de `pactl`, que no tienen ninguna noción de "este clip es
+# corto, no hay tiempo que perder").
+TOPE_MUDO_ANTES_DE_FORZAR_VOLUMEN_MS = 1200
+
 
 def _argumentos_vlc(duracion_buffer_caching_ms: int, audio_cfg: dict = None) -> list:
     """Argumentos de la instancia de libVLC (pedido explícito, "para
@@ -834,6 +871,14 @@ class MotorAudio(QObject):
         _enrutador_pactl_confirmacion = {}
 
         def _al_confirmar_enrutado():
+            # Guard contra doble aplicación -- ver
+            # TOPE_MUDO_ANTES_DE_FORZAR_VOLUMEN_MS más arriba: si el
+            # tope ya forzó el volumen por su cuenta (EnrutadorPactl
+            # tardando de más), esta confirmación REAL puede llegar
+            # después igual -- ya no hay nada que aplicar de nuevo.
+            if _enrutador_pactl_confirmacion.get("ya_resuelto"):
+                return
+            _enrutador_pactl_confirmacion["ya_resuelto"] = True
             aplicar = _enrutador_pactl_confirmacion.get("aplicar")
             if aplicar is not None:
                 aplicar()
@@ -916,6 +961,27 @@ class MotorAudio(QObject):
                 # enrutado que quedar mudo para siempre).
                 self.set_volumen(0)
                 _enrutador_pactl_confirmacion["aplicar"] = _aplicar_volumen_real
+
+                def _forzar_volumen_si_enrutadorpactl_no_confirmo():
+                    # Ver TOPE_MUDO_ANTES_DE_FORZAR_VOLUMEN_MS -- tope
+                    # duro independiente de cuánto tarde EnrutadorPactl.
+                    if self._generacion_reproduccion != generacion_de_esta_reproduccion:
+                        return  # una reproducción MÁS NUEVA ya reemplazó esta
+                    if _enrutador_pactl_confirmacion.get("ya_resuelto"):
+                        return  # EnrutadorPactl ya confirmó solo -- nada que forzar
+                    _enrutador_pactl_confirmacion["ya_resuelto"] = True
+                    registrar_evento(
+                        f"MotorAudio: '{self._ruta_actual}' -- EnrutadorPactl no confirmó "
+                        f"el enrutado en {TOPE_MUDO_ANTES_DE_FORZAR_VOLUMEN_MS}ms, se fuerza "
+                        f"el volumen real YA (mejor sonar un instante por el sink que "
+                        f"estuviera puesto que perder un clip corto entero mudo)"
+                    )
+                    _aplicar_volumen_real()
+
+                QTimer.singleShot(
+                    TOPE_MUDO_ANTES_DE_FORZAR_VOLUMEN_MS,
+                    _forzar_volumen_si_enrutadorpactl_no_confirmo,
+                )
             else:
                 _aplicar_volumen_real()
 
