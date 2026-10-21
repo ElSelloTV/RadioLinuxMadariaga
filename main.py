@@ -31,7 +31,7 @@ from core.sesion_display import (
 )
 from core.actualizador import (
     asegurar_lanzadores_escritorio, asegurar_tarea_cron_mantenimiento,
-    asegurar_tarea_cron_sincronizar_drive,
+    asegurar_tarea_cron_sincronizar_drive, asegurar_tarea_cron_cerrar_zararadio,
 )
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
@@ -168,6 +168,16 @@ def main():
         asegurar_tarea_cron_sincronizar_drive()
     except Exception as error:
         registrar_error(f"No se pudo instalar/refrescar la tarea de sincronización de Drive (cron): {error}")
+
+    # Cierre automático diario de ZaraRadio (pedido explícito: "tengo
+    # un operador que no quiere ni sabe manejar bien las cosas... que
+    # automáticamente cierre ZaraRadio... a las 16:10, todos los días
+    # si está abierto") -- mismo criterio de arriba, nunca debe poder
+    # frenar el arranque. Ver core/cerrar_zararadio.py.
+    try:
+        asegurar_tarea_cron_cerrar_zararadio()
+    except Exception as error:
+        registrar_error(f"No se pudo instalar/refrescar la tarea de cierre diario de ZaraRadio (cron): {error}")
 
     registrar_evento("Aplicación iniciada")
 
