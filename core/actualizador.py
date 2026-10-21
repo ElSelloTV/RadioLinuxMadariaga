@@ -430,6 +430,7 @@ def asegurar_lanzadores_escritorio() -> None:
 # ------------------------------------------------------------------
 _MARCA_CRON_MANTENIMIENTO = "radio-tuyu-mantenimiento-diario"
 _MARCA_CRON_SINCRONIZAR_DRIVE = "radio-tuyu-sincronizar-drive-enlatados"
+_MARCA_CRON_CERRAR_ZARARADIO = "radio-tuyu-cerrar-zararadio-1610"
 
 
 def _asegurar_entrada_cron(marca: str, horario_cron: str, script_relativo: str, nombre_log_bootstrap: str) -> None:
@@ -516,4 +517,19 @@ def asegurar_tarea_cron_sincronizar_drive() -> None:
     _asegurar_entrada_cron(
         _MARCA_CRON_SINCRONIZAR_DRIVE, "30 0 * * *",
         os.path.join("core", "sincronizador_drive.py"), "log_cron_sincronizar_drive.txt",
+    )
+
+
+def asegurar_tarea_cron_cerrar_zararadio() -> None:
+    """Instala/refresca la entrada de crontab que corre
+    `core/cerrar_zararadio.py` todos los días a las 16:10 -- pedido
+    explícito: "tengo un operador que no quiere ni sabe manejar bien
+    las cosas... ¿es posible poner un comando que automáticamente
+    cierre ZaraRadio que siempre lo deja abierto a las 16:10 horas?
+    Todos los días si está abierto?". Corre SIEMPRE a esa hora, sin
+    importar si esta app está abierta o no -- es una tarea de sistema,
+    no algo que dependa de la radio."""
+    _asegurar_entrada_cron(
+        _MARCA_CRON_CERRAR_ZARARADIO, "10 16 * * *",
+        os.path.join("core", "cerrar_zararadio.py"), "log_cron_cerrar_zararadio.txt",
     )
