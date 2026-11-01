@@ -111,6 +111,7 @@ class VentanaConfiguracion(QDialog):
             ("🎚", "Procesador FM", self._crear_tab_procesador_fm),
             ("▶", "Reproducción y Automatización", self._crear_tab_reproduccion),
             ("📦", "Enlatados", self._crear_tab_enlatados),
+            ("🎬", "Importador YouTube", self._crear_tab_importador_youtube),
             ("📁", "Rutas", self._crear_tab_rutas),
             ("⚙", "General", self._crear_tab_general),
             ("🎨", "Apariencia", self._crear_tab_apariencia),
@@ -1425,6 +1426,125 @@ class VentanaConfiguracion(QDialog):
             layout.addWidget(nota)
         return widget
 
+    def _crear_tab_importador_youtube(self) -> QWidget:
+        """Pedido explícito: "cargar un txt con enlaces de youtube...
+        el archivo en realidad es un documento de Drive" -- un
+        documento con una línea por descarga
+        ("URL, Categoria>Subcategoria, mm:ss-mm:ss", los tiempos
+        opcionales), revisado automáticamente a las 3am (ver
+        core/actualizador.py:asegurar_tarea_cron_importar_youtube_doc)
+        y también con el botón de abajo, mismo patrón de QProcess +
+        barra de progreso gráfica ya probado para Enlatados tipo
+        Drive (nunca bloquea la interfaz, sin importar cuánto tarde)."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        lbl_intro = QLabel(
+            "Descarga música de YouTube a partir de un documento de Google Docs "
+            "compartido (\"cualquiera con el enlace puede ver\") -- una línea por "
+            "descarga:\n\n"
+            "URL de YouTube, Categoria>Subcategoria, 00:06-04:38\n\n"
+            "La categoría (con cualquier cantidad de subniveles separados por "
+            "\">\") se crea sola si todavía no existe. Los tiempos son opcionales "
+            "-- sin ellos, se descarga el video completo; con ellos, el archivo "
+            "que queda en la biblioteca es ESE tramo recortado. Se revisa solo, "
+            "una vez por día a las 3am -- lo ya descargado nunca se vuelve a bajar."
+        )
+        lbl_intro.setWordWrap(True)
+        layout.addWidget(lbl_intro)
+
+        grupo = QGroupBox("🎬 Documento de YouTube")
+        form = QFormLayout(grupo)
+
+        self.txt_url_youtube_doc = QLineEdit()
+        self.txt_url_youtube_doc.setPlaceholderText("https://docs.google.com/document/d/.../edit?usp=sharing")
+        form.addRow("Documento:", self.txt_url_youtube_doc)
+
+        fila_sincronizar = QHBoxLayout()
+        self.btn_sincronizar_youtube_doc = QPushButton("🔄 Sincronizar ahora")
+        self.btn_sincronizar_youtube_doc.clicked.connect(self._sincronizar_youtube_doc_ahora)
+        self.lbl_estado_youtube_doc = QLabel("")
+        self.lbl_estado_youtube_doc.setWordWrap(True)
+        fila_sincronizar.addWidget(self.btn_sincronizar_youtube_doc)
+        fila_sincronizar.addWidget(self.lbl_estado_youtube_doc, 1)
+        form.addRow(fila_sincronizar)
+
+        layout.addWidget(grupo)
+        layout.addStretch(1)
+        return widget
+
+    def _sincronizar_youtube_doc_ahora(self):
+        """Mismo mecanismo YA probado para "Sincronizar ahora" de
+        Enlatados tipo Drive -- proceso APARTE vía QProcess, nunca
+        bloquea la GUI aunque la descarga real tarde minutos."""
+        url = self.txt_url_youtube_doc.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Sincronizar", "Pegá primero el enlace del documento de Google Docs.")
+            return
+
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core", "descargador_youtube_doc.py")
+        # --url se pasa EXPLÍCITO (nunca releído de disco) -- mismo
+        # criterio que Enlatados tipo Drive: usa el link recién
+        # tipeado en la UI, incluso antes de apretar "Guardar".
+        argumentos = [script, "--url", url]
+
+        self._dialogo_sincronizar_youtube_doc = DialogoPreloadBiblioteca(
+            1, parent=self, titulo="Sincronizando YouTube",
+            texto="Leyendo el documento y descargando lo que falte...",
+            nota="Corre en un proceso aparte, uno a la vez -- el programa sigue respondiendo mientras tanto.",
+        )
+        self._dialogo_sincronizar_youtube_doc.show()
+
+        self._buffer_stdout_youtube_doc = ""
+        self._resultado_sincronizar_youtube_doc = None
+        self._proceso_sincronizar_youtube_doc = QProcess(self)
+        self._proceso_sincronizar_youtube_doc.setProgram(sys.executable)
+        self._proceso_sincronizar_youtube_doc.setArguments(argumentos)
+        self._proceso_sincronizar_youtube_doc.readyReadStandardOutput.connect(self._leer_progreso_youtube_doc)
+        self._proceso_sincronizar_youtube_doc.finished.connect(self._al_terminar_sincronizar_youtube_doc)
+        self.btn_sincronizar_youtube_doc.setEnabled(False)
+        self._proceso_sincronizar_youtube_doc.start()
+
+    def _leer_progreso_youtube_doc(self):
+        self._buffer_stdout_youtube_doc += bytes(
+            self._proceso_sincronizar_youtube_doc.readAllStandardOutput()
+        ).decode("utf-8", errors="replace")
+        while "\n" in self._buffer_stdout_youtube_doc:
+            linea, self._buffer_stdout_youtube_doc = self._buffer_stdout_youtube_doc.split("\n", 1)
+            linea = linea.strip()
+            if linea.startswith("PROGRESO "):
+                partes = linea.split()
+                if len(partes) == 3:
+                    try:
+                        hechos, total = int(partes[1]), int(partes[2])
+                    except ValueError:
+                        continue
+                    if self._dialogo_sincronizar_youtube_doc is not None:
+                        self._dialogo_sincronizar_youtube_doc.actualizar(hechos, total)
+            elif linea.startswith("RESULTADO "):
+                try:
+                    self._resultado_sincronizar_youtube_doc = json.loads(linea[len("RESULTADO "):])
+                except ValueError:
+                    pass
+
+    def _al_terminar_sincronizar_youtube_doc(self, _codigo_salida, _estado_salida):
+        if self._dialogo_sincronizar_youtube_doc is not None:
+            self._dialogo_sincronizar_youtube_doc.close()
+            self._dialogo_sincronizar_youtube_doc = None
+        self.btn_sincronizar_youtube_doc.setEnabled(True)
+
+        resultado = self._resultado_sincronizar_youtube_doc
+        if resultado is None:
+            error = bytes(self._proceso_sincronizar_youtube_doc.readAllStandardError()).decode("utf-8", errors="replace").strip()
+            resultado = {"ok": False, "mensaje": error or "El proceso terminó sin resultado (ver log)."}
+
+        if resultado.get("ok"):
+            QMessageBox.information(self, "Sincronizar", resultado.get("mensaje", "Listo."))
+            self.lbl_estado_youtube_doc.setText(resultado.get("mensaje", ""))
+        else:
+            QMessageBox.warning(self, "Sincronizar", resultado.get("mensaje", "No se pudo sincronizar."))
+            self.lbl_estado_youtube_doc.setText(resultado.get("mensaje", ""))
+
     def _texto_lista_enlatado(self, entrada: dict) -> str:
         icono = "☁" if entrada.get("tipo") == "drive" else "📁"
         return f"{icono} {entrada.get('nombre') or '(sin nombre)'}"
@@ -1682,6 +1802,9 @@ class VentanaConfiguracion(QDialog):
         self.spin_control_remoto_puerto.setValue(control_remoto.get("puerto", 8765))
         self.txt_control_remoto_token.setText(control_remoto.get("token", ""))
 
+        importador_youtube_doc = self._config.get("importador_youtube_doc", {})
+        self.txt_url_youtube_doc.setText(importador_youtube_doc.get("url_documento", ""))
+
         colores_genero = self._config["apariencia"]["colores_genero"]
         for genero in LISTA_GENEROS:
             color_hex = colores_genero.get(genero)
@@ -1770,6 +1893,9 @@ class VentanaConfiguracion(QDialog):
         self._config["control_remoto"]["activado"] = self.chk_control_remoto_activado.isChecked()
         self._config["control_remoto"]["puerto"] = self.spin_control_remoto_puerto.value()
         self._config["control_remoto"]["token"] = self.txt_control_remoto_token.text().strip()
+
+        self._config.setdefault("importador_youtube_doc", {})
+        self._config["importador_youtube_doc"]["url_documento"] = self.txt_url_youtube_doc.text().strip()
 
         self._config["general"]["nombre_emisora"] = self.txt_nombre_emisora.text().strip()
         self._config["general"]["confirmar_antes_de_eliminar"] = self.chk_confirmar_eliminar.isChecked()

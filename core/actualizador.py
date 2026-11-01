@@ -431,6 +431,7 @@ def asegurar_lanzadores_escritorio() -> None:
 _MARCA_CRON_MANTENIMIENTO = "radio-tuyu-mantenimiento-diario"
 _MARCA_CRON_SINCRONIZAR_DRIVE = "radio-tuyu-sincronizar-drive-enlatados"
 _MARCA_CRON_CERRAR_ZARARADIO = "radio-tuyu-cerrar-zararadio-1610"
+_MARCA_CRON_IMPORTAR_YOUTUBE_DOC = "radio-tuyu-importar-youtube-doc-0300"
 
 
 def _asegurar_entrada_cron(marca: str, horario_cron: str, script_relativo: str, nombre_log_bootstrap: str) -> None:
@@ -532,4 +533,20 @@ def asegurar_tarea_cron_cerrar_zararadio() -> None:
     _asegurar_entrada_cron(
         _MARCA_CRON_CERRAR_ZARARADIO, "10 16 * * *",
         os.path.join("core", "cerrar_zararadio.py"), "log_cron_cerrar_zararadio.txt",
+    )
+
+
+def asegurar_tarea_cron_importar_youtube_doc() -> None:
+    """Instala/refresca la entrada de crontab que corre
+    `core/descargador_youtube_doc.py` todos los días a las 3:00am --
+    pedido explícito ("cargar un txt con enlaces de youtube... la
+    descarga y guardado debe hacerse de manera automática a las
+    3:00am todos los días"). A propósito DESPUÉS del mantenimiento de
+    las 2am (`asegurar_tarea_cron_mantenimiento`) y de la
+    sincronización de Enlatados tipo Drive de las 00:30
+    (`asegurar_tarea_cron_sincronizar_drive`) -- nunca compitiendo por
+    red/CPU al mismo tiempo que esas otras dos tareas nocturnas."""
+    _asegurar_entrada_cron(
+        _MARCA_CRON_IMPORTAR_YOUTUBE_DOC, "0 3 * * *",
+        os.path.join("core", "descargador_youtube_doc.py"), "log_cron_importar_youtube_doc.txt",
     )

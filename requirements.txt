@@ -21,3 +21,14 @@ numpy>=1.24.0
 # core/sincronizador_drive.py degrada limpio (avisa en el log y en la
 # UI "Falta instalar gdown"), nunca rompe el resto de la app.
 gdown>=5.2.0
+# Descarga de audio desde YouTube para el importador por documento de
+# Google Docs (Configuración → Importador YouTube, corre solo a las
+# 3am) -- pedido explícito ("cargar un txt con enlaces de youtube").
+# Esta misma dependencia ya se había usado antes (ronda 53, "anda todo
+# muy bien") y se sacó más tarde junto con un botón interactivo de
+# Ventana 3 que ya no existe -- se reintroduce acá para este mecanismo
+# AUTOMÁTICO distinto, sin relación con aquel botón. Opcional en los
+# hechos: si falta, core/descargador_youtube_doc.py degrada limpio
+# (avisa en el log "Falta instalar yt-dlp"), nunca rompe el resto de
+# la app.
+yt-dlp>=2024.1.0
