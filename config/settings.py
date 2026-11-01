@@ -27,6 +27,7 @@ ARCHIVO_LOG = os.path.join(DIRECTORIO_CONFIG, "log_aplicacion.txt")
 ARCHIVO_HISTORIAL_REPRODUCCION = os.path.join(DIRECTORIO_CONFIG, "historial_reproduccion.txt")
 ARCHIVO_ROTACION_CATEGORIAS = os.path.join(DIRECTORIO_CONFIG, "rotacion_categorias.json")
 ARCHIVO_PROCESADOR_AUDIO = os.path.join(DIRECTORIO_CONFIG, "procesador_audio.json")
+ARCHIVO_DESCARGAS_YOUTUBE_DOC = os.path.join(DIRECTORIO_CONFIG, "youtube_doc_descargados.json")
 ARCHIVO_REINICIO_PIPEWIRE = os.path.join(DIRECTORIO_CONFIG, "ultimo_reinicio_pipewire.json")
 # Pedido explícito ("achicar el log a 2 días y no 3"): la rotación
 # siempre fue por TAMAÑO, nunca por fecha (no hay ningún concepto de
@@ -227,6 +228,22 @@ CONFIG_POR_DEFECTO = {
         "activado": False,
         "puerto": 8765,
         "token": "",
+    },
+    # Importador de YouTube desde un documento de Google Docs (pedido
+    # explícito: "cargar un txt con enlaces de youtube... el archivo en
+    # realidad es un documento de Drive"). Un documento, con UNA línea
+    # por descarga: "URL, Categoria>Subcategoria, mm:ss-mm:ss" (tiempos
+    # opcionales — sin ellos, se descarga el video completo). Corre
+    # solo a las 3am (ver core/actualizador.py:
+    # asegurar_tarea_cron_importar_youtube_doc) y también con el botón
+    # manual de Configuración → Importador YouTube. Ver
+    # core/descargador_youtube_doc.py — nunca descarga nada en caliente
+    # desde la reproducción, solo deja los archivos ya listos en la
+    # biblioteca para la próxima vez que les toque sonar.
+    # `url_documento` vacío por defecto: una instalación nueva no
+    # intenta descargar nada hasta que Santiago pegue el link.
+    "importador_youtube_doc": {
+        "url_documento": "",
     },
     # Comando ENLATADO — lista GROWABLE de slots con nombre propio
     # (pedido explícito, ronda de unificación con Drive: "pongamoslo a
@@ -803,6 +820,57 @@ def reanalizar_biblioteca(config: dict, callback_progreso=None) -> dict:
     éxito, y un fallo del motor podía pisar marcas que ya andaban)."""
     from core.reanalizador_batch import ejecutar_reanalisis
     return ejecutar_reanalisis(config, callback_progreso=callback_progreso)
+
+
+def buscar_o_crear_categoria_por_ruta(categorias: list, ruta_nombres: list) -> dict:
+    """Resuelve el camino de nombres `ruta_nombres` (ej. ["Musica",
+    "Lentos", "Modernos"]) dentro de la lista de categorías de nivel
+    superior de `cargar_biblioteca()` — CREANDO lo que falte en el
+    camino. A diferencia del equivalente en Qt
+    (`gui/ventana_explorador.py:buscar_categoria_por_ruta`, que opera
+    sobre `QTreeWidgetItem`s y puede devolver `None` si algo no
+    existe), esta versión headless (pensada para scripts sin interfaz
+    como `core/descargador_youtube_doc.py`) SIEMPRE devuelve una
+    categoría real — nunca `None`, nunca falla por una categoría
+    todavía no creada.
+
+    Muta `categorias` IN-PLACE (agrega los dicts que falten) — el
+    llamador tiene que persistir con `guardar_biblioteca(categorias)`
+    después. `ruta_nombres` vacía devuelve un error de programación a
+    propósito (`ValueError`) — no tiene sentido pedir "la categoría
+    raíz sin nombre"."""
+    if not ruta_nombres:
+        raise ValueError("ruta_nombres no puede estar vacía")
+    nivel = categorias
+    categoria_actual = None
+    for nombre in ruta_nombres:
+        categoria_actual = next((c for c in nivel if c.get("nombre") == nombre), None)
+        if categoria_actual is None:
+            categoria_actual = {"nombre": nombre, "archivos": [], "subcategorias": []}
+            nivel.append(categoria_actual)
+        nivel = categoria_actual.setdefault("subcategorias", [])
+    return categoria_actual
+
+
+def cargar_descargas_youtube_doc() -> dict:
+    """Base de datos ultra liviana (un JSON plano) de qué ya se
+    descargó desde el documento de YouTube (ver
+    core/descargador_youtube_doc.py) — clave `"<id_video>::<rango o
+    'completo'>"` -> {"titulo", "categoria", "fecha"}. Evita volver a
+    bajar lo mismo cada 3am."""
+    _asegurar_directorio()
+    if not os.path.exists(ARCHIVO_DESCARGAS_YOUTUBE_DOC):
+        return {}
+    try:
+        with open(ARCHIVO_DESCARGAS_YOUTUBE_DOC, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as error:
+        registrar_error(f"Error leyendo descargas de YouTube ya hechas: {error}")
+        return {}
+
+
+def guardar_descargas_youtube_doc(datos: dict):
+    _guardar_json_atomico(ARCHIVO_DESCARGAS_YOUTUBE_DOC, datos)
 
 
 # ----------------------------------------------------------------------
