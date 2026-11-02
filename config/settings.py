@@ -13,6 +13,7 @@ import json
 import os
 import tempfile
 import time
+import unicodedata
 from datetime import date
 
 DIRECTORIO_CONFIG = os.path.join(os.path.dirname(__file__), "data")
@@ -822,6 +823,21 @@ def reanalizar_biblioteca(config: dict, callback_progreso=None) -> dict:
     return ejecutar_reanalisis(config, callback_progreso=callback_progreso)
 
 
+def _normalizar_nombre_categoria(nombre: str) -> str:
+    """Pedido explícito, bug real evitado ANTES de que pasara en
+    producción (Santiago: "en el Drive puse 'Musica' sin acento, y en
+    el programa la categoría es 'Música'... ¿lo ubicará bien?") — sin
+    esto, una comparación exacta trataría "Musica" y "Música" como dos
+    categorías DISTINTAS, duplicando la real cada vez que un documento
+    (tipeado rápido, desde el celular, sin tilde) no coincide letra
+    por letra. Normaliza a minúsculas y le saca los acentos (NFD +
+    descarta los caracteres de la categoría Unicode "Mn", marca de
+    combinación) — "Musica"/"música"/"MÚSICA" terminan siendo la MISMA
+    clave de comparación."""
+    descompuesto = unicodedata.normalize("NFD", nombre.strip().lower())
+    return "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
+
+
 def buscar_o_crear_categoria_por_ruta(categorias: list, ruta_nombres: list) -> dict:
     """Resuelve el camino de nombres `ruta_nombres` (ej. ["Musica",
     "Lentos", "Modernos"]) dentro de la lista de categorías de nivel
@@ -834,6 +850,17 @@ def buscar_o_crear_categoria_por_ruta(categorias: list, ruta_nombres: list) -> d
     categoría real — nunca `None`, nunca falla por una categoría
     todavía no creada.
 
+    El match es, primero, EXACTO (el caso normal); si no hay ninguno,
+    cae a una comparación TOLERANTE a acentos/mayúsculas
+    (`_normalizar_nombre_categoria`) antes de darse por vencido y
+    crear una categoría nueva — así "Musica" (tal cual lo tipeó
+    Santiago en el documento, sin tilde) encuentra la "Música" real ya
+    existente en la biblioteca, en vez de duplicarla. Si en algún
+    momento llegaran a convivir las dos variantes (de antes de este
+    fix), el match EXACTO sigue ganando siempre — nunca fusiona en
+    silencio dos categorías que el operador ya mantenía separadas a
+    propósito.
+
     Muta `categorias` IN-PLACE (agrega los dicts que falten) — el
     llamador tiene que persistir con `guardar_biblioteca(categorias)`
     después. `ruta_nombres` vacía devuelve un error de programación a
@@ -845,6 +872,11 @@ def buscar_o_crear_categoria_por_ruta(categorias: list, ruta_nombres: list) -> d
     categoria_actual = None
     for nombre in ruta_nombres:
         categoria_actual = next((c for c in nivel if c.get("nombre") == nombre), None)
+        if categoria_actual is None:
+            objetivo = _normalizar_nombre_categoria(nombre)
+            categoria_actual = next(
+                (c for c in nivel if _normalizar_nombre_categoria(c.get("nombre", "")) == objetivo), None,
+            )
         if categoria_actual is None:
             categoria_actual = {"nombre": nombre, "archivos": [], "subcategorias": []}
             nivel.append(categoria_actual)
