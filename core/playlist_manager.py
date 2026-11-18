@@ -555,6 +555,80 @@ class GestorPublicidad:
             return True
         return QTime.currentTime() >= hora_bloque
 
+    def _hora_valida_de_bloque(self, item_bloque):
+        """`QTime` del bloque, o `None` si no tiene hora asignada o
+        está mal formada -- mismo criterio de "sin restricción" que ya
+        usa `_bloque_ya_disponible`."""
+        hora_str = self.ventana.hora_de_bloque(item_bloque)
+        if not hora_str:
+            return None
+        hora = QTime.fromString(hora_str, "HH:mm:ss")
+        return hora if hora.isValid() else None
+
+    def _bloque_vigente_ahora(self):
+        """El bloque horario que debería estar sonando AHORA MISMO: el
+        de hora válida más tardía que ya llegó o pasó, entre TODOS los
+        bloques del árbol -- `None` si ninguno calificó todavía (ej.
+        el primer bloque del día ni siquiera llegó a su hora)."""
+        ahora = QTime.currentTime()
+        mejor_item = mejor_hora = None
+        for bloque in self.ventana.bloques():
+            hora = self._hora_valida_de_bloque(bloque)
+            if hora is None or hora > ahora:
+                continue
+            if mejor_hora is None or hora > mejor_hora:
+                mejor_hora, mejor_item = hora, bloque
+        return mejor_item
+
+    def _redirigir_si_bloque_pasado(self, item):
+        """Blindaje pedido explícito por Santiago, con un caso real
+        reportado: a las 18hs, mientras sonaba correctamente el bloque
+        de esa hora (con su propio Comando FMT, ej. "FMT FOLCLORE"),
+        un click del operador (accidental, "seguro por orden de él")
+        sobre un bloque de una hora YA PASADA terminó, un rato después,
+        reproduciendo contenido de ESE bloque viejo -- incluyendo
+        volver a disparar su propio Comando FMT ("FMT Latino"),
+        pisando el que ya estaba sonando bien en Ventana 2.
+
+        Causa real confirmada en el código: tanto `_avanzar()` (la
+        regla "nunca cruza a un bloque FUTURO") como el propio click
+        (`_on_doble_click`, que solo ARMA/ENCOLA) nunca restringieron
+        cruzar hacia un bloque PASADO -- un ítem de un horario viejo,
+        una vez armado o encolado, es indistinguible de cualquier otro
+        para el resto del motor.
+
+        Corregido de raíz, en el momento mismo en que algo está por
+        quedar armado o a punto de reproducirse (llamado desde
+        `_on_doble_click()` Y `_reproducir_seleccion_o_actual()` --
+        cubre tanto "clickear para armar" como "Play" sobre lo que
+        haya quedado seleccionado, incluso por teclado): si `item`
+        pertenece a un bloque de hora estrictamente ANTERIOR al bloque
+        VIGENTE (el que debería estar sonando ahora), se redirige
+        directo al primer ítem reproducible de ESE, en vez de dejar
+        que se arme/reproduzca algo de un horario viejo. Un bloque sin
+        hora asignada, el propio bloque vigente, o uno futuro, nunca
+        se tocan -- mismo criterio de "fail-open" de siempre."""
+        if item is None:
+            return item
+        bloque_del_item = item if item.parent() is None else item.parent()
+        hora_item = self._hora_valida_de_bloque(bloque_del_item)
+        if hora_item is None:
+            return item
+        bloque_vigente = self._bloque_vigente_ahora()
+        if bloque_vigente is None or bloque_vigente is bloque_del_item:
+            return item
+        hora_vigente = self._hora_valida_de_bloque(bloque_vigente)
+        if hora_vigente is None or hora_item >= hora_vigente:
+            return item
+        primero_vigente = self._primer_item_valido_de(bloque_vigente)
+        if primero_vigente is None:
+            return item  # el bloque vigente no tiene nada reproducible -- no hay adónde redirigir
+        registrar_evento(
+            f"Publicidad: '{bloque_del_item.text(0)}' es de una hora ya pasada -- "
+            f"redirigido al bloque vigente '{bloque_vigente.text(0)}'"
+        )
+        return primero_vigente
+
     def _ejecutar_comando(self, item):
         """Comando FMT (pedido explícito, punto 6): NO ocupa tiempo de
         aire — se ejecuta y la reproducción sigue directo al próximo
@@ -1055,6 +1129,13 @@ class GestorPublicidad:
             while item is not None and not self._item_valido(item):
                 item = self.ventana.tree.itemBelow(item)
 
+        # Blindaje (ver _redirigir_si_bloque_pasado): cubre no solo lo
+        # armado/seleccionado a mano, sino también el fallback de
+        # arriba y una selección hecha por teclado (flechas) que nunca
+        # pasó por el click -- Play nunca debe arrancar un bloque de
+        # una hora ya pasada por ninguna de las 3 vías.
+        item = self._redirigir_si_bloque_pasado(item)
+
         if item is not None and item.parent() is None:
             # Es el TÍTULO de un bloque (nodo de nivel superior), no
             # una tanda — pedido explícito: seleccionar el bloque y
@@ -1202,6 +1283,15 @@ class GestorPublicidad:
             if primero is None:
                 return
             item = primero
+
+        # Blindaje pedido explícito (ver _redirigir_si_bloque_pasado):
+        # clickear una tanda o el título de un bloque de una hora YA
+        # PASADA redirige directo al bloque vigente, en vez de dejar
+        # que se arme/encole y termine reproduciéndose solo.
+        item = self._redirigir_si_bloque_pasado(item)
+        if item is None:
+            return
+
         if not self._item_valido(item):
             return  # ítem inválido (vigencia vencida, archivo faltante, etc.)
         if self._bloque_automatico_actual is not None:
@@ -1395,6 +1485,48 @@ class GestorPublicidad:
             bloque_actual = item_base if item_base.parent() is None else item_base.parent()
             bloque_candidato = candidato.parent()
             if bloque_candidato is not None and bloque_candidato is not bloque_actual:
+                # Segunda capa de blindaje (ver _redirigir_si_bloque_pasado,
+                # la primera capa en el click/Play) -- por si un verde
+                # apuntando a un bloque de hora YA PASADA llegó hasta
+                # acá por cualquier otra vía (ej. restaurado de una
+                # sesión de antes de este fix): nunca debe cruzar hacia
+                # atrás, igual que nunca cruza hacia un bloque futuro.
+                hora_actual = self._hora_valida_de_bloque(bloque_actual)
+                hora_candidato = self._hora_valida_de_bloque(bloque_candidato)
+                cruza_hacia_atras = (
+                    hora_actual is not None and hora_candidato is not None
+                    and hora_candidato < hora_actual
+                )
+                if cruza_hacia_atras:
+                    bloque_vigente = self._bloque_vigente_ahora()
+                    primero_vigente = (
+                        self._primer_item_valido_de(bloque_vigente)
+                        if bloque_vigente is not None and bloque_vigente is not bloque_candidato
+                        else None
+                    )
+                    if primero_vigente is not None:
+                        registrar_evento(
+                            f"Publicidad: reproducción continua iba a cruzar hacia atrás, al "
+                            f"bloque '{bloque_candidato.text(0)}' (hora ya pasada) -- "
+                            f"redirigida al bloque vigente '{bloque_vigente.text(0)}'"
+                        )
+                        self._reproducir_primer_item_de_bloque(bloque_vigente, primero_vigente)
+                        return
+                    # Sin un bloque vigente razonable al que redirigir
+                    # (caso límite) -- se frena, mismo camino ya
+                    # probado que el de un bloque futuro, antes que
+                    # arriesgar sonar contenido de un horario viejo.
+                    self.ventana.marcar_siguiente_item(None)
+                    registrar_evento(
+                        f"Publicidad: reproducción continua detenida — el bloque "
+                        f"'{bloque_candidato.text(0)}' es de una hora ya pasada"
+                    )
+                    self.motor.detener()
+                    self.ventana.marcar_reproduciendo_item(None)
+                    self.ventana.set_indicador_en_vivo(False)
+                    self.ventana.resetear_reproduccion()
+                    self._notificar_fin_reproduccion()
+                    return
                 if not self._bloque_ya_disponible(bloque_candidato):
                     registrar_evento(
                         f"Publicidad: reproducción continua detenida — el bloque "
