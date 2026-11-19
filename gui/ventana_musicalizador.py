@@ -38,10 +38,12 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from gui.dialogo_item_musicalizador import DialogoItemMusicalizador, TIPO_ESPECIFICO, TIPO_ALEATORIO, TIPO_SUBFORMATO
+from gui.dialogo_item_musicalizador import (
+    DialogoItemMusicalizador, TIPO_ESPECIFICO, TIPO_ALEATORIO, TIPO_SUBFORMATO, TIPO_OFF,
+)
 from config.settings import (
     listar_formatos, obtener_formato, guardar_formato, eliminar_formato, renombrar_formato,
-    cargar_musicalizador,
+    cargar_musicalizador, cargar_configuracion, obtener_programa_off,
 )
 from core.musicalizador import validar_formato
 
@@ -54,6 +56,8 @@ def _texto_tipo(item_config: dict) -> str:
         return "Específico"
     if tipo == TIPO_ALEATORIO:
         return "Aleatorio"
+    if tipo == TIPO_OFF:
+        return "Programa OFF"
     return "—"  # Subformato: pedido explícito, "no aplica"
 
 
@@ -83,6 +87,11 @@ def _texto_titulo(ventana_explorador, item_config: dict) -> str:
         minutos = int((item_config.get("duracion_segundos") or 0) / 60)
         nombre = item_config.get("nombre") or "(sin formato)"
         return f"{nombre} — {minutos} min"
+    if tipo == TIPO_OFF:
+        numero_bloque = item_config.get("numero_bloque") or "?"
+        programa = obtener_programa_off(cargar_configuracion(), item_config.get("programa_off_id"))
+        nombre = programa.get("nombre") if programa else "(programa borrado)"
+        return f"{nombre} — Bloque {numero_bloque}"
     return "—"
 
 
@@ -95,6 +104,8 @@ def _texto_clase(ventana_explorador, item_config: dict) -> str:
     tipo = item_config.get("tipo")
     if tipo == TIPO_SUBFORMATO:
         return "Subformato"
+    if tipo == TIPO_OFF:
+        return "Programa OFF"
     if ventana_explorador is None:
         return "(desconocida)"
     if tipo == TIPO_ESPECIFICO:

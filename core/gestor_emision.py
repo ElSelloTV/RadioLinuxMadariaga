@@ -110,6 +110,7 @@ from core.analizador_audio import volumen_ajustado_por_ganancia
 from core.musicalizador import generar_serie
 from core.buscador_duplicados import duracion_a_segundos
 from core.hth import resolver_comando_hth
+from core.rotacion_categoria import elegir_por_rotacion, marcar_reproducido_por_rotacion
 from config.settings import (
     cargar_playlist_emision, guardar_playlist_emision, registrar_error, registrar_evento,
     guardar_ultimo_fmt, obtener_ultimo_fmt,
@@ -123,6 +124,15 @@ from config.settings import (
 LIMITE_ITEMS_CICLO_POR_TIEMPO = 500
 
 DURACION_FADE_PISADOR_SEGUNDOS = 0.8
+# Cortina musical de fondo de un ítem "off" (Programas OFF, pedido
+# explícito) -- fundido corto al cancelarla (fin del bloque de voz,
+# Stop/Cut/crossfade de por medio), nunca un corte brusco.
+DURACION_FADE_CORTINA_SEGUNDOS = 0.8
+# Volumen de fábrica de la cortina si el programa OFF no trae uno
+# guardado (config vieja, o el propio core/musicalizador.py ya le
+# aplica este mismo default -- ver _resolver_off()) -- porcentaje del
+# Volumen Master, no un valor 0-100 absoluto.
+VOLUMEN_CORTINA_PCT_DEFECTO = 25
 # Pisador en el Outro (pedido explícito, paridad con Dinesat): cuánto
 # antes del final del tema se dispara un Pisador de posición "final".
 UMBRAL_DISPARO_PISADOR_OUTRO_MS = 3000
@@ -239,6 +249,32 @@ class GestorPlaylist:
         self._generacion_anuncio_manual = 0
         self._generacion_clip_actual_anuncio_manual = 0
         self.al_fallar_hth_manual = None
+
+        # Cortina musical de fondo de un ítem "off" (Programas OFF,
+        # pedido explícito: "reproducirlo sobre una cortina musical
+        # aleatoria... con el lógico volumen mucho más bajo"). A
+        # diferencia del Pisador (ducking del tema principal, un solo
+        # archivo, termina solo), la cortina: (a) NUNCA duckea el
+        # motor principal -- el bloque de voz suena a su volumen
+        # normal, la cortina a SU propio volumen bajo, en un motor
+        # DEDICADO; (b) se ENCADENA/repite indefinidamente (elegida
+        # por rotación de una categoría, nunca repite hasta agotarla —
+        # ver core/rotacion_categoria.py) mientras dure el bloque de
+        # voz, nunca termina sola; (c) por eso necesita cancelarse
+        # explícitamente en CADA punto donde cambia qué suena en el
+        # motor principal (fin de ítem, Stop, Cut, Pausa, crossfade) —
+        # a diferencia del Pisador, que puede simplemente terminar
+        # solo sin que nadie lo cancele.
+        self.motor_cortina = MotorAudio(id_dispositivo)
+        self.motor_cortina.finalizo_item.connect(self._on_fin_clip_cortina)
+        self.motor_cortina.error_reproduccion.connect(
+            lambda mensaje: registrar_error(f"[Cortina OFF] {mensaje}")
+        )
+        self._cortina_activa = False
+        self._cortina_categoria_ruta = None
+        self._cortina_volumen_pct = VOLUMEN_CORTINA_PCT_DEFECTO
+        self._generacion_cortina = 0
+        self._generacion_clip_actual_cortina = 0
 
         self._conectar_motor(self.motor)
 
@@ -494,6 +530,8 @@ class GestorPlaylist:
         self.motor.pausar()
         if self._pisador_activo:
             self.motor_pisador.pausar()
+        if self._cortina_activa:
+            self.motor_cortina.pausar()
         self._actualizar_indicador()
 
     def detener(self):
@@ -511,6 +549,7 @@ class GestorPlaylist:
             self._motor_saliente_crossfade = None
         self._crossfade_en_curso = False
         self._cancelar_pisador_en_curso()
+        self._cancelar_cortina_en_curso()
         self._fallos_consecutivos = 0
         self.panel.set_indicador_en_vivo(False)
         # Pedido explícito: la barra de progreso no debe quedar
@@ -528,6 +567,7 @@ class GestorPlaylist:
             return
         registrar_evento(f"Fade-Stop (Emisión persistir={self.persistir})")
         self._cancelar_pisador_en_curso()
+        self._cancelar_cortina_en_curso()
         self.motor.fade_volumen_a(0, DURACION_FUNDIDO_MANUAL_SEGUNDOS)
         QTimer.singleShot(int(DURACION_FUNDIDO_MANUAL_SEGUNDOS * 1000) + 150, self.detener)
 
@@ -753,6 +793,7 @@ class GestorPlaylist:
         if not ruta:
             return
         self._cancelar_pisador_en_curso()
+        self._cancelar_cortina_en_curso()
         # Bug real corregido: antes se llamaba motor.reproducir(ruta)
         # sin el recorte de silencio ni el nivelado ya calculados por
         # core/analizador_audio.py — solo el "Previo" de Ventana 3 los
@@ -778,6 +819,7 @@ class GestorPlaylist:
         # _chequear_pisador_outro().
         if self.panel.posicion_pisador_en_fila(fila) != "final":
             self._disparar_pisador_si_corresponde(fila)
+        self._disparar_cortina_si_corresponde(fila)
 
     # ------------------------------------------------------------------
     # Crossfade: se dispara CON ANTICIPACIÓN (faltando duracion_fade_
@@ -855,6 +897,11 @@ class GestorPlaylist:
         self._conectar_motor(self.motor)
 
         self._fallos_consecutivos = 0
+        # La cortina del ítem SALIENTE (si tenía una) nunca termina
+        # sola -- a diferencia del Pisador, hay que cancelarla acá
+        # explícitamente antes de redespachar una nueva para el
+        # ítem ENTRANTE (si corresponde).
+        self._cancelar_cortina_en_curso()
         self.panel.marcar_reproduciendo(fila_siguiente)
         self.panel.marcar_realmente_reproducido(fila_siguiente)
         candidata_siguiente = self._resolver_candidata_verde(fila_siguiente)
@@ -880,6 +927,7 @@ class GestorPlaylist:
         self._fila_pisador_outro_disparado = -1
         if self.panel.posicion_pisador_en_fila(fila_siguiente) != "final":
             self._disparar_pisador_si_corresponde(fila_siguiente, aplicar_ducking=False)
+        self._disparar_cortina_si_corresponde(fila_siguiente)
 
         QTimer.singleShot(
             int(duracion_segundos * 1000) + 200,
@@ -993,6 +1041,90 @@ class GestorPlaylist:
     def _detener_pisador_si_generacion_vigente(self, generacion: int):
         if generacion == self._generacion_pisador:
             self.motor_pisador.detener()
+
+    # ------------------------------------------------------------------
+    # Cortina musical de fondo de un ítem "off" (Programas OFF, pedido
+    # explícito) -- motor DEDICADO (self.motor_cortina), nunca duckea
+    # el motor principal (que suena a volumen normal: el bloque de voz
+    # grabado por Santiago). Se ENCADENA/repite sola, eligiendo cada
+    # track por rotación de la categoría configurada (nunca repite
+    # hasta agotarla, mismo motor que ya usa el ítem Aleatorio — ver
+    # core/rotacion_categoria.py), hasta que algo cancele el ítem "off"
+    # en curso (fin natural, Stop, Cut, crossfade — ver cada
+    # _cancelar_cortina_en_curso() más abajo). Mismo guard de
+    # generación que el Pisador (_generacion_cortina), por el mismo
+    # motivo ya documentado ahí: un ítem "off" nuevo que arranque su
+    # propia cortina ANTES de que el `detener()` diferido de la
+    # cancelación anterior se ejecute no debe terminar cortado por ese
+    # timer viejo.
+    # ------------------------------------------------------------------
+    def _disparar_cortina_si_corresponde(self, fila: int):
+        cortina = self.panel.cortina_en_fila(fila)
+        if not cortina:
+            return
+        ruta_categoria = cortina.get("categoria_cortina_ruta")
+        if not ruta_categoria or self._ventana_explorador is None:
+            registrar_error(
+                f"Cortina OFF: sin categoría configurada (o sin acceso al Explorador) "
+                f"para la fila {fila} -- el bloque de voz suena sin cortina de fondo."
+            )
+            return
+        self._generacion_cortina += 1
+        self._cortina_activa = True
+        self._cortina_categoria_ruta = ruta_categoria
+        self._cortina_volumen_pct = cortina.get("volumen_cortina_pct", VOLUMEN_CORTINA_PCT_DEFECTO)
+        registrar_evento(
+            f"Cortina OFF: disparada sobre fila {fila} ('{self.panel.ruta_en_fila(fila)}') "
+            f"-- categoría {ruta_categoria}, volumen {self._cortina_volumen_pct}% del Master"
+        )
+        self._reproducir_siguiente_track_cortina(self._generacion_cortina)
+
+    def _reproducir_siguiente_track_cortina(self, generacion: int):
+        if generacion != self._generacion_cortina or not self._cortina_activa:
+            return  # se canceló o se disparó una cortina más nueva mientras tanto
+        registro = elegir_por_rotacion(self._ventana_explorador, self._cortina_categoria_ruta, recursivo=True)
+        if registro is None or not registro.get("ruta"):
+            registrar_error(
+                f"Cortina OFF: la categoría {self._cortina_categoria_ruta} está vacía, no "
+                f"existe, o quedó sin archivos -- el bloque de voz sigue sonando sin cortina."
+            )
+            self._cortina_activa = False
+            return
+        ruta = registro["ruta"]
+        marcar_reproducido_por_rotacion(self._ventana_explorador, self._cortina_categoria_ruta, ruta, recursivo=True)
+        volumen_cortina = max(0, min(100, int(self._volumen_base * self._cortina_volumen_pct / 100)))
+        # Mismo patrón que el anuncio manual de HORA/TEMPERATURA (ver
+        # nota completa más arriba sobre `_generacion_clip_actual_
+        # anuncio_manual`): se captura la generación VIGENTE al
+        # despachar este track puntual, nunca se relee la corriente
+        # dentro del callback de fin (que llega async, sin argumentos).
+        self._generacion_clip_actual_cortina = generacion
+        self.motor_cortina.reproducir(
+            ruta,
+            punto_inicio_ms=registro.get("punto_inicio_ms") or 0,
+            punto_fin_ms=registro.get("punto_fin_ms"),
+            ganancia_db=registro.get("ganancia_db") or 0.0,
+            volumen_base=volumen_cortina,
+        )
+
+    def _on_fin_clip_cortina(self):
+        self._reproducir_siguiente_track_cortina(self._generacion_clip_actual_cortina)
+
+    def _cancelar_cortina_en_curso(self):
+        if self._cortina_activa:
+            registrar_evento("Cortina OFF: cancelada (cambió lo que está sonando en el motor principal)")
+            self._cortina_activa = False
+            self._generacion_cortina += 1
+            generacion_al_cancelar = self._generacion_cortina
+            self.motor_cortina.fade_volumen_a(0, DURACION_FADE_CORTINA_SEGUNDOS)
+            QTimer.singleShot(
+                int(DURACION_FADE_CORTINA_SEGUNDOS * 1000) + 100,
+                lambda: self._detener_cortina_si_generacion_vigente(generacion_al_cancelar),
+            )
+
+    def _detener_cortina_si_generacion_vigente(self, generacion: int):
+        if generacion == self._generacion_cortina:
+            self.motor_cortina.detener()
 
     # ------------------------------------------------------------------
     # Selección manual por doble click / Enter (arma en punta / encola)
@@ -1229,6 +1361,7 @@ class GestorPlaylist:
                 registro.get("titulo", ""), registro.get("duracion", ""), registro.get("codigo", "—"),
                 registro.get("ruta", ""), registro.get("punto_inicio_ms") or 0,
                 registro.get("punto_fin_ms"), registro.get("ganancia_db") or 0.0,
+                cortina_off=concreto.get("cortina_off"),
             )
             if concreto.get("pisador") and hasattr(self.panel, "agregar_pisador"):
                 fila_idx = self.panel.tree.indexOfTopLevelItem(fila_item)
@@ -1314,6 +1447,7 @@ class GestorPlaylist:
                 registro.get("titulo", ""), registro.get("duracion", ""), registro.get("codigo", "—"),
                 registro.get("ruta", ""), registro.get("punto_inicio_ms") or 0,
                 registro.get("punto_fin_ms"), registro.get("ganancia_db") or 0.0,
+                cortina_off=concreto.get("cortina_off"),
             )
             if concreto.get("pisador") and hasattr(self.panel, "agregar_pisador"):
                 fila_idx = self.panel.tree.indexOfTopLevelItem(fila_item)

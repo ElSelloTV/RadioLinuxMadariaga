@@ -52,7 +52,7 @@ from gui.styles import (
     COLOR_REPRODUCIENDO, COLOR_SIGUIENTE, ROL_ESTADO_ITEM, ROL_ANALISIS_AUDIO,
     ESTADO_NORMAL, ESTADO_REPRODUCIENDO, ESTADO_SIGUIENTE,
     ROL_YA_REPRODUCIDO, icono_reproducido, ROL_POSICION_PISADOR,
-    ROL_ITEM_CON_ERROR, icono_error,
+    ROL_ITEM_CON_ERROR, icono_error, ROL_CORTINA_OFF,
 )
 from config.settings import registrar_reproduccion
 
@@ -344,7 +344,7 @@ class PanelReproductor(QWidget):
     def agregar_item(
         self, titulo: str, duracion: str, codigo: str, ruta: str = "",
         punto_inicio_ms: int = 0, punto_fin_ms: int = None, ganancia_db: float = 0.0,
-        item_destino=None,
+        item_destino=None, cortina_off: dict = None,
     ):
         """`item_destino`, si se pasa, es el ítem sobre el que se soltó
         el archivo (pedido explícito: "debe ir donde posiciono el mouse
@@ -353,13 +353,21 @@ class PanelReproductor(QWidget):
         destino se resuelve a su padre (acá solo hay posiciones de
         nivel superior). `None` (soltado en hueco vacío, o cualquier
         llamador que no pasa nada — ej. el refill del Musicalizador)
-        conserva el comportamiento de siempre: al final."""
+        conserva el comportamiento de siempre: al final.
+
+        `cortina_off` (Programas OFF, ver core/musicalizador.py tipo
+        "off"): si se pasa, `{"categoria_cortina_ruta": [...]|None,
+        "volumen_cortina_pct": int}` -- GestorPlaylist lo lee al
+        arrancar este ítem para disparar la cortina musical de fondo.
+        `None` para cualquier ítem normal (el caso de siempre)."""
         item = QTreeWidgetItem([titulo, duracion, codigo])
         item.setData(0, ROL_ESTADO_ITEM, ESTADO_NORMAL)
         item.setData(0, Qt.ItemDataRole.UserRole, ruta)
         item.setData(0, ROL_ANALISIS_AUDIO, {
             "punto_inicio_ms": punto_inicio_ms, "punto_fin_ms": punto_fin_ms, "ganancia_db": ganancia_db,
         })
+        if cortina_off is not None:
+            item.setData(0, ROL_CORTINA_OFF, cortina_off)
         indice = -1
         if item_destino is not None:
             if item_destino.parent() is not None:
@@ -565,6 +573,13 @@ class PanelReproductor(QWidget):
         if item is None:
             return {"punto_inicio_ms": 0, "punto_fin_ms": None, "ganancia_db": 0.0}
         return item.data(0, ROL_ANALISIS_AUDIO) or {"punto_inicio_ms": 0, "punto_fin_ms": None, "ganancia_db": 0.0}
+
+    def cortina_en_fila(self, fila: int) -> dict | None:
+        """Config de cortina musical de un ítem "off" del
+        Musicalizador Avanzado (Programas OFF) -- `None` para
+        cualquier ítem normal."""
+        item = self.tree.topLevelItem(fila)
+        return item.data(0, ROL_CORTINA_OFF) if item else None
 
     # ------------------------------------------------------------------
     # Motor "Agregar Pisador" (lado UI): como mucho un Pisador anidado

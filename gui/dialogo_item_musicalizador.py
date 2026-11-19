@@ -3,9 +3,14 @@ gui/dialogo_item_musicalizador.py
 --------------------------------------------------------
 Alta/edición de UN ítem de un formato del Musicalizador Avanzado
 (pedido explícito, punto 1): "Específico", "Aleatorio" (siempre elige
-UN tema al azar de una categoría) o "Subformato" (otro formato ya
+UN tema al azar de una categoría), "Subformato" (otro formato ya
 creado, por X cantidad de tiempo) — mismos 3 tipos que describe el
-manual de Dinesat.
+manual de Dinesat — y "OFF" (Programas OFF, pedido explícito: "primero
+el bloque 1, luego cargar música aleatoria por la cantidad de tiempo
+que yo quiera... y luego el 2"), un bloque de voz pregrabado de un
+programa configurado en Configuración → Programas OFF, reproducido
+sobre una cortina musical de fondo — ver core/off_programa.py y
+core/gestor_emision.py (motor de la cortina, exclusivo de Ventana 2).
 
 El ítem "Aleatorio" (y también "Específico", pedido explícito punto
 4) puede llevar un Pisador. Pedido explícito de una ronda posterior:
@@ -14,7 +19,10 @@ PISADORES, o bien elegir un archivo específico de pisador" — el
 Pisador tiene su PROPIO selector de tipo (Categoría/Específico), igual
 concepto que el ítem principal pero acotado a esas dos variantes (no
 hace falta un "Pisador aleatorio de todo tipo" ni un "Subformato de
-Pisador").
+Pisador"). Un ítem "OFF" tampoco admite Pisador (su propia cortina de
+fondo ya cubre ese rol, con un mecanismo distinto — nunca duckea el
+tema principal, ver core/gestor_emision.py) — mismo criterio que
+Subformato.
 --------------------------------------------------------
 """
 
@@ -27,8 +35,9 @@ from PySide6.QtWidgets import (
 from gui.dialogo_seleccionar_biblioteca import DialogoSeleccionarBiblioteca
 from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
 from gui.dialogo_elegir_pisador import DialogoElegirPisador
+from config.settings import cargar_configuracion, listar_programas_off
 
-TIPO_ESPECIFICO, TIPO_ALEATORIO, TIPO_SUBFORMATO = "especifico", "aleatorio", "subformato"
+TIPO_ESPECIFICO, TIPO_ALEATORIO, TIPO_SUBFORMATO, TIPO_OFF = "especifico", "aleatorio", "subformato", "off"
 PISADOR_TIPO_CATEGORIA, PISADOR_TIPO_ESPECIFICO = "categoria", "especifico"
 
 
@@ -48,6 +57,7 @@ class DialogoItemMusicalizador(QDialog):
         self._registro_pisador_especifico = None
         self._resultado = None
         self._es_edicion = item_config is not None
+        self._programas_off = listar_programas_off(cargar_configuracion())
 
         self._construir_ui()
         if item_config:
@@ -63,6 +73,7 @@ class DialogoItemMusicalizador(QDialog):
         self.combo_tipo.addItem("🎯 Específico (un archivo fijo)", TIPO_ESPECIFICO)
         self.combo_tipo.addItem("🎲 Aleatorio (1 tema al azar de una categoría)", TIPO_ALEATORIO)
         self.combo_tipo.addItem("🔁 Subformato (otro formato, por tiempo)", TIPO_SUBFORMATO)
+        self.combo_tipo.addItem("📻 Programa OFF (bloque de voz pregrabado)", TIPO_OFF)
         self.combo_tipo.currentIndexChanged.connect(self._actualizar_pila)
         fila_tipo.addWidget(self.combo_tipo)
         layout.addLayout(fila_tipo)
@@ -121,6 +132,24 @@ class DialogoItemMusicalizador(QDialog):
         if not self._formatos_disponibles:
             form_subformato.addRow(QLabel("No hay otros formatos creados todavía."))
         self.pila.addWidget(pagina_subformato)
+
+        # --- OFF (Programas OFF, pedido explícito) ---
+        pagina_off = QWidget()
+        form_off = QFormLayout(pagina_off)
+        self.combo_programa_off = QComboBox()
+        for programa in self._programas_off:
+            self.combo_programa_off.addItem(programa.get("nombre") or programa.get("id", ""), programa.get("id"))
+        self.spin_numero_bloque = QSpinBox()
+        self.spin_numero_bloque.setRange(1, 10)
+        self.spin_numero_bloque.setValue(1)
+        form_off.addRow("Programa:", self.combo_programa_off)
+        form_off.addRow("Bloque N°:", self.spin_numero_bloque)
+        if not self._programas_off:
+            form_off.addRow(QLabel(
+                "No hay ningún Programa OFF configurado todavía\n"
+                "(Configuración → Programas OFF)."
+            ))
+        self.pila.addWidget(pagina_off)
 
         # --- Pisador (Específico y Aleatorio, pedido explícito punto 4) ---
         self.grupo_pisador = QWidget()
@@ -196,10 +225,12 @@ class DialogoItemMusicalizador(QDialog):
     # ------------------------------------------------------------------
     def _actualizar_pila(self):
         tipo = self.combo_tipo.currentData()
-        indice = {TIPO_ESPECIFICO: 0, TIPO_ALEATORIO: 1, TIPO_SUBFORMATO: 2}[tipo]
+        indice = {TIPO_ESPECIFICO: 0, TIPO_ALEATORIO: 1, TIPO_SUBFORMATO: 2, TIPO_OFF: 3}[tipo]
         self.pila.setCurrentIndex(indice)
-        # El Pisador no aplica a un subformato (es un contenedor, no un tema puntual)
-        self.grupo_pisador.setVisible(tipo != TIPO_SUBFORMATO)
+        # El Pisador no aplica a un subformato (es un contenedor, no un
+        # tema puntual) ni a un ítem OFF (su propia cortina de fondo
+        # ya cubre ese rol, con un mecanismo distinto).
+        self.grupo_pisador.setVisible(tipo not in (TIPO_SUBFORMATO, TIPO_OFF))
 
     def _on_toggle_pisador(self, activo: bool):
         self.radio_pisador_tipo_categoria.setEnabled(activo)
@@ -269,7 +300,7 @@ class DialogoItemMusicalizador(QDialog):
     # ------------------------------------------------------------------
     def _cargar(self, item_config: dict):
         tipo = item_config.get("tipo", TIPO_ESPECIFICO)
-        indice_combo = {TIPO_ESPECIFICO: 0, TIPO_ALEATORIO: 1, TIPO_SUBFORMATO: 2}.get(tipo, 0)
+        indice_combo = {TIPO_ESPECIFICO: 0, TIPO_ALEATORIO: 1, TIPO_SUBFORMATO: 2, TIPO_OFF: 3}.get(tipo, 0)
         self.combo_tipo.setCurrentIndex(indice_combo)
 
         if tipo == TIPO_ESPECIFICO:
@@ -291,6 +322,12 @@ class DialogoItemMusicalizador(QDialog):
             if indice_sub >= 0:
                 self.combo_subformato.setCurrentIndex(indice_sub)
             self.spin_duracion_minutos.setValue(max(1, int((item_config.get("duracion_segundos") or 600) / 60)))
+        elif tipo == TIPO_OFF:
+            id_programa = item_config.get("programa_off_id")
+            indice_programa = self.combo_programa_off.findData(id_programa)
+            if indice_programa >= 0:
+                self.combo_programa_off.setCurrentIndex(indice_programa)
+            self.spin_numero_bloque.setValue(max(1, int(item_config.get("numero_bloque") or 1)))
 
         tipo_pisador = item_config.get("pisador_tipo", PISADOR_TIPO_CATEGORIA)
         ruta_pisador = item_config.get("pisador_categoria")
@@ -333,7 +370,7 @@ class DialogoItemMusicalizador(QDialog):
                 "tipo": TIPO_ALEATORIO, "categoria": self._ruta_categoria_aleatorio,
                 "recursivo": self.chk_recursivo.isChecked(),
             }
-        else:  # TIPO_SUBFORMATO
+        elif tipo == TIPO_SUBFORMATO:
             if not self._formatos_disponibles:
                 QMessageBox.information(self, "Ítem", "Todavía no hay otro formato creado para usar como subformato.")
                 return
@@ -341,8 +378,20 @@ class DialogoItemMusicalizador(QDialog):
                 "tipo": TIPO_SUBFORMATO, "nombre": self.combo_subformato.currentText(),
                 "duracion_segundos": self.spin_duracion_minutos.value() * 60,
             }
+        else:  # TIPO_OFF
+            if not self._programas_off:
+                QMessageBox.information(
+                    self, "Ítem",
+                    "No hay ningún Programa OFF configurado todavía (Configuración → Programas OFF).",
+                )
+                return
+            item = {
+                "tipo": TIPO_OFF,
+                "programa_off_id": self.combo_programa_off.currentData(),
+                "numero_bloque": self.spin_numero_bloque.value(),
+            }
 
-        if tipo != TIPO_SUBFORMATO and self.chk_pisador.isChecked():
+        if tipo not in (TIPO_SUBFORMATO, TIPO_OFF) and self.chk_pisador.isChecked():
             if self.radio_pisador_tipo_especifico.isChecked():
                 if not self._registro_pisador_especifico:
                     QMessageBox.information(

@@ -750,6 +750,16 @@ COLOR_ALEATORIO = "#16a085"       # verde azulado, distinto de COLOR_COMANDO y d
 # reaparece (ej. el operador reconecta la unidad/corrige la ruta).
 ROL_ITEM_CON_ERROR = 1012
 
+# Ítem "off" resuelto por el Musicalizador Avanzado (Programas OFF,
+# ver core/off_programa.py/core/musicalizador.py): guarda
+# {"categoria_cortina_ruta": [...]|None, "volumen_cortina_pct": int}
+# -- GestorPlaylist (core/gestor_emision.py) lo lee al arrancar la
+# fila para disparar una cortina musical de fondo en loop mientras
+# dura el bloque de voz, a volumen bajo (pedido explícito: "los
+# bloques deben ser reproducidos sobre una cortina... con el lógico
+# volumen mucho más bajo"). `None` = ítem normal, sin cortina.
+ROL_CORTINA_OFF = 1013
+
 # Colores por género, usados en la Ventana 3 (Explorador) para pintar
 # el fondo de cada fila según el tipo de material (pedido explícito).
 GENERO_COLORES = {

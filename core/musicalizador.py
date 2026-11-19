@@ -130,11 +130,41 @@ def _resolver_aleatorio(explorador, item_config: dict, rutas_a_evitar: frozenset
     return registro
 
 
+def _resolver_off(item_config: dict):
+    """Resuelve un ítem tipo "off" (Programas OFF, ver
+    core/off_programa.py) -- "bloque N" del programa configurado.
+    Devuelve (registro, cortina) o (None, None) si el programa ya no
+    existe, no tiene carpeta configurada, o no hay nada sincronizado
+    para HOY -- mismo criterio "todo o nada" de siempre en este
+    módulo, se saltea sin sonar nada (confirmado explícitamente con
+    Santiago: nunca repetir contenido de un día anterior, a diferencia
+    de Enlatado)."""
+    from config.settings import cargar_configuracion, obtener_programa_off
+    from core.off_programa import resolver_bloque
+
+    id_programa = item_config.get("programa_off_id")
+    numero_bloque = item_config.get("numero_bloque")
+    if not id_programa or not numero_bloque:
+        return None, None
+    programa = obtener_programa_off(cargar_configuracion(), id_programa)
+    if programa is None:
+        return None, None
+    registro = resolver_bloque(programa, int(numero_bloque))
+    if registro is None:
+        return None, None
+    cortina = {
+        "categoria_cortina_ruta": programa.get("categoria_cortina_ruta"),
+        "volumen_cortina_pct": programa.get("volumen_cortina_pct", 25),
+    }
+    return registro, cortina
+
+
 def _resolver_item(explorador, item_config: dict, visitados: frozenset,
                     rutas_a_evitar: frozenset = frozenset()) -> list:
     """Devuelve una lista de "items concretos" — normalmente 0 o 1
-    ({"registro", "pisador", "pisador_posicion"}), salvo un
-    subformato, que puede devolver varios de una vez."""
+    ({"registro", "pisador", "pisador_posicion"}, más "cortina_off"
+    para un ítem tipo "off"), salvo un subformato, que puede devolver
+    varios de una vez."""
     tipo = item_config.get("tipo")
     if tipo == "especifico":
         registro = explorador.buscar_registro_por_ruta(item_config.get("ruta", ""))
@@ -154,6 +184,12 @@ def _resolver_item(explorador, item_config: dict, visitados: frozenset,
         nombre_sub = item_config.get("nombre")
         duracion_objetivo = item_config.get("duracion_segundos") or 0
         return _generar_por_duracion(explorador, nombre_sub, duracion_objetivo, visitados, rutas_a_evitar)
+
+    if tipo == "off":
+        registro, cortina = _resolver_off(item_config)
+        if not registro:
+            return []
+        return [{"registro": registro, "pisador": None, "pisador_posicion": None, "cortina_off": cortina}]
 
     return []  # tipo desconocido / ítem corrupto: se saltea solo
 
@@ -292,6 +328,24 @@ def validar_formato(explorador, nombre_formato_actual: str, items: list, todos_l
                 problemas.append({"item": i, "bloquea": True,
                                    "mensaje": f"Ítem {i}: el subformato '{nombre_sub}' genera un bucle "
                                               f"infinito con este formato — no se puede guardar así."})
+        elif tipo == "off":
+            # Pedido explícito ("que luego se borre un item [de la
+            # biblioteca]. No debe impedir que cargue los demás ítem
+            # del musicalizador") — mismo criterio de siempre: un
+            # programa OFF borrado/renombrado por `id` es solo un
+            # aviso, nunca bloquea guardar el resto del formato.
+            from config.settings import cargar_configuracion, obtener_programa_off
+            id_programa = item_config.get("programa_off_id")
+            programa = obtener_programa_off(cargar_configuracion(), id_programa) if id_programa else None
+            if programa is None:
+                problemas.append({"item": i, "bloquea": False,
+                                   "mensaje": f"Ítem {i}: el programa OFF configurado ya no existe."})
+            else:
+                ruta_cortina = programa.get("categoria_cortina_ruta")
+                if ruta_cortina and explorador.buscar_categoria_por_ruta(ruta_cortina) is None:
+                    problemas.append({"item": i, "bloquea": False,
+                                       "mensaje": f"Ítem {i}: la categoría de la cortina musical "
+                                                  f"de '{programa.get('nombre', id_programa)}' ya no existe."})
         if item_config.get("pisador_tipo") == "especifico":
             ruta_pisador_especifico = item_config.get("pisador_ruta")
             if ruta_pisador_especifico and not explorador.buscar_registro_por_ruta(ruta_pisador_especifico):
