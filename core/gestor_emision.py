@@ -744,11 +744,32 @@ class GestorPlaylist:
         disco aunque el operador haya sacado su REGISTRO del
         Explorador — `os.path.exists()` solo no alcanza, también hace
         falta que la ruta siga en la biblioteca en vivo (cacheado, ver
-        VentanaExplorador.ruta_existe_en_biblioteca())."""
+        VentanaExplorador.ruta_existe_en_biblioteca()).
+
+        Bug real corregido (primera prueba real de Programas OFF: "el
+        error es en la ventana 2, con la cruz roja como si el archivo
+        no existiera"): un ítem "off" (ver core/musicalizador.py tipo
+        "off") es un bloque de voz descargado DIRECTO a una carpeta
+        propia por core/off_programa.py/core/sincronizador_drive.py —
+        NUNCA pasa por el alta normal del Explorador, así que jamás
+        queda registrado en la biblioteca. Exigirle `ruta_existe_en_
+        biblioteca()` lo marcaba roto SIEMPRE (aunque el archivo
+        existiera perfecto en disco) y lo salteaba en cada avance —
+        por eso el bloque de voz nunca llegaba a sonar. `cortina_en_
+        fila()` (ROL_CORTINA_OFF) es el marcador ya existente de "este
+        ítem es un bloque off" — siempre presente en un ítem "off"
+        resuelto, con o sin categoría de cortina configurada — así que
+        alcanza para identificarlo sin agregar un rol nuevo. Para este
+        tipo de ítem, que el archivo EXISTA EN DISCO ya es suficiente
+        (nunca puede estar "registrado" en una biblioteca de la que no
+        forma parte por diseño)."""
         ruta = self.panel.ruta_en_fila(fila)
         if not ruta or not os.path.exists(ruta):
             self.panel.marcar_item_con_error_en_fila(fila, True)
             return False
+        if self.panel.cortina_en_fila(fila) is not None:
+            self.panel.marcar_item_con_error_en_fila(fila, False)
+            return True
         if self._ventana_explorador is not None and not self._ventana_explorador.ruta_existe_en_biblioteca(ruta):
             self.panel.marcar_item_con_error_en_fila(fila, True)
             return False
