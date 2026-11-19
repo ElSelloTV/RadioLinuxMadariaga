@@ -37,15 +37,15 @@ from PySide6.QtWidgets import (
     QComboBox, QSlider, QCheckBox, QDoubleSpinBox, QSpinBox, QLineEdit,
     QPushButton, QLabel, QDialogButtonBox, QFileDialog, QApplication,
     QMessageBox, QColorDialog, QGroupBox, QScrollArea,
-    QListWidget, QStackedWidget, QSplitter
+    QListWidget, QStackedWidget, QSplitter, QTimeEdit,
 )
-from PySide6.QtCore import Qt, QUrl, QProcess, Signal
+from PySide6.QtCore import Qt, QUrl, QProcess, QTime, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 
 from config.settings import (
     cargar_configuracion, guardar_configuracion, registrar_error,
     ARCHIVO_LOG, ARCHIVO_HISTORIAL_REPRODUCCION,
-    listar_enlatados,
+    listar_enlatados, listar_programas_off, DIAS_SEMANA_ETIQUETAS,
 )
 from gui.dialogo_seleccionar_categoria import DialogoSeleccionarCategoria
 
@@ -53,6 +53,7 @@ from core.audio_engine import MotorAudio
 from core import actualizador
 from core import reinicio_sistema
 from core.sincronizador_drive import listar_archivos_sincronizados
+from core.off_programa import cantidad_bloques_disponibles_hoy
 from gui.styles import LISTA_GENEROS
 from gui.dialogo_preload_biblioteca import DialogoPreloadBiblioteca
 from gui.panel_procesador_audio import PanelProcesadorAudio
@@ -111,6 +112,7 @@ class VentanaConfiguracion(QDialog):
             ("🎚", "Procesador FM", self._crear_tab_procesador_fm),
             ("▶", "Reproducción y Automatización", self._crear_tab_reproduccion),
             ("📦", "Enlatados", self._crear_tab_enlatados),
+            ("📻", "Programas OFF", self._crear_tab_programas_off),
             ("🎬", "Importador YouTube", self._crear_tab_importador_youtube),
             ("📁", "Rutas", self._crear_tab_rutas),
             ("⚙", "General", self._crear_tab_general),
@@ -1426,6 +1428,433 @@ class VentanaConfiguracion(QDialog):
             layout.addWidget(nota)
         return widget
 
+    # ------------------------------------------------------------------
+    # Tab: Programas OFF — lista crecedora de programas "grabados
+    # offline" (pedido explícito: "simular un programa en vivo...
+    # grabo con mi celular 3 o 4 bloques solo de voz, los subo a una
+    # carpeta de Drive... armo un FMT que ordene: primero el bloque 1,
+    # música aleatoria por un tiempo, el bloque 2, más música, etc." —
+    # sigla "OFF" elegida por Santiago, "este motor puede servir no
+    # solo para este programa, sino para otros más"). Mismo motor de
+    # descarga que Enlatado tipo Drive (gdown, staging + swap atómico,
+    # ver core/sincronizador_drive.py / core/off_programa.py), pero
+    # consumido de a UN bloque por vez desde el tipo de ítem "off" del
+    # Musicalizador — nunca como Comando de Ventana 1 (ver
+    # core/musicalizador.py). Cada programa guarda SU PROPIA carpeta
+    # local (pedido explícito: "la carpeta también configurable desde
+    # Configuraciones, así tampoco queda en el código la ruta de
+    # enlace y puedo organizar mejor el Drive"), categoría de cortina
+    # + volumen, y horario propio de descarga y de limpieza semanal
+    # (días + hora, cada programa puede necesitar algo distinto) —
+    # ver core/actualizador.py:asegurar_tareas_cron_programas_off().
+    # ------------------------------------------------------------------
+    def _crear_tab_programas_off(self) -> QWidget:
+        widget = QWidget()
+        layout_externo = QVBoxLayout(widget)
+
+        lbl_intro = QLabel(
+            "Programa OFF: bloques de voz grabados offline (ej. con el celular, "
+            "nombrados 1, 2, 3...) que se descargan solos de una carpeta de Drive "
+            "y se intercalan con música desde el Musicalizador Avanzado (tipo de "
+            "ítem \"OFF\") -- cada bloque suena sobre una cortina musical al azar, "
+            "a volumen bajo, mientras dura. Si un día no se llegó a descargar nada "
+            "nuevo, el bloque correspondiente se saltea en silencio -- nunca repite "
+            "contenido de un día anterior."
+        )
+        lbl_intro.setWordWrap(True)
+        layout_externo.addWidget(lbl_intro)
+
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        contenido_scroll = QWidget()
+        layout = QVBoxLayout(contenido_scroll)
+
+        self._entradas_programas_off = []  # copia de trabajo, poblada en _cargar_valores_en_ui()
+
+        grupo = QGroupBox("📻 Programas OFF")
+        contenido = QHBoxLayout(grupo)
+
+        columna_lista = QVBoxLayout()
+        self.lista_programas_off = QListWidget()
+        self.lista_programas_off.currentRowChanged.connect(self._on_fila_programa_off_seleccionada)
+        columna_lista.addWidget(self.lista_programas_off, 1)
+        fila_botones_lista = QHBoxLayout()
+        btn_nuevo_off = QPushButton("➕ Nuevo")
+        btn_nuevo_off.clicked.connect(self._nuevo_programa_off)
+        btn_eliminar_off = QPushButton("✕ Eliminar")
+        btn_eliminar_off.clicked.connect(self._eliminar_programa_off_seleccionado)
+        fila_botones_lista.addWidget(btn_nuevo_off)
+        fila_botones_lista.addWidget(btn_eliminar_off)
+        columna_lista.addLayout(fila_botones_lista)
+        contenido.addLayout(columna_lista, 1)
+
+        self._panel_detalle_off = QWidget()
+        self._panel_detalle_off.setEnabled(False)
+        form_detalle = QFormLayout(self._panel_detalle_off)
+
+        self.txt_nombre_off = QLineEdit()
+        self.txt_nombre_off.textEdited.connect(self._on_nombre_programa_off_editado)
+        form_detalle.addRow("Nombre:", self.txt_nombre_off)
+
+        self.txt_url_drive_off = QLineEdit()
+        self.txt_url_drive_off.setPlaceholderText("https://drive.google.com/drive/folders/...")
+        self.txt_url_drive_off.textEdited.connect(self._on_url_drive_off_editada)
+        form_detalle.addRow("Carpeta de Drive:", self.txt_url_drive_off)
+
+        fila_carpeta_local = QWidget()
+        layout_carpeta_local = QHBoxLayout(fila_carpeta_local)
+        layout_carpeta_local.setContentsMargins(0, 0, 0, 0)
+        self.txt_carpeta_local_off = QLineEdit()
+        self.txt_carpeta_local_off.textEdited.connect(self._on_carpeta_local_off_editada)
+        btn_examinar_carpeta_off = QPushButton("Examinar...")
+        btn_examinar_carpeta_off.clicked.connect(self._elegir_carpeta_local_off)
+        layout_carpeta_local.addWidget(self.txt_carpeta_local_off, 1)
+        layout_carpeta_local.addWidget(btn_examinar_carpeta_off)
+        form_detalle.addRow("Carpeta local:", fila_carpeta_local)
+
+        fila_categoria_cortina = QWidget()
+        layout_categoria_cortina = QHBoxLayout(fila_categoria_cortina)
+        layout_categoria_cortina.setContentsMargins(0, 0, 0, 0)
+        btn_elegir_cortina = QPushButton("Elegir categoría...")
+        btn_elegir_cortina.clicked.connect(self._elegir_categoria_cortina_off)
+        if self._ventana_explorador is None:
+            btn_elegir_cortina.setEnabled(False)
+        self.lbl_categoria_cortina_off = QLabel("(sin configurar)")
+        layout_categoria_cortina.addWidget(btn_elegir_cortina)
+        layout_categoria_cortina.addWidget(self.lbl_categoria_cortina_off, 1)
+        form_detalle.addRow("Categoría de cortina:", fila_categoria_cortina)
+
+        self.spin_volumen_cortina_off = QSpinBox()
+        self.spin_volumen_cortina_off.setRange(0, 100)
+        self.spin_volumen_cortina_off.setSuffix(" %")
+        self.spin_volumen_cortina_off.valueChanged.connect(self._on_volumen_cortina_off_cambiado)
+        form_detalle.addRow("Volumen de cortina:", self.spin_volumen_cortina_off)
+
+        form_detalle.addRow(self._crear_subtitulo_off("Descarga automática -- días:"))
+        grilla_descarga, self.checks_dias_descarga_off = self._crear_grilla_dias_off(self._on_dias_descarga_off_cambiados)
+        form_detalle.addRow(grilla_descarga)
+        self.time_hora_descarga_off = QTimeEdit(QTime(5, 0))
+        self.time_hora_descarga_off.timeChanged.connect(self._on_hora_descarga_off_cambiada)
+        form_detalle.addRow("Hora de descarga:", self.time_hora_descarga_off)
+
+        form_detalle.addRow(self._crear_subtitulo_off("Limpieza semanal -- días:"))
+        grilla_limpieza, self.checks_dias_limpieza_off = self._crear_grilla_dias_off(self._on_dias_limpieza_off_cambiados)
+        form_detalle.addRow(grilla_limpieza)
+        self.time_hora_limpieza_off = QTimeEdit(QTime(23, 30))
+        self.time_hora_limpieza_off.timeChanged.connect(self._on_hora_limpieza_off_cambiada)
+        form_detalle.addRow("Hora de limpieza:", self.time_hora_limpieza_off)
+
+        fila_sincronizar_off = QHBoxLayout()
+        self.btn_sincronizar_off = QPushButton("🔄 Sincronizar ahora")
+        self.btn_sincronizar_off.clicked.connect(self._sincronizar_programa_off_ahora)
+        self.btn_limpiar_off = QPushButton("🗑 Limpiar ahora")
+        self.btn_limpiar_off.clicked.connect(self._limpiar_programa_off_ahora)
+        fila_sincronizar_off.addWidget(self.btn_sincronizar_off)
+        fila_sincronizar_off.addWidget(self.btn_limpiar_off)
+        form_detalle.addRow(fila_sincronizar_off)
+        self.lbl_estado_off = QLabel("")
+        self.lbl_estado_off.setWordWrap(True)
+        form_detalle.addRow(self.lbl_estado_off)
+
+        contenido.addWidget(self._panel_detalle_off, 2)
+        layout.addWidget(grupo, 1)
+        layout.addStretch(0)
+        area.setWidget(contenido_scroll)
+        layout_externo.addWidget(area, 1)
+        return widget
+
+    def _crear_subtitulo_off(self, texto: str) -> QLabel:
+        etiqueta = QLabel(texto)
+        etiqueta.setObjectName("lblTituloBloqueActivo")
+        return etiqueta
+
+    def _crear_grilla_dias_off(self, al_cambiar) -> tuple:
+        contenedor = QWidget()
+        grilla = QGridLayout(contenedor)
+        grilla.setContentsMargins(0, 0, 0, 0)
+        checks = {}
+        for indice, (clave, etiqueta) in enumerate(DIAS_SEMANA_ETIQUETAS):
+            chk = QCheckBox(etiqueta)
+            chk.toggled.connect(al_cambiar)
+            checks[clave] = chk
+            grilla.addWidget(chk, indice // 4, indice % 4)
+        return contenedor, checks
+
+    def _texto_lista_programa_off(self, entrada: dict) -> str:
+        return f"📻 {entrada.get('nombre') or '(sin nombre)'}"
+
+    def _entrada_programa_off_actual(self) -> dict | None:
+        fila = self.lista_programas_off.currentRow()
+        if fila < 0 or fila >= len(self._entradas_programas_off):
+            return None
+        return self._entradas_programas_off[fila]
+
+    def _nuevo_programa_off(self):
+        import secrets
+        entrada = {
+            "id": secrets.token_hex(8), "nombre": "Nuevo programa OFF",
+            "url_carpeta": "", "carpeta_local": "",
+            "categoria_cortina_ruta": None, "volumen_cortina_pct": 25,
+            "dias_descarga": ["lunes", "martes", "miercoles", "jueves", "viernes"],
+            "hora_descarga": "05:00",
+            "dias_limpieza": ["domingo"], "hora_limpieza": "23:30",
+        }
+        self._entradas_programas_off.append(entrada)
+        self.lista_programas_off.addItem(self._texto_lista_programa_off(entrada))
+        self.lista_programas_off.setCurrentRow(self.lista_programas_off.count() - 1)
+        self.txt_nombre_off.setFocus()
+        self.txt_nombre_off.selectAll()
+
+    def _eliminar_programa_off_seleccionado(self):
+        fila = self.lista_programas_off.currentRow()
+        if fila < 0:
+            return
+        entrada = self._entradas_programas_off[fila]
+        respuesta = QMessageBox.question(
+            self, "Eliminar programa OFF",
+            f"¿Eliminar el programa \"{entrada.get('nombre')}\"? Si hay un ítem \"OFF\" "
+            "ya insertado en algún formato del Musicalizador que lo use, va a quedar "
+            "apuntando a un programa inexistente y se saltea sin sonar nada. Las "
+            "entradas de cron de descarga/limpieza de este programa se quitan al guardar.",
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+        del self._entradas_programas_off[fila]
+        self.lista_programas_off.takeItem(fila)
+
+    def _on_fila_programa_off_seleccionada(self, _fila: int):
+        entrada = self._entrada_programa_off_actual()
+        self._panel_detalle_off.setEnabled(entrada is not None)
+        if entrada is None:
+            return
+
+        self.txt_nombre_off.blockSignals(True)
+        self.txt_nombre_off.setText(entrada.get("nombre") or "")
+        self.txt_nombre_off.blockSignals(False)
+
+        self.txt_url_drive_off.blockSignals(True)
+        self.txt_url_drive_off.setText(entrada.get("url_carpeta") or "")
+        self.txt_url_drive_off.blockSignals(False)
+
+        self.txt_carpeta_local_off.blockSignals(True)
+        self.txt_carpeta_local_off.setText(entrada.get("carpeta_local") or "")
+        self.txt_carpeta_local_off.blockSignals(False)
+
+        self._actualizar_etiqueta_categoria_cortina_off(entrada)
+
+        self.spin_volumen_cortina_off.blockSignals(True)
+        self.spin_volumen_cortina_off.setValue(int(entrada.get("volumen_cortina_pct") or 25))
+        self.spin_volumen_cortina_off.blockSignals(False)
+
+        dias_descarga = set(entrada.get("dias_descarga") or [])
+        for clave, chk in self.checks_dias_descarga_off.items():
+            chk.blockSignals(True)
+            chk.setChecked(clave in dias_descarga)
+            chk.blockSignals(False)
+        self.time_hora_descarga_off.blockSignals(True)
+        self._set_qtimeedit_desde_texto(self.time_hora_descarga_off, entrada.get("hora_descarga") or "05:00")
+        self.time_hora_descarga_off.blockSignals(False)
+
+        dias_limpieza = set(entrada.get("dias_limpieza") or [])
+        for clave, chk in self.checks_dias_limpieza_off.items():
+            chk.blockSignals(True)
+            chk.setChecked(clave in dias_limpieza)
+            chk.blockSignals(False)
+        self.time_hora_limpieza_off.blockSignals(True)
+        self._set_qtimeedit_desde_texto(self.time_hora_limpieza_off, entrada.get("hora_limpieza") or "23:30")
+        self.time_hora_limpieza_off.blockSignals(False)
+
+        self._actualizar_estado_off(entrada)
+
+    def _set_qtimeedit_desde_texto(self, campo: QTimeEdit, texto: str):
+        try:
+            hh, mm = texto.split(":")
+            campo.setTime(QTime(int(hh), int(mm)))
+        except (ValueError, AttributeError):
+            pass
+
+    def _on_nombre_programa_off_editado(self, texto: str):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is None:
+            return
+        entrada["nombre"] = texto
+        self.lista_programas_off.item(self.lista_programas_off.currentRow()).setText(
+            self._texto_lista_programa_off(entrada)
+        )
+
+    def _on_url_drive_off_editada(self, texto: str):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is not None:
+            entrada["url_carpeta"] = texto
+
+    def _on_carpeta_local_off_editada(self, texto: str):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is not None:
+            entrada["carpeta_local"] = texto
+
+    def _elegir_carpeta_local_off(self):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is None:
+            return
+        self._elegir_carpeta(self.txt_carpeta_local_off)
+        entrada["carpeta_local"] = self.txt_carpeta_local_off.text()
+
+    def _elegir_categoria_cortina_off(self):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is None or self._ventana_explorador is None:
+            return
+        dialogo = DialogoSeleccionarCategoria(
+            self._ventana_explorador.tree_categorias,
+            categoria_inicial=entrada.get("categoria_cortina_ruta"),
+            titulo=f"Categoría de cortina para \"{entrada.get('nombre')}\"", parent=self,
+        )
+        if dialogo.exec() != DialogoSeleccionarCategoria.DialogCode.Accepted:
+            return
+        entrada["categoria_cortina_ruta"] = dialogo.ruta_elegida()
+        self._actualizar_etiqueta_categoria_cortina_off(entrada)
+
+    def _actualizar_etiqueta_categoria_cortina_off(self, entrada: dict):
+        ruta = entrada.get("categoria_cortina_ruta")
+        self.lbl_categoria_cortina_off.setText(" / ".join(ruta) if ruta else "(sin configurar)")
+
+    def _on_volumen_cortina_off_cambiado(self, valor: int):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is not None:
+            entrada["volumen_cortina_pct"] = valor
+
+    def _on_dias_descarga_off_cambiados(self, _marcado: bool = False):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is None:
+            return
+        entrada["dias_descarga"] = [c for c, chk in self.checks_dias_descarga_off.items() if chk.isChecked()]
+
+    def _on_hora_descarga_off_cambiada(self, hora: QTime):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is not None:
+            entrada["hora_descarga"] = hora.toString("HH:mm")
+
+    def _on_dias_limpieza_off_cambiados(self, _marcado: bool = False):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is None:
+            return
+        entrada["dias_limpieza"] = [c for c, chk in self.checks_dias_limpieza_off.items() if chk.isChecked()]
+
+    def _on_hora_limpieza_off_cambiada(self, hora: QTime):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is not None:
+            entrada["hora_limpieza"] = hora.toString("HH:mm")
+
+    def _actualizar_estado_off(self, entrada: dict):
+        cantidad_hoy = cantidad_bloques_disponibles_hoy(entrada)
+        if cantidad_hoy > 0:
+            self.lbl_estado_off.setText(f"{cantidad_hoy} bloque(s) disponible(s) HOY.")
+        else:
+            self.lbl_estado_off.setText(
+                "Sin bloques sincronizados hoy todavía (se descarga solo a la hora "
+                "configurada, o con \"Sincronizar ahora\")."
+            )
+
+    def _sincronizar_programa_off_ahora(self):
+        """Mismo mecanismo YA probado para Enlatado tipo Drive --
+        proceso APARTE vía QProcess, nunca bloquea la GUI."""
+        entrada = self._entrada_programa_off_actual()
+        if entrada is None:
+            return
+        url = (entrada.get("url_carpeta") or "").strip()
+        carpeta_local = (entrada.get("carpeta_local") or "").strip()
+        if not url:
+            QMessageBox.warning(self, "Sincronizar", "Pegá primero el enlace de la carpeta de Drive.")
+            return
+        if not carpeta_local:
+            QMessageBox.warning(self, "Sincronizar", "Elegí primero una carpeta local de destino.")
+            return
+
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core", "off_programa.py")
+        # --url/--carpeta-local se pasan EXPLÍCITO (nunca releídos de
+        # disco) -- así usa lo recién tipeado en la UI, incluso antes
+        # de apretar "Guardar".
+        argumentos = [script, "--sincronizar", "--id", str(entrada.get("id")), "--url", url, "--carpeta-local", carpeta_local]
+
+        self._dialogo_sincronizar_off = DialogoPreloadBiblioteca(
+            1, parent=self, titulo="Sincronizando Programa OFF",
+            texto=f"Sincronizando \"{entrada.get('nombre')}\" desde Google Drive...",
+            nota="Corre en un proceso aparte -- el programa sigue respondiendo mientras tanto.",
+        )
+        self._dialogo_sincronizar_off.show()
+
+        self._buffer_stdout_sincronizar_off = ""
+        self._resultado_sincronizar_off = None
+        self._proceso_sincronizar_off = QProcess(self)
+        self._proceso_sincronizar_off.setProgram(sys.executable)
+        self._proceso_sincronizar_off.setArguments(argumentos)
+        self._proceso_sincronizar_off.readyReadStandardOutput.connect(self._leer_progreso_sincronizar_off)
+        self._proceso_sincronizar_off.finished.connect(self._al_terminar_sincronizar_off)
+        self.btn_sincronizar_off.setEnabled(False)
+        self.btn_limpiar_off.setEnabled(False)
+        self._proceso_sincronizar_off.start()
+
+    def _leer_progreso_sincronizar_off(self):
+        self._buffer_stdout_sincronizar_off += bytes(
+            self._proceso_sincronizar_off.readAllStandardOutput()
+        ).decode("utf-8", errors="replace")
+        while "\n" in self._buffer_stdout_sincronizar_off:
+            linea, self._buffer_stdout_sincronizar_off = self._buffer_stdout_sincronizar_off.split("\n", 1)
+            linea = linea.strip()
+            if linea.startswith("PROGRESO "):
+                partes = linea.split()
+                if len(partes) == 3:
+                    try:
+                        hechos, total = int(partes[1]), int(partes[2])
+                    except ValueError:
+                        continue
+                    if self._dialogo_sincronizar_off is not None:
+                        self._dialogo_sincronizar_off.actualizar(hechos, total)
+            elif linea.startswith("RESULTADO "):
+                try:
+                    self._resultado_sincronizar_off = json.loads(linea[len("RESULTADO "):])
+                except ValueError:
+                    pass
+
+    def _al_terminar_sincronizar_off(self, _codigo_salida, _estado_salida):
+        if self._dialogo_sincronizar_off is not None:
+            self._dialogo_sincronizar_off.close()
+            self._dialogo_sincronizar_off = None
+        self.btn_sincronizar_off.setEnabled(True)
+        self.btn_limpiar_off.setEnabled(True)
+
+        resultado = self._resultado_sincronizar_off
+        if resultado is None:
+            error = bytes(self._proceso_sincronizar_off.readAllStandardError()).decode("utf-8", errors="replace").strip()
+            resultado = {"ok": False, "mensaje": error or "El proceso terminó sin resultado (ver log)."}
+
+        entrada = self._entrada_programa_off_actual()
+        if resultado.get("ok"):
+            QMessageBox.information(self, "Sincronizar", resultado.get("mensaje", "Listo."))
+        else:
+            QMessageBox.warning(self, "Sincronizar", resultado.get("mensaje", "No se pudo sincronizar."))
+        if entrada is not None:
+            self._actualizar_estado_off(entrada)
+
+    def _limpiar_programa_off_ahora(self):
+        entrada = self._entrada_programa_off_actual()
+        if entrada is None:
+            return
+        carpeta_local = (entrada.get("carpeta_local") or "").strip()
+        if not carpeta_local:
+            QMessageBox.warning(self, "Limpiar", "Este programa no tiene una carpeta local configurada.")
+            return
+        respuesta = QMessageBox.question(
+            self, "Limpiar programa OFF",
+            f"¿Borrar todos los bloques de voz ya descargados de \"{entrada.get('nombre')}\"?",
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+
+        from core.off_programa import limpiar_programa_off
+        resultado = limpiar_programa_off(entrada)
+        QMessageBox.information(self, "Limpiar", resultado.get("mensaje", "Listo."))
+        self._actualizar_estado_off(entrada)
+
     def _crear_tab_importador_youtube(self) -> QWidget:
         """Pedido explícito: "cargar un txt con enlaces de youtube...
         el archivo en realidad es un documento de Drive" -- un
@@ -1827,6 +2256,13 @@ class VentanaConfiguracion(QDialog):
         for entrada in self._entradas_enlatados:
             self.lista_enlatados.addItem(self._texto_lista_enlatado(entrada))
 
+        # Copia de trabajo -- el guardado real recién reemplaza
+        # self._config["programas_off"] en _guardar_y_cerrar().
+        self._entradas_programas_off = [dict(e) for e in listar_programas_off(self._config)]
+        self.lista_programas_off.clear()
+        for entrada in self._entradas_programas_off:
+            self.lista_programas_off.addItem(self._texto_lista_programa_off(entrada))
+
     def _seleccionar_en_combo(self, combo: QComboBox, valor: str):
         indice = combo.findData(valor)
         if indice >= 0:
@@ -1917,6 +2353,18 @@ class VentanaConfiguracion(QDialog):
         }
 
         self._config["enlatados"] = [dict(e) for e in self._entradas_enlatados]
+        self._config["programas_off"] = [dict(e) for e in self._entradas_programas_off]
 
         guardar_configuracion(self._config)
+
+        # Las entradas de cron de descarga/limpieza de cada programa
+        # OFF se refrescan YA al guardar -- no hace falta esperar al
+        # próximo reinicio de la app para que un programa nuevo (o una
+        # edición de horario) quede instalado de verdad. Mismo
+        # criterio de siempre: nunca debe poder frenar el guardado.
+        try:
+            actualizador.asegurar_tareas_cron_programas_off()
+        except Exception as error:
+            registrar_error(f"No se pudieron instalar/refrescar las tareas de Programas OFF (cron): {error}")
+
         self.accept()

@@ -277,6 +277,55 @@ CONFIG_POR_DEFECTO = {
     # core/playlist_manager.py. Lista vacía por defecto — una
     # instalación nueva no trae ningún slot de ejemplo.
     "enlatados": [],
+    # Programas OFF (pedido explícito: "simular un programa en vivo...
+    # grabo con mi celular 3 o 4 bloques solo de voz... armo un FMT que
+    # ordene: primero el bloque 1, música aleatoria por un tiempo, el
+    # bloque 2, más música, etc." — sigla elegida por Santiago, "OFF"
+    # por "Offline"). A diferencia de ENLATADO (reproduce TODOS los
+    # archivos sincronizados uno atrás del otro, como Comando directo
+    # en Ventana 1), un programa OFF se consume de a UN bloque por vez,
+    # como un tipo de ítem MÁS del Musicalizador Avanzado (ver
+    # core/musicalizador.py, tipo "off") — así se puede intercalar con
+    # música/publicidad entre cada bloque, "conforme ya lo tenemos"
+    # para el resto del Musicalizador.
+    #
+    # Lista GROWABLE, mismo criterio que "enlatados" (nunca un número
+    # fijo de casilleros — "este motor puede servir para otros más").
+    # Reusa el mismo motor de descarga que Enlatado tipo "drive" (ver
+    # core/sincronizador_drive.py — gdown, staging + swap atómico,
+    # orden natural, análisis de silencio/nivelado cacheado), con la
+    # carpeta destino configurable acá en vez de fija bajo
+    # config/data/enlatados_drive/ (pedido explícito: "la carpeta
+    # también configurable desde Configuraciones").
+    #
+    # Cada entrada:
+    #   {"id": "...", "nombre": "Folclore matutino",
+    #    "url_carpeta": "https://drive.google.com/drive/folders/...",
+    #    "carpeta_local": "/home/radio/off_folclore",
+    #    "categoria_cortina_ruta": [...]|None,
+    #    "volumen_cortina_pct": 25,
+    #    "dias_descarga": ["lunes", "martes", ...], "hora_descarga": "05:00",
+    #    "dias_limpieza": ["domingo"], "hora_limpieza": "23:30"}
+    # `id` es ESTABLE (igual que en "enlatados") — viaja como parte del
+    # ítem "off" dentro de un formato del Musicalizador, así que
+    # renombrar el programa nunca rompe un formato ya guardado.
+    # `dias_descarga`/`dias_limpieza` usan las mismas claves de
+    # DIAS_SEMANA_ETIQUETAS ya establecidas para programaciones —
+    # vacío = esa tarea no se programa en cron (ver
+    # core/actualizador.py:asegurar_tareas_cron_programas_off()).
+    #
+    # "Si no se descargó HOY, el bloque se saltea en silencio" (pedido
+    # explícito, decisión confirmada con Santiago: a diferencia de
+    # Enlatado, que prefiere seguir sonando contenido VIEJO antes que
+    # nada, un programa OFF es contenido atado a UN día específico —
+    # sonar el saludo de ayer en un programa en vivo sería peor que el
+    # silencio) — ver core/off_programa.py:resolver_bloque(), que
+    # chequea la fecha de la última sincronización exitosa (la propia
+    # fecha de modificación de `carpeta_local`, actualizada por el
+    # swap atómico de sincronizar_fuente_drive()) contra la de hoy.
+    # Lista vacía por defecto — una instalación nueva no trae ningún
+    # programa de ejemplo.
+    "programas_off": [],
 }
 
 
@@ -350,17 +399,18 @@ def _fusionar_con_defecto(config_guardada: dict) -> dict:
     que no exista todavía en un config_general.json guardado con una
     versión anterior de la app (evita KeyError al agregar settings).
 
-    "enlatados" se procesa APARTE (no entra en el `{**defecto,
-    **guardado}` genérico de abajo): es una LISTA, no una sección de
-    claves sueltas — mezclarla con ese spread rompería con
-    `TypeError: argument of type 'list' is not a mapping`."""
+    "enlatados" y "programas_off" se procesan APARTE (no entran en el
+    `{**defecto, **guardado}` genérico de abajo): son LISTAS, no
+    secciones de claves sueltas — mezclarlas con ese spread rompería
+    con `TypeError: argument of type 'list' is not a mapping`."""
     resultado = {}
     for seccion, valores_defecto in CONFIG_POR_DEFECTO.items():
-        if seccion == "enlatados":
+        if seccion in ("enlatados", "programas_off"):
             continue
         valores_guardados = config_guardada.get(seccion, {})
         resultado[seccion] = {**valores_defecto, **valores_guardados}
     resultado["enlatados"] = _migrar_enlatados_formato_viejo(config_guardada.get("enlatados", []))
+    resultado["programas_off"] = config_guardada.get("programas_off", [])
     return resultado
 
 
@@ -413,6 +463,39 @@ def obtener_enlatado(config: dict, id_slot) -> dict | None:
     id_slot = str(id_slot)
     for entrada in listar_enlatados(config):
         if str(entrada.get("id")) == id_slot:
+            return entrada
+    return None
+
+
+def listar_programas_off(config: dict) -> list:
+    """Lista completa de programas OFF configurados — usada por la UI
+    de Configuración, el tipo de ítem "off" del Musicalizador (local y
+    remoto), el instalador de tareas de cron
+    (core/actualizador.py:asegurar_tareas_cron_programas_off()) y
+    core/off_programa.py."""
+    resultado = []
+    for entrada in config.get("programas_off") or []:
+        completa = dict(entrada)
+        completa.setdefault("nombre", completa.get("id") or "")
+        completa.setdefault("url_carpeta", "")
+        completa.setdefault("carpeta_local", "")
+        completa.setdefault("categoria_cortina_ruta", None)
+        completa.setdefault("volumen_cortina_pct", 25)
+        completa.setdefault("dias_descarga", [])
+        completa.setdefault("hora_descarga", "05:00")
+        completa.setdefault("dias_limpieza", [])
+        completa.setdefault("hora_limpieza", "23:30")
+        resultado.append(completa)
+    return resultado
+
+
+def obtener_programa_off(config: dict, id_programa) -> dict | None:
+    """Config completa de un programa OFF por `id` — `None` si no
+    existe (ej. se eliminó desde Configuración después de insertarlo
+    en algún formato del Musicalizador)."""
+    id_programa = str(id_programa)
+    for entrada in listar_programas_off(config):
+        if str(entrada.get("id")) == id_programa:
             return entrada
     return None
 

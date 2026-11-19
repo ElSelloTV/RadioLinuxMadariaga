@@ -141,7 +141,8 @@ def listar_archivos_sincronizados(id_slot: str) -> list:
     return resultado
 
 
-def sincronizar_fuente_drive(id_slot: str, url_carpeta: str, config: dict, callback_progreso=None) -> dict:
+def sincronizar_fuente_drive(id_slot: str, url_carpeta: str, config: dict, callback_progreso=None,
+                              carpeta_destino_override: str = None) -> dict:
     """Baja los archivos DIRECTOS (nunca subcarpetas) de `url_carpeta`
     (una carpeta PÚBLICA de Google Drive) y los deja listos para
     `id_slot`. Nunca lanza excepción -- degrada con
@@ -152,7 +153,18 @@ def sincronizar_fuente_drive(id_slot: str, url_carpeta: str, config: dict, callb
     `callback_progreso(hechos, total)`, opcional, se llama después de
     descargar+analizar CADA archivo -- mismo contrato que
     core.reanalizador_batch.ejecutar_reanalisis, para que la GUI pueda
-    mostrar una barra de progreso real sin bloquearse."""
+    mostrar una barra de progreso real sin bloquearse.
+
+    `carpeta_destino_override` (nuevo, para los programas OFF —
+    Configuración → Programas OFF: "la carpeta también configurable
+    desde Configuraciones", a diferencia de Enlatado, que siempre usa
+    `config/data/enlatados_drive/<id_slot>/` fijo): si se pasa, el
+    archivo final queda AHÍ en vez de bajo la carpeta interna de
+    siempre -- el resto del mecanismo (staging en el MISMO filesystem
+    que el destino, swap atómico, `.analisis.json` cacheado al lado)
+    es idéntico, así que un fallo a mitad de camino sigue dejando la
+    carpeta de la sincronización anterior completamente intacta sin
+    importar dónde viva."""
     if not url_carpeta:
         return {"ok": False, "mensaje": "Sin URL de carpeta configurada."}
 
@@ -188,11 +200,13 @@ def sincronizar_fuente_drive(id_slot: str, url_carpeta: str, config: dict, callb
 
         candidatos.sort(key=lambda entrada: _clave_orden_natural(entrada.path))
 
-        os.makedirs(CARPETA_ENLATADOS_DRIVE, exist_ok=True)
-        # Staging en el MISMO directorio que el destino final -> mismo
-        # filesystem -> el swap de más abajo es un rename atómico de
-        # verdad, nunca un copy cross-device a medio camino.
-        carpeta_staging = tempfile.mkdtemp(prefix=f".{id_slot}_staging_", dir=CARPETA_ENLATADOS_DRIVE)
+        destino_final = carpeta_destino_override or _carpeta_destino(id_slot)
+        carpeta_padre_destino = os.path.dirname(destino_final.rstrip(os.sep)) or "."
+        os.makedirs(carpeta_padre_destino, exist_ok=True)
+        # Staging en el MISMO directorio PADRE que el destino final ->
+        # mismo filesystem -> el swap de más abajo es un rename
+        # atómico de verdad, nunca un copy cross-device a medio camino.
+        carpeta_staging = tempfile.mkdtemp(prefix=f".{id_slot}_staging_", dir=carpeta_padre_destino)
 
         nivelado_activado, objetivo_lufs, techo_pico_dbfs = parametros_nivelado(config)
         reproduccion = config.get("reproduccion", {})
@@ -225,7 +239,6 @@ def sincronizar_fuente_drive(id_slot: str, url_carpeta: str, config: dict, callb
         with open(os.path.join(carpeta_staging, NOMBRE_ARCHIVO_ANALISIS), "w", encoding="utf-8") as f:
             json.dump(analisis, f, ensure_ascii=False)
 
-        destino_final = _carpeta_destino(id_slot)
         if os.path.isdir(destino_final):
             shutil.rmtree(destino_final)
         os.replace(carpeta_staging, destino_final)

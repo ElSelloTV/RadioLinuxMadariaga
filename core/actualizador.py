@@ -28,6 +28,7 @@ Flujo:
 
 import os
 import sys
+import shlex
 import subprocess
 from datetime import datetime
 
@@ -434,7 +435,8 @@ _MARCA_CRON_CERRAR_ZARARADIO = "radio-tuyu-cerrar-zararadio-1610"
 _MARCA_CRON_IMPORTAR_YOUTUBE_DOC = "radio-tuyu-importar-youtube-doc-0300"
 
 
-def _asegurar_entrada_cron(marca: str, horario_cron: str, script_relativo: str, nombre_log_bootstrap: str) -> None:
+def _asegurar_entrada_cron(marca: str, horario_cron: str, script_relativo: str, nombre_log_bootstrap: str,
+                            argumentos_extra: list = None) -> None:
     """Instala/refresca, de forma idempotente, UNA entrada de crontab
     identificada por `marca` -- helper compartido, extraído de la
     única entrada que existía antes de esta ronda
@@ -449,7 +451,14 @@ def _asegurar_entrada_cron(marca: str, horario_cron: str, script_relativo: str, 
     está instalada tal cual, no vuelve a tocar el crontab en cada
     arranque -- y nunca toca ninguna OTRA entrada (identificada por su
     propia marca), sea de esta app o de cualquier otra cosa que el
-    operador tenga programada."""
+    operador tenga programada.
+
+    `argumentos_extra` (nuevo, para los Programas OFF -- cada programa
+    necesita pasarle su propio `--id` al mismo script compartido,
+    `core/off_programa.py`): lista de argumentos de línea de comandos,
+    shell-quoted uno por uno (`shlex.quote`) por si algún `id` llegara
+    a tener algo raro, aunque en la práctica siempre es un
+    `secrets.token_hex()` sin espacios."""
     raiz = _raiz_app()
     script = os.path.join(raiz, script_relativo)
     if not os.path.isfile(script):
@@ -462,7 +471,10 @@ def _asegurar_entrada_cron(marca: str, horario_cron: str, script_relativo: str, 
     # diagnosticarlo -- el log interno (log_aplicacion.txt, el que se
     # sube a GitHub) sigue siendo donde quedan las tareas en sí.
     log_bootstrap = os.path.join(raiz, "config", "data", nombre_log_bootstrap)
-    linea_nueva = f"{horario_cron} {sys.executable} {script} >> {log_bootstrap} 2>&1 # {marca}"
+    comando_extra = (
+        " " + " ".join(shlex.quote(a) for a in argumentos_extra) if argumentos_extra else ""
+    )
+    linea_nueva = f"{horario_cron} {sys.executable} {script}{comando_extra} >> {log_bootstrap} 2>&1 # {marca}"
 
     try:
         resultado = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
@@ -550,3 +562,118 @@ def asegurar_tarea_cron_importar_youtube_doc() -> None:
         _MARCA_CRON_IMPORTAR_YOUTUBE_DOC, "0 3 * * *",
         os.path.join("core", "descargador_youtube_doc.py"), "log_cron_importar_youtube_doc.txt",
     )
+
+
+# ------------------------------------------------------------------
+# Programas OFF (pedido explícito: "simular un programa en vivo...
+# grabo con mi celular 3 o 4 bloques de voz... armo un FMT que
+# ordene" -- Configuración → Programas OFF, ver
+# config/settings.py:listar_programas_off() / core/off_programa.py).
+# A diferencia de las 4 tareas fijas de arriba (siempre el mismo
+# horario, una sola entrada estática), cada programa OFF elige SUS
+# PROPIOS días/hora de descarga y de limpieza -- "este motor puede
+# servir para otros más" con necesidades distintas -- así que acá se
+# instala/refresca UNA entrada POR PROGRAMA, dinámicamente, y se
+# quitan las que quedaron húerfanas (programa eliminado o con el `id`
+# cambiado, lo que nunca debería pasar a mano ya que `id` es estable,
+# pero por las dudas).
+# ------------------------------------------------------------------
+_PREFIJO_MARCA_CRON_OFF_DESCARGA = "radio-tuyu-off-descarga-"
+_PREFIJO_MARCA_CRON_OFF_LIMPIEZA = "radio-tuyu-off-limpieza-"
+
+_DIA_A_CRON_DOW = {
+    "domingo": "0", "lunes": "1", "martes": "2", "miercoles": "3",
+    "jueves": "4", "viernes": "5", "sabado": "6",
+}
+
+
+def _horario_cron_desde_dias_y_hora(dias, hora: str) -> str | None:
+    """"['lunes', ..., 'viernes']" + "05:00" -> "0 5 * * 1,2,3,4,5".
+    `None` si no hay ningún día elegido (esa tarea, para ESTE
+    programa, simplemente no se programa) o la hora no se pudo
+    interpretar."""
+    dows = sorted({_DIA_A_CRON_DOW[d] for d in (dias or []) if d in _DIA_A_CRON_DOW}, key=int)
+    if not dows:
+        return None
+    try:
+        hh, mm = (hora or "").split(":")
+        hh, mm = int(hh), int(mm)
+    except (ValueError, AttributeError):
+        return None
+    return f"{mm} {hh} * * {','.join(dows)}"
+
+
+def _quitar_entradas_cron_con_prefijo_no_vigente(prefijo_marca: str, marcas_vigentes: set) -> None:
+    """Quita del crontab cualquier entrada cuya marca empiece con
+    `prefijo_marca` pero no esté en `marcas_vigentes` -- mismo
+    criterio de "nunca romper nada ajeno" que `_asegurar_entrada_cron`:
+    cualquier línea que NO tenga el prefijo se conserva intacta, sea
+    de esta app o de cualquier otra cosa que el operador tenga
+    programada."""
+    try:
+        resultado = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
+        actual = resultado.stdout or ""
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        return
+
+    lineas_actuales = [linea for linea in actual.splitlines() if linea.strip()]
+
+    def _debe_conservarse(linea: str) -> bool:
+        if prefijo_marca not in linea:
+            return True
+        return any(marca in linea for marca in marcas_vigentes)
+
+    lineas_nuevas = [linea for linea in lineas_actuales if _debe_conservarse(linea)]
+    if lineas_nuevas == lineas_actuales:
+        return  # nada húerfano para quitar
+
+    contenido_nuevo = ("\n".join(lineas_nuevas) + "\n") if lineas_nuevas else ""
+    try:
+        subprocess.run(["crontab", "-"], input=contenido_nuevo, text=True, capture_output=True, timeout=5)
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        pass
+
+
+def asegurar_tareas_cron_programas_off() -> None:
+    """Instala/refresca, UNA entrada de descarga + UNA de limpieza POR
+    programa OFF configurado -- se llama al arrancar la app Y al
+    guardar Configuración (así agregar/editar un programa toma efecto
+    YA, sin esperar al próximo reinicio) -- mismo criterio de siempre,
+    nunca debe poder frenar nada si algo falla."""
+    from config.settings import cargar_configuracion, listar_programas_off
+
+    config = cargar_configuracion()
+    programas = listar_programas_off(config)
+
+    marcas_descarga_vigentes, marcas_limpieza_vigentes = set(), set()
+    for programa in programas:
+        id_programa = str(programa.get("id") or "").strip()
+        if not id_programa:
+            continue
+        marca_descarga = f"{_PREFIJO_MARCA_CRON_OFF_DESCARGA}{id_programa}"
+        marca_limpieza = f"{_PREFIJO_MARCA_CRON_OFF_LIMPIEZA}{id_programa}"
+        marcas_descarga_vigentes.add(marca_descarga)
+        marcas_limpieza_vigentes.add(marca_limpieza)
+
+        horario_descarga = _horario_cron_desde_dias_y_hora(
+            programa.get("dias_descarga"), programa.get("hora_descarga")
+        )
+        if horario_descarga:
+            _asegurar_entrada_cron(
+                marca_descarga, horario_descarga,
+                os.path.join("core", "off_programa.py"), f"log_cron_off_descarga_{id_programa}.txt",
+                argumentos_extra=["--sincronizar", "--id", id_programa],
+            )
+
+        horario_limpieza = _horario_cron_desde_dias_y_hora(
+            programa.get("dias_limpieza"), programa.get("hora_limpieza")
+        )
+        if horario_limpieza:
+            _asegurar_entrada_cron(
+                marca_limpieza, horario_limpieza,
+                os.path.join("core", "off_programa.py"), f"log_cron_off_limpieza_{id_programa}.txt",
+                argumentos_extra=["--limpiar", "--id", id_programa],
+            )
+
+    _quitar_entradas_cron_con_prefijo_no_vigente(_PREFIJO_MARCA_CRON_OFF_DESCARGA, marcas_descarga_vigentes)
+    _quitar_entradas_cron_con_prefijo_no_vigente(_PREFIJO_MARCA_CRON_OFF_LIMPIEZA, marcas_limpieza_vigentes)

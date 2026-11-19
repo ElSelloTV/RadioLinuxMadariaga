@@ -32,7 +32,7 @@ from core.sesion_display import (
 from core.actualizador import (
     asegurar_lanzadores_escritorio, asegurar_tarea_cron_mantenimiento,
     asegurar_tarea_cron_sincronizar_drive, asegurar_tarea_cron_cerrar_zararadio,
-    asegurar_tarea_cron_importar_youtube_doc,
+    asegurar_tarea_cron_importar_youtube_doc, asegurar_tareas_cron_programas_off,
 )
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
@@ -189,6 +189,17 @@ def main():
         asegurar_tarea_cron_importar_youtube_doc()
     except Exception as error:
         registrar_error(f"No se pudo instalar/refrescar la tarea de importación de YouTube (cron): {error}")
+
+    # Programas OFF (Configuración → Programas OFF, pedido explícito:
+    # "simular un programa en vivo... grabo bloques de voz con el
+    # celular... armo un FMT que ordene") -- a diferencia de las 4
+    # tareas de arriba, acá hay UNA entrada de cron por cada programa
+    # configurado, con sus propios días/hora -- mismo criterio de
+    # arriba, nunca debe poder frenar el arranque.
+    try:
+        asegurar_tareas_cron_programas_off()
+    except Exception as error:
+        registrar_error(f"No se pudieron instalar/refrescar las tareas de Programas OFF (cron): {error}")
 
     registrar_evento("Aplicación iniciada")
 
