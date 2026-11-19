@@ -90,6 +90,27 @@ def _carpeta_sincronizada_hoy(carpeta_local: str) -> bool:
     return fecha_modificacion == date.today()
 
 
+def _archivos_por_numero(carpeta_local: str) -> dict[int, list[str]]:
+    """{número_bloque: [nombre_archivo, ...]} de TODO lo sincronizado
+    en `carpeta_local` -- usado por `resolver_bloque()` (elegir cuál
+    reproducir) y por `bloques_duplicados_hoy()` (detectar y avisar si
+    hay más de un archivo para el mismo número). No chequea "¿es de
+    hoy?" -- eso lo decide el llamador."""
+    try:
+        nombres = os.listdir(carpeta_local)
+    except OSError:
+        return {}
+    por_numero: dict[int, list[str]] = {}
+    for nombre in nombres:
+        if not nombre.lower().endswith(EXTENSIONES_AUDIO):
+            continue
+        numero = _numero_de_nombre(nombre)
+        if numero is None:
+            continue
+        por_numero.setdefault(numero, []).append(nombre)
+    return por_numero
+
+
 def resolver_bloque(programa: dict, numero_bloque: int) -> dict | None:
     """El archivo "bloque N" del programa OFF `programa` -- `None` si
     no corresponde reproducir nada (programa sin carpeta configurada,
@@ -99,10 +120,28 @@ def resolver_bloque(programa: dict, numero_bloque: int) -> dict | None:
     que cualquier registro real de la biblioteca -- así
     core/musicalizador.py lo puede tratar exactamente igual que el
     resultado de un ítem Específico/Aleatorio, sin ningún caso
-    especial en el resto del motor."""
+    especial en el resto del motor.
+
+    Bug real evitado ANTES de llegar a Santiago (pregunta directa:
+    "¿debo reemplazarlos para que no haya dos archivos por nombre 1,
+    2, etc.?"): si Drive llega a tener, por un olvido, dos archivos
+    distintos que matchean el mismo número (ej. "1 - lunes.mp3" y
+    "1 - martes.mp3"), elegir el PRIMERO que devuelva `os.listdir()`
+    (orden del sistema de archivos, nunca garantizado) sería
+    impredecible -- podría sonar un día uno, al día siguiente el otro,
+    sin ningún patrón visible. Ahora, si hay más de uno, se elige
+    SIEMPRE el mismo (orden alfabético) -- determinístico, aunque la
+    causa real (el duplicado en Drive) solo se resuelve borrándolo ahí
+    -- ver bloques_duplicados_hoy(), que avisa de esto en el resultado
+    de cada sincronización."""
     carpeta_local = (programa.get("carpeta_local") or "").strip()
     if not carpeta_local or not _carpeta_sincronizada_hoy(carpeta_local):
         return None
+
+    candidatos = sorted(_archivos_por_numero(carpeta_local).get(numero_bloque, []))
+    if not candidatos:
+        return None  # no hay ningún archivo "N" en lo sincronizado hoy -- se saltea
+    nombre = candidatos[0]
 
     analisis_cacheado = {}
     ruta_analisis = os.path.join(carpeta_local, NOMBRE_ARCHIVO_ANALISIS)
@@ -114,26 +153,32 @@ def resolver_bloque(programa: dict, numero_bloque: int) -> dict | None:
         except (OSError, ValueError):
             analisis_cacheado = {}
 
-    try:
-        nombres = os.listdir(carpeta_local)
-    except OSError:
-        return None
+    datos = analisis_cacheado.get(nombre, {})
+    return {
+        "ruta": os.path.join(carpeta_local, nombre),
+        "titulo": os.path.splitext(nombre)[0],
+        "codigo": "",
+        "punto_inicio_ms": datos.get("punto_inicio_ms", 0),
+        "punto_fin_ms": datos.get("punto_fin_ms"),
+        "ganancia_db": datos.get("ganancia_db", 0.0),
+    }
 
-    for nombre in nombres:
-        if not nombre.lower().endswith(EXTENSIONES_AUDIO):
-            continue
-        if _numero_de_nombre(nombre) != numero_bloque:
-            continue
-        datos = analisis_cacheado.get(nombre, {})
-        return {
-            "ruta": os.path.join(carpeta_local, nombre),
-            "titulo": os.path.splitext(nombre)[0],
-            "codigo": "",
-            "punto_inicio_ms": datos.get("punto_inicio_ms", 0),
-            "punto_fin_ms": datos.get("punto_fin_ms"),
-            "ganancia_db": datos.get("ganancia_db", 0.0),
-        }
-    return None  # no hay ningún archivo "N" en lo sincronizado hoy -- se saltea
+
+def bloques_duplicados_hoy(programa: dict) -> dict[int, list[str]]:
+    """{número_bloque: [nombre_archivo, ...]} SOLO para los números
+    con MÁS DE UN archivo en lo recién sincronizado -- usado por
+    sincronizar_programa_off() para avisar en el resultado de la
+    sincronización ("hay 2 archivos para el bloque 1") en vez de
+    dejar que Santiago lo descubra días después como un misterioso
+    "cambió de archivo sin que yo tocara nada"."""
+    carpeta_local = (programa.get("carpeta_local") or "").strip()
+    if not carpeta_local or not _carpeta_sincronizada_hoy(carpeta_local):
+        return {}
+    return {
+        numero: nombres
+        for numero, nombres in _archivos_por_numero(carpeta_local).items()
+        if len(nombres) > 1
+    }
 
 
 def cantidad_bloques_disponibles_hoy(programa: dict) -> int:
@@ -161,10 +206,30 @@ def sincronizar_programa_off(programa: dict, config: dict, callback_progreso=Non
     carpeta_local = (programa.get("carpeta_local") or "").strip()
     if not carpeta_local:
         return {"ok": False, "mensaje": "Sin carpeta local configurada para este programa."}
-    return sincronizar_fuente_drive(
+    resultado = sincronizar_fuente_drive(
         programa.get("id"), programa.get("url_carpeta", ""), config,
         callback_progreso=callback_progreso, carpeta_destino_override=carpeta_local,
     )
+    # Pregunta directa de Santiago ("¿debo reemplazarlos para que no
+    # haya dos archivos por nombre 1, 2, etc.?") -- si quedó más de un
+    # archivo para el mismo número (se subió el nuevo a Drive sin
+    # borrar el viejo), avisa EN EL RESULTADO de esta misma
+    # sincronización -- el único punto donde Santiago realmente lo va
+    # a ver, en vez de descubrirlo días después como un bloque que
+    # "cambió sin que él tocara nada".
+    if resultado.get("ok"):
+        duplicados = bloques_duplicados_hoy(programa)
+        if duplicados:
+            detalle = "; ".join(
+                f"bloque {numero}: {', '.join(nombres)}"
+                for numero, nombres in sorted(duplicados.items())
+            )
+            resultado["mensaje"] += (
+                f" ⚠ ATENCIÓN: hay más de un archivo para el mismo número ({detalle}) -- "
+                "se va a reproducir siempre el mismo (orden alfabético), pero conviene borrar "
+                "el que no corresponda en Drive antes de la próxima sincronización."
+            )
+    return resultado
 
 
 def limpiar_programa_off(programa: dict) -> dict:
