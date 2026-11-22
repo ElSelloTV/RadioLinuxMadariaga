@@ -13883,6 +13883,232 @@ soltó de una vez.
     nuevas de "no respondió en 3000ms (PipeWire colgado/degradado?)"
     la próxima vez que algo se sienta lento, para confirmar si el
     watchdog nuevo está entrando en juego de verdad.
+136. ~~Programas OFF, Fase 1 — infraestructura: configurar un
+    "programa" por slot, descargar su carpeta de Google Drive, y
+    sincronizarlo solo en cron~~ — pedido explícito: Santiago quiere
+    simular que la radio sigue teniendo un programa EN VIVO (un
+    conductor saludando, comentando, presentando música) aunque en
+    realidad sea un conjunto de bloques de voz pregrabados subidos a
+    una carpeta de Google Drive — "Programas OFF", el nombre que le
+    dio él mismo. Esta primera fase es la cañería: nada todavía suena
+    al aire, solo se puede CONFIGURAR y DESCARGAR.
+
+    `config/settings.py`: nueva sección crecible `config["programas_off"]`
+    — lista de dicts, cada uno con `id`, `nombre`, `url_carpeta`
+    (Drive), `carpeta_local` (destino en disco), `categoria_cortina_ruta`
+    (camino de categoría para la música de fondo, `None` = sin
+    cortina), `volumen_cortina_pct`, `dias_descarga`/`hora_descarga`
+    (cuándo sincronizar sola) y `dias_limpieza`/`hora_limpieza`
+    (cuándo borrar lo viejo). `core/sincronizador_drive.py` (nuevo,
+    reusable para cualquier fuente de Drive futura, no solo OFF):
+    `sincronizar_fuente_drive()` descarga vía `gdown` SOLO los
+    archivos DIRECTOS de la carpeta configurada (nunca recursa en
+    subcarpetas — si Santiago quiere archivar algo sin que se
+    descargue, lo mueve a una subcarpeta tipo "OTROS"), los ordena
+    naturalmente, les corre el análisis de silencio/nivelado de
+    siempre, y hace un SWAP ATÓMICO: descarga todo a una carpeta de
+    staging en el MISMO filesystem que el destino final, y recién al
+    terminar reemplaza la carpeta local completa
+    (`shutil.rmtree` + `os.replace()`) — así una sincronización
+    FALLIDA deja el contenido de la última sincronización EXITOSA
+    completamente intacto, nunca una mezcla a medio camino. `core/
+    off_programa.py` (nuevo): `_carpeta_sincronizada_hoy()` decide "es
+    de hoy" mirando la fecha de MODIFICACIÓN de la carpeta local (que
+    el swap atómico actualiza en cada sync exitoso) — no hace falta
+    ningún metadato de fecha aparte.
+
+    **Decisión de arquitectura confirmada con Santiago vía
+    `AskUserQuestion`**: si NO se sincronizó hoy, el comando FMT que
+    use este programa debe SALTEARSE en silencio, nunca reproducir el
+    contenido de ayer — "sonar el saludo de ayer sería peor que el
+    silencio". UI nueva en Configuración (pestaña "Programas OFF"):
+    alta/baja/edición de slots, botón de sincronización manual, y el
+    cron real (nuevo mecanismo de tareas programadas por horario,
+    separado del resto de la app) que dispara la descarga/limpieza
+    solo según `dias_descarga`/`hora_descarga` de cada programa
+    configurado.
+
+    Probado y confirmado en producción por Santiago: cargó un
+    programa de prueba ("Test"), apuntó a una carpeta real de Drive
+    con 3 archivos, sincronizó y los 3 se descargaron correctamente.
+137. ~~Programas OFF, Fase 2/3 — el ítem "off" del Musicalizador +
+    el motor de la cortina (música de fondo) en Ventana 2~~ —
+    continuación directa de la Fase 1 ("Ya subí 3 archivos de prueba,
+    seguí con la fases siguientes"): ahora un Comando FMT puede
+    efectivamente reproducir un bloque de voz de un Programa OFF,
+    superpuesto sobre una cortina musical de fondo que nunca se
+    detiene, mismo concepto que un programa de radio real (locutor +
+    música de fondo).
+
+    **Cuarto tipo de ítem en el Musicalizador** (`core/musicalizador.py`):
+    junto a Específico/Aleatorio/Subformato, un ítem "off" resuelve,
+    al generarse, un bloque de voz NUMERADO de un programa OFF
+    configurado (`core/off_programa.py:resolver_bloque()`) más una
+    config de cortina (`{"categoria_cortina_ruta": [...]|None,
+    "volumen_cortina_pct": int}`) — siempre presente cuando el bloque
+    resuelve con éxito, sin importar si hay o no una categoría de
+    cortina configurada. `validar_formato()` ganó avisos NO
+    bloqueantes (programa o categoría de cortina faltante, mismo
+    criterio ya establecido para el resto de referencias rotas del
+    Musicalizador). UI: 4to combo en `gui/dialogo_item_musicalizador.py`
+    (programa configurado + número de bloque), con su propia página
+    del `QStackedWidget` — oculta el grupo de Pisador (igual que
+    Subformato, la cortina ya cubre ese rol conceptualmente).
+
+    **Motor de cortina en `core/gestor_emision.py:GestorPlaylist`**:
+    un `MotorAudio` DEDICADO (`self.motor_cortina`) que NUNCA hace
+    ducking del tema principal (a diferencia del Pisador) — suena
+    encima, independiente, encadenando temas sin fin vía `core/
+    rotacion_categoria.py` (mismo mecanismo ya usado por el ítem
+    Aleatorio de Ventana 1 — nunca repite hasta agotar la categoría).
+    Volumen calculado como PORCENTAJE del Master
+    (`volumen_cortina = volumen_base * volumen_cortina_pct / 100`).
+    Mismo guard de generación (`_generacion_cortina`/
+    `_generacion_clip_actual_cortina`) ya establecido para el Pisador
+    — protege contra una cancelación diferida vieja que mate una
+    cortina nueva recién arrancada en el mismo motor compartido.
+    Cancelada/redisparada en los mismos puntos que el Pisador
+    (`_reproducir_fila`, `_iniciar_crossfade`, `detener`, `_fade_stop`,
+    pausada junto al motor principal en `_pausar`). `ROL_CORTINA_OFF`
+    (rol Qt nuevo en `gui/styles.py`) marca la fila del panel como "es
+    un ítem off" — reusado más adelante (ronda 138) para una
+    excepción real del motor de reproducción.
+
+    Probado con 15 tests dedicados (ciclo completo de la cortina,
+    resolución del ítem "off", validación, round-trip del diálogo,
+    render de columnas) + suite de regresión sin fallos nuevos +
+    smoke test de arranque limpio.
+
+    **Investigación aparte, deliberadamente pausada a pedido de
+    Santiago**: reportó "ni bien comienza el ítem [en el Auxiliar],
+    hay un saltito de silencio" — se investigó el mecanismo de
+    declick/fade-in de `core/audio_engine.py` (`duracion_declick_ms`,
+    0 por defecto para un Play normal) y se le preguntó si el fade
+    debía aplicar siempre o solo en ciertos casos; confirmó "siempre,
+    incluso el primer ítem desde silencio" y acto seguido pidió
+    pasar a reportar las pruebas del OFF en su lugar ("Bueno,
+    olvidate de eso por ahora"). **Sin código tocado** — queda abierto,
+    no retomar salvo que Santiago lo levante de nuevo.
+138. ~~Bug real, Programas OFF: un bloque de voz nunca registrado en
+    la biblioteca quedaba marcado con la X roja y se salteaba
+    siempre~~ — Santiago probó de punta a punta (armó un FMT con 2
+    bloques de un programa OFF, lo cargó en un bloque de Ventana 1,
+    lo mandó a reproducir) y "arrojó error" — aclaró después, clave
+    para encontrar la causa real: "El error es en la ventana 2, con
+    la cruz roja como si el archivo no existiera".
+
+    **Causa real**: `core/gestor_emision.py:_fila_valida()` — el
+    único punto que decide si una fila de la playlist es reproducible
+    — exige que el archivo EXISTA en disco Y esté REGISTRADO en la
+    biblioteca del Explorador (`ventana_explorador.
+    ruta_existe_en_biblioteca()`, mismo chequeo de siempre contra
+    archivos sacados de la biblioteca, ronda 101). Un bloque de voz de
+    un Programa OFF se descarga DIRECTO por `core/off_programa.py` —
+    nunca pasa por el alta normal del Explorador, así que NUNCA queda
+    registrado, aunque el archivo exista perfectamente en disco — el
+    ítem se marcaba inválido (X roja) y se salteaba siempre, sin
+    ningún error visible más que eso.
+
+    Corregido con una excepción puntual en `_fila_valida()`: si
+    `panel.cortina_en_fila(fila) is not None` (el marcador
+    `ROL_CORTINA_OFF` de la ronda 137, SIEMPRE presente en un ítem
+    "off" resuelto, haya o no cortina configurada) se exime del
+    chequeo de registro en biblioteca — un archivo normal sigue
+    necesitando estar registrado, solo los ítems "off" quedan afuera
+    de esa regla.
+
+    Probado con 2 tests de regresión dedicados, confirmados FALLANDO
+    contra el código viejo (revertido con el Edit tool, nunca `git
+    stash` combinado con otro comando — bloqueado por el clasificador
+    de seguridad) antes de aplicar el fix. **Hallazgo meta, sobre la
+    propia suite de tests de la ronda 137**: el fake de biblioteca
+    usado en esos tests devolvía siempre `True` para
+    `ruta_existe_en_biblioteca()` — una simplificación que TAPABA
+    exactamente esta clase de bug; corregido para que sea realista
+    (solo rutas explícitamente registradas cuentan), confirmando que
+    la suite anterior nunca hubiera atrapado este bug real antes de
+    que Santiago lo encontrara en producción.
+139. ~~Programas OFF — elección determinística si Drive llega a
+    tener dos archivos para el mismo número de bloque, con aviso en
+    la sincronización~~ — pregunta operativa de Santiago: "cada vez
+    que subo nuevos archivos, debo reemplazarlos? para que no haya
+    por ejemplo dos archivos por nombre 1, 2, etc... cómo lo
+    resolvemos a eso?" — interpretado como pedido de resolverlo en
+    código, no solo explicar un workaround manual.
+
+    Causa latente encontrada (nunca reportada aún, corregida antes de
+    que mordiera): `core/off_programa.py:resolver_bloque()` recorría
+    `os.listdir()` (orden dependiente del sistema de archivos, no
+    garantizado) y tomaba el PRIMER archivo que matcheara el número
+    pedido — si Drive terminaba con dos archivos para el mismo número
+    (el operador sube "1.mp3" nuevo sin borrar el viejo), la elección
+    podía cambiar de un día a otro sin que nadie lo pidiera.
+    Corregido con `_archivos_por_numero()` (agrupa por número) +
+    `sorted(...)[0]` en `resolver_bloque()` — SIEMPRE el mismo
+    archivo (orden alfabético), sin importar el orden del filesystem.
+    Nueva `bloques_duplicados_hoy()` detecta duplicados del día, y
+    `sincronizar_programa_off()` agrega un aviso "ATENCIÓN... bloque
+    N" al mensaje de resultado — Santiago se entera apenas sincroniza,
+    en vez de descubrir un cambio de contenido misterioso más tarde.
+
+    Probado con 9 tests dedicados (agrupamiento, elección
+    determinística confirmada llamando `resolver_bloque()` varias
+    veces, detección de duplicados, aviso en el mensaje de
+    sincronización éxito/fallo) — confirmado que
+    `test_resolver_bloque_elige_siempre_el_mismo_con_duplicado` falla
+    de verdad sin el `sorted()` (revertido con el Edit tool) antes de
+    aplicar el fix.
+140. ~~Programador: la capacidad de cambiar la hora de un bloque YA
+    EXISTÍA, pero estaba escondida — reforzada la descubribilidad,
+    local y remoto~~ — pedido explícito: "en Programador cuando
+    selecciono un bloque horario, pueda cambiar la hora de ese
+    bloque. No en la ventana 1 sino cuando guardo o edito en
+    Programador." Investigado ANTES de tocar código (siguiendo el
+    criterio ya establecido de "nunca adivinar un fix"): confirmado
+    que `_reemplazar_seleccionado()` → `_editar_bloque()`
+    (`gui/ventana_programador.py`) YA abría `DialogoEditarBloque` con
+    hora+título al seleccionar un bloque y apretar "🔁 Reemplazar
+    Item" — incluida la reubicación cronológica automática si la hora
+    nueva lo requería. El botón, sin embargo, solo explicaba este
+    comportamiento dual en el TOOLTIP ("Bloque seleccionado: edita su
+    hora/título") — nunca en su texto visible, que decía
+    genéricamente "Reemplazar Item" sin dar ninguna pista de que
+    también sirve para editar un bloque. Diagnóstico: no era una
+    función faltante, era pura falta de descubribilidad.
+
+    Reforzado con dos mecanismos nuevos, sin tocar la lógica de fondo
+    que ya funcionaba:
+    - El TEXTO del botón cambia solo según la selección
+      (`_actualizar_texto_boton_reemplazar()`, colgado de
+      `itemSelectionChanged`): "✏ Editar Hora/Título del Bloque" con
+      un bloque seleccionado, "🔁 Reemplazar Item" en cualquier otro
+      caso.
+    - Doble click directo sobre el TÍTULO de un bloque
+      (`_on_doble_click_arbol()`, colgado de `itemDoubleClicked`)
+      abre ya mismo el editor de hora/título — sin tener que ir a
+      buscar el botón primero. Doble click sobre una tanda/ítem no
+      hace nada a propósito (reemplazar el archivo de un ítem
+      concreto sigue siendo una acción más delicada para un doble
+      click accidental).
+
+    Mismo refuerzo aplicado en paralelo al Programador REMOTO
+    (`satelite/dialogo_programador_remoto.py`, que ya tenía la MISMA
+    capacidad escondida detrás del mismo tipo de tooltip) — paridad
+    con el local, aunque el pedido de Santiago mencionara solo
+    "Programador" sin aclarar cuál de los dos.
+
+    Probado con 6 tests dedicados en la versión local (texto del
+    botón según selección simple/múltiple, doble click abre el editor
+    y aplica la hora nueva, doble click sobre un ítem no hace nada,
+    reubicación cronológica tras el doble click) + 4 tests dedicados
+    en la versión remota (mismos casos, contra un cliente RPC falso)
+    + `py_compile` completo del proyecto + smoke test de arranque
+    limpio de `main.py` y `satelite_main.py` sin traceback. **Sigue
+    sin poder confirmarse con el uso real de Santiago**: falta que
+    confirme si ahora encuentra la función (ya sea por el texto nuevo
+    del botón o por el doble click directo), o si lo que en realidad
+    le faltaba era algo distinto que todavía no identificó bien en su
+    pedido original.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
