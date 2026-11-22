@@ -3,7 +3,10 @@ package ar.tuyu.grabadora;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -31,11 +34,9 @@ public class MainActivity extends Activity {
     private Adapter adapter;
 
     // grabación
-    private MediaRecorder rec;
     private boolean grabando = false;
     private Store.Rec destino = null;      // null = grabación nueva; si no, reemplaza a este
     private long t0;
-    private boolean btActivo = false;
 
     // reproducción
     private MediaPlayer player;
@@ -65,6 +66,7 @@ public class MainActivity extends Activity {
         am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         construirUi();
         pedirPermisos();
+        bindService(new Intent(this, RecorderService.class), conn, BIND_AUTO_CREATE);
         am.registerAudioDeviceCallback(new AudioDeviceCallback() {
             @Override public void onAudioDevicesAdded(AudioDeviceInfo[] d) { refrescarMics(); }
             @Override public void onAudioDevicesRemoved(AudioDeviceInfo[] d) { refrescarMics(); }
@@ -77,7 +79,7 @@ public class MainActivity extends Activity {
     @Override protected void onPause() { super.onPause(); ui.removeCallbacks(tick); }
     @Override protected void onDestroy() {
         super.onDestroy();
-        if (grabando) cancelarGrabacion();
+        try { unbindService(conn); } catch (Exception ignored) { }   // la grabación sigue en el servicio
         detenerReproduccion();
     }
 
@@ -173,6 +175,8 @@ public class MainActivity extends Activity {
             p.add(Manifest.permission.RECORD_AUDIO);
         if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission("android.permission.BLUETOOTH_CONNECT") != PackageManager.PERMISSION_GRANTED)
             p.add("android.permission.BLUETOOTH_CONNECT");
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED)
+            p.add("android.permission.POST_NOTIFICATIONS");
         if (!p.isEmpty()) requestPermissions(p.toArray(new String[0]), 1);
     }
 
@@ -219,58 +223,58 @@ public class MainActivity extends Activity {
         return (pos > 0 && pos - 1 < mics.size()) ? mics.get(pos - 1) : null;
     }
 
-    // ------------------------------------------------------------ grabación
+    // ------------------------------------------------------------ grabación (en un servicio de primer plano)
+    private RecorderService svc;
+    private final ServiceConnection conn = new ServiceConnection() {
+        @Override public void onServiceConnected(ComponentName n, IBinder b) {
+            svc = ((RecorderService.LocalBinder) b).get();
+            if (svc.isRecording() && !grabando) {          // volvimos a la app con una grabación en curso
+                grabando = true;
+                t0 = SystemClock.elapsedRealtime() - svc.elapsedMs();
+                String df = prefs.getString("destino", "");
+                destino = null;
+                for (Store.Rec r : store.recs) if (r.file.equals(df)) destino = r;
+                uiGrabando();
+            }
+        }
+        @Override public void onServiceDisconnected(ComponentName n) { svc = null; }
+    };
+
     private void iniciarGrabacion(Store.Rec reemplazar) {
         if (subiendo) { toast("Esperá a que termine la subida"); return; }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             pedirPermisos(); return;
         }
+        if (svc == null) { toast("Iniciando servicio, probá de nuevo"); return; }
         detenerReproduccion();
-        destino = reemplazar;
         AudioDeviceInfo dev = micElegido();
         boolean bt = dev != null && (dev.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
                 || (Build.VERSION.SDK_INT >= 31 && dev.getType() == 26));
-        try {
-            if (bt) activarBluetooth(dev);
-            File tmp = store.tempFile();
-            tmp.delete();
-            rec = Build.VERSION.SDK_INT >= 31 ? new MediaRecorder(this) : new MediaRecorder();
-            rec.setAudioSource(bt ? MediaRecorder.AudioSource.VOICE_COMMUNICATION : MediaRecorder.AudioSource.MIC);
-            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-            rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);   // AAC en .m4a: mejor calidad/peso, suena en cualquier equipo
-            rec.setAudioChannels(1);
-            rec.setAudioSamplingRate(44100);
-            rec.setAudioEncodingBitRate(64000);
-            rec.setOutputFile(tmp.getAbsolutePath());
-            if (dev != null) rec.setPreferredDevice(dev);
-            rec.prepare();
-            rec.start();
-        } catch (Exception e) {
-            liberarRecorder();
-            desactivarBluetooth();
-            toast("No se pudo grabar: " + e.getMessage());
-            return;
-        }
+        Intent it = new Intent(this, RecorderService.class);
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(it); else startService(it);
+        String err = svc.start(store.tempFile(), dev == null ? -1 : dev.getId(), bt);
+        if (err != null) { toast("No se pudo grabar: " + err); return; }
+        destino = reemplazar;
+        prefs.edit().putString("destino", reemplazar == null ? "" : reemplazar.file).apply();
         grabando = true;
         t0 = SystemClock.elapsedRealtime();
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        uiGrabando();
+    }
+
+    private void uiGrabando() {
         btnRec.setText("■  DETENER");
         btnCancel.setVisibility(View.VISIBLE);
         btnSubir.setEnabled(false);
         spMic.setEnabled(false);
-        tvEstado.setText(destino == null ? "Grabando archivo " + store.nextFreeNumber()
+        tvEstado.setText(destino == null ? "Grabando archivo " + store.nextFreeNumber() + "  (podés cambiar de app)"
                 : "Regrabando archivo " + Store.numberOf(destino) + " (reemplaza al anterior)");
         tvEstado.setTextColor(Color.parseColor("#D32F2F"));
     }
 
     private void detenerGrabacion() {
-        long dur = SystemClock.elapsedRealtime() - t0;
-        boolean ok = true;
-        try { rec.stop(); } catch (RuntimeException e) { ok = false; }   // grabación demasiado corta
-        liberarRecorder();
-        desactivarBluetooth();
+        long dur = svc != null ? svc.stop() : -1;
         File tmp = store.tempFile();
-        if (ok && tmp.exists() && tmp.length() > 0) {
+        if (dur >= 0 && tmp.exists() && tmp.length() > 0) {
             if (destino == null) {
                 Store.Rec r = store.add(tmp, dur);
                 toast("Guardado como " + r.file);
@@ -283,16 +287,13 @@ public class MainActivity extends Activity {
     }
 
     private void cancelarGrabacion() {
-        try { if (rec != null) rec.stop(); } catch (RuntimeException ignored) { }
-        liberarRecorder();
-        desactivarBluetooth();
+        if (svc != null) svc.stop();
         store.tempFile().delete();
         finGrabacion();
     }
 
     private void finGrabacion() {
         grabando = false; destino = null;
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         btnRec.setText("●  GRABAR");
         btnCancel.setVisibility(View.GONE);
         btnSubir.setEnabled(true);
@@ -302,33 +303,6 @@ public class MainActivity extends Activity {
         tvEstado.setTextColor(Color.GRAY);
         adapter.notifyDataSetChanged();
         refrescarMics();
-    }
-
-    private void liberarRecorder() {
-        if (rec != null) { try { rec.release(); } catch (Exception ignored) { } rec = null; }
-    }
-
-    @SuppressWarnings("deprecation")
-    private void activarBluetooth(AudioDeviceInfo dev) {
-        am.setMode(AudioManager.MODE_IN_COMMUNICATION);
-        if (Build.VERSION.SDK_INT >= 31) {
-            for (AudioDeviceInfo o : am.getAvailableCommunicationDevices())
-                if (o.getId() == dev.getId() || (o.getType() == dev.getType() && o.getAddress().equals(dev.getAddress())))
-                    { am.setCommunicationDevice(o); break; }
-        } else {
-            am.startBluetoothSco(); am.setBluetoothScoOn(true);
-        }
-        btActivo = true;
-        try { Thread.sleep(900); } catch (InterruptedException ignored) { }   // da tiempo a abrir el canal SCO
-    }
-
-    @SuppressWarnings("deprecation")
-    private void desactivarBluetooth() {
-        if (!btActivo) return;
-        if (Build.VERSION.SDK_INT >= 31) am.clearCommunicationDevice();
-        else { am.setBluetoothScoOn(false); am.stopBluetoothSco(); }
-        am.setMode(AudioManager.MODE_NORMAL);
-        btActivo = false;
     }
 
     // ------------------------------------------------------------ reproducción
