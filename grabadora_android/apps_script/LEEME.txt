@@ -1,0 +1,8 @@
+CONFIGURAR LA SUBIDA A DRIVE (una sola vez)
+1. Entrá a https://script.google.com con tu cuenta de Google > Nuevo proyecto.
+2. Borrá el contenido y pegá todo subir_a_drive.gs. Cambiá CAMBIA_ESTA_CLAVE por una clave tuya.
+3. Implementar > Nueva implementación > tipo "Aplicación web".
+   - Ejecutar como: Yo
+   - Quién tiene acceso: Cualquier usuario
+   Autorizá los permisos de Drive cuando lo pida. Copiá la URL que termina en /exec.
+4. En la app > Configuración: pegá el enlace de la carpeta de Drive, la URL /exec y la misma clave.

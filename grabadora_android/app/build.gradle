@@ -1,0 +1,17 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'ar.tuyu.grabadora'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'ar.tuyu.grabadora'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+    signingConfigs {
+        fija { storeFile file('../firma.keystore'); storePassword 'grabadora123'; keyAlias 'grabadora'; keyPassword 'grabadora123' }
+    }
+    buildTypes { release { signingConfig signingConfigs.fija; minifyEnabled false } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
