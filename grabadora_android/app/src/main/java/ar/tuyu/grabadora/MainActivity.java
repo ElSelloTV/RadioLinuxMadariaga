@@ -272,17 +272,39 @@ public class MainActivity extends Activity {
     }
 
     private void detenerGrabacion() {
-        long dur = svc != null ? svc.stop() : -1;
-        File tmp = store.tempFile();
-        if (dur >= 0 && tmp.exists() && tmp.length() > 0) {
-            if (destino == null) {
-                Store.Rec r = store.add(tmp, dur);
-                toast("Guardado como " + r.file);
-            } else {
-                store.replace(destino, tmp, dur);
-                toast("Archivo " + destino.file + " reemplazado");
-            }
-        } else { tmp.delete(); toast("Grabación demasiado corta, descartada"); }
+        final long dur = svc != null ? svc.stop() : -1;
+        final File tmp = store.tempFile();
+        if (dur < 0 || !tmp.exists() || tmp.length() == 0) {
+            tmp.delete(); toast("Grabación demasiado corta, descartada"); finGrabacion(); return;
+        }
+        if (!prefs.getBoolean("fm", true)) { guardarGrabacion(tmp, dur); return; }
+        // Procesado para radio FM (ecualización, compresión, nivelado y limitador) en segundo plano
+        btnRec.setEnabled(false);
+        tvEstado.setText("Procesando para radio FM…");
+        tvEstado.setTextColor(Color.parseColor("#1565C0"));
+        new Thread(() -> {
+            File fm = new File(store.dir, "procesado.tmp");
+            final String err = Processor.process(tmp, fm);
+            ui.post(() -> {
+                btnRec.setEnabled(true);
+                if (err == null && fm.exists() && fm.length() > 0) { tmp.delete(); guardarGrabacion(fm, dur); }
+                else {
+                    fm.delete();
+                    toast("No se pudo procesar (" + err + "). Se guardó la grabación original.");
+                    guardarGrabacion(tmp, dur);
+                }
+            });
+        }).start();
+    }
+
+    private void guardarGrabacion(File f, long dur) {
+        if (destino == null) {
+            Store.Rec r = store.add(f, dur);
+            toast("Guardado como " + r.file);
+        } else {
+            store.replace(destino, f, dur);
+            toast("Archivo " + destino.file + " reemplazado");
+        }
         finGrabacion();
     }
 
@@ -401,14 +423,19 @@ public class MainActivity extends Activity {
         EditText carpeta = campo(l, "Enlace de la carpeta de Drive", prefs.getString("carpeta", ""));
         EditText script = campo(l, "URL del Apps Script (…/exec)", prefs.getString("script", ""));
         EditText token = campo(l, "Clave secreta (token)", prefs.getString("token", ""));
-        new AlertDialog.Builder(this).setTitle("Configuración de Drive").setView(l)
+        CheckBox fm = new CheckBox(this);
+        fm.setText("Ecualizar para radio FM (al terminar de grabar)");
+        fm.setChecked(prefs.getBoolean("fm", true));
+        l.addView(fm);
+        new AlertDialog.Builder(this).setTitle("Configuración").setView(l)
                 .setPositiveButton("Guardar", (d, w) -> {
                     if (Uploader.folderId(carpeta.getText().toString()).isEmpty()) {
                         toast("El enlace de la carpeta no es válido"); return;
                     }
                     prefs.edit().putString("carpeta", carpeta.getText().toString().trim())
                             .putString("script", script.getText().toString().trim())
-                            .putString("token", token.getText().toString().trim()).apply();
+                            .putString("token", token.getText().toString().trim())
+                            .putBoolean("fm", fm.isChecked()).apply();
                     toast("Configuración guardada");
                 }).setNegativeButton("Cancelar", null).show();
     }
