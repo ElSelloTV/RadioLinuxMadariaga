@@ -44,6 +44,16 @@ También lanzado por los botones "🔄 Sincronizar ahora"/"🗑 Limpiar
 ahora" de Configuración → Programas OFF vía QProcess (igual mecanismo
 ya probado para Enlatado tipo Drive, nunca bloquea la GUI).
 
+**Respaldo de rescate al arrancar la app** (`sincronizar_pendientes_al_iniciar()`,
+llamada desde main.py -- pedido explícito tras un caso real: el
+horario de descarga de un programa coincidió con el reinicio diario
+de la PC, la 5am, y la sincronización de esa madrugada se cortó a
+mitad de camino sin que nadie se enterara hasta que ya era tarde en
+el día): si al abrir la app algún programa configurado todavía no
+quedó sincronizado HOY, dispara una sincronización de rescate ya
+mismo, en vez de esperar al próximo horario programado -- ver su
+propio docstring para el detalle completo.
+
 **Límite real, honesto, el mismo que ya documenta
 core/sincronizador_drive.py**: este entorno de desarrollo no tiene
 salida de red hacia drive.google.com, así que la descarga real NUNCA
@@ -195,6 +205,61 @@ def cantidad_bloques_disponibles_hoy(programa: dict) -> int:
     numeros = {_numero_de_nombre(n) for n in nombres if n.lower().endswith(EXTENSIONES_AUDIO)}
     numeros.discard(None)
     return len(numeros)
+
+
+def sincronizar_pendientes_al_iniciar() -> None:
+    """Respaldo de rescate, pedido explícito tras un caso real: Santiago
+    grabó 4 bloques nuevos y los subió a Drive un domingo a las 18hs --
+    el único horario de descarga configurado para ESE programa era
+    5:00am, la MISMA hora en la que la PC de la radio se reinicia sola
+    todos los días (rutina ya documentada, ver CLAUDE.md) -- la
+    sincronización de la madrugada se cortó a mitad de camino (la red
+    se va durante el reinicio), la carpeta local nunca quedó marcada
+    como "de hoy", y como el próximo intento programado era recién al
+    día siguiente a la misma hora, el programa se quedó sin contenido
+    TODO el día sin que nadie se entere hasta que ya era tarde.
+
+    Llamada al ARRANCAR la app (main.py, mismo criterio que el resto
+    de las tareas de cron de ahí -- nunca debe poder frenar nada si
+    algo falla): por cada programa OFF bien configurado (con
+    `carpeta_local` y `url_carpeta`) que TODAVÍA no quedó sincronizado
+    hoy -- sin importar si hoy es uno de los `dias_descarga` elegidos,
+    el objetivo es "nunca te quedes todo un día sin contenido fresco
+    por una sincronización fallida", no repetir la lógica de
+    agendamiento del cron -- dispara una sincronización de RESCATE en
+    segundo plano, sin esperar el horario programado.
+
+    Idempotente de forma natural: en cuanto una sincronización (la de
+    rescate, o la programada de siempre) tiene éxito,
+    `_carpeta_sincronizada_hoy()` pasa a `True` y un reinicio posterior
+    de la app el MISMO día ya no vuelve a disparar nada para ese
+    programa -- no hace falta ningún estado propio para "ya lo
+    intenté hoy".
+
+    Fire-and-forget (`QProcess.startDetached()`, mismo mecanismo ya
+    usado por `core.actualizador.reiniciar_aplicacion()` -- no
+    necesita el event loop de Qt corriendo todavía, ya que esto se
+    llama ANTES de `app.exec()`): nunca bloquea el arranque de la
+    radio, y el resultado de cada intento (éxito o error, con el
+    detalle real) queda igual en el log de siempre
+    (`registrar_evento()`/`registrar_error()`, el mismo que ya usa
+    `main()` más abajo cuando lo dispara el cron) -- no hace falta
+    ningún seguimiento extra acá, el proceso hijo ya deja constancia
+    por su cuenta."""
+    from PySide6.QtCore import QProcess
+    from config.settings import cargar_configuracion, listar_programas_off
+
+    config = cargar_configuracion()
+    script = os.path.join(_RAIZ, "core", "off_programa.py")
+    for programa in listar_programas_off(config):
+        id_programa = str(programa.get("id") or "").strip()
+        carpeta_local = (programa.get("carpeta_local") or "").strip()
+        url = (programa.get("url_carpeta") or "").strip()
+        if not id_programa or not carpeta_local or not url:
+            continue
+        if _carpeta_sincronizada_hoy(carpeta_local):
+            continue  # ya está al día -- nada que rescatar
+        QProcess.startDetached(sys.executable, [script, "--sincronizar", "--id", id_programa])
 
 
 def sincronizar_programa_off(programa: dict, config: dict, callback_progreso=None) -> dict:

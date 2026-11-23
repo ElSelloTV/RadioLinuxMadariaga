@@ -14109,6 +14109,85 @@ soltó de una vez.
     del botón o por el doble click directo), o si lo que en realidad
     le faltaba era algo distinto que todavía no identificó bien en su
     pedido original.
+141. ~~Programas OFF: diagnóstico real + respaldo de rescate — el
+    horario de descarga coincidía con el reinicio diario de la PC a
+    las 5am~~ — Santiago reportó un caso real: "Ayer siendo las 18.30
+    horas grabe 4 bloques se cargaron perfectamente en la carpeta
+    Radio 6 que es la compartida. No toque más nada. Hoy a la mañana
+    no se reprodujo." Investigado leyendo de punta a punta
+    `core/off_programa.py` y `core/actualizador.py:
+    asegurar_tareas_cron_programas_off()` antes de tocar nada
+    (siguiendo el criterio ya establecido de "pedir el log/los datos
+    reales antes de especular").
+
+    **Diagnóstico, confirmado con los datos exactos que dio Santiago
+    después** (grabó el domingo 18:00, `hora_descarga` de "Radio 6"
+    configurada a las 5:00am, primer uso del Comando FMT a las 7am):
+    el domingo no está en los días de descarga por defecto
+    (lunes-viernes), así que los 4 bloques quedaron esperando en
+    Drive hasta el próximo día programado — hoy lunes a las 5am. Pero
+    **esa misma hora, 5:00am, es EXACTAMENTE cuando la PC de la radio
+    se reinicia sola todos los días** (rutina ya documentada en este
+    archivo, "para liberar la PC y empezar de 0") — la sincronización
+    de la madrugada se corta a mitad de camino (se va la red durante
+    el reinicio), la carpeta local nunca queda marcada como "de hoy"
+    (`_carpeta_sincronizada_hoy()` sigue dando `False`), y como el
+    diseño YA decidido en la ronda 136 es "si no se sincronizó hoy,
+    saltear en silencio antes que sonar contenido viejo", el Comando
+    OFF no suena absolutamente nada, sin ningún error visible —
+    exactamente "no se reprodujo". El próximo intento programado
+    recién iba a ser al día siguiente a la misma hora, así que el
+    programa se quedaba sin contenido fresco potencialmente VARIOS
+    días si el reinicio sigue ganándole la carrera a la sincronización
+    cada vez.
+
+    **Corregido con un respaldo de rescate al ARRANCAR la app**
+    (`core/off_programa.py:sincronizar_pendientes_al_iniciar()`,
+    llamada desde `main.py` junto al resto de las tareas de cron,
+    mismo criterio de siempre — nunca debe poder frenar el arranque):
+    por cada programa OFF bien configurado (con `carpeta_local` y
+    `url_carpeta`) que todavía no quedó sincronizado HOY, dispara una
+    sincronización de rescate YA MISMO, sin esperar el horario
+    programado — a propósito, sin importar si hoy es uno de los
+    `dias_descarga` elegidos, porque el objetivo es "nunca te quedes
+    todo un día sin contenido fresco por una sincronización fallida",
+    no replicar la lógica de agendamiento del cron. Fire-and-forget
+    (`QProcess.startDetached()`, mismo mecanismo ya usado por
+    `core.actualizador.reiniciar_aplicacion()` — no necesita el event
+    loop de Qt corriendo todavía, se llama ANTES de `app.exec()`) —
+    nunca bloquea el arranque de la radio, y el resultado de cada
+    intento (éxito o error real) queda en el log de siempre
+    (`registrar_evento()`/`registrar_error()`, el mismo que ya usa
+    `main()` del propio `core/off_programa.py` cuando lo dispara el
+    cron). Idempotente de forma natural — en cuanto una sincronización
+    (la de rescate, o la programada) tiene éxito,
+    `_carpeta_sincronizada_hoy()` pasa a `True` y un reinicio
+    posterior de la app el MISMO día ya no vuelve a disparar nada para
+    ese programa, sin necesitar ningún estado propio de "ya lo
+    intenté hoy".
+
+    **Recomendación práctica, sin tocar código, dada directamente a
+    Santiago**: además de este respaldo, mover la "Hora de descarga"
+    de Radio 6 en Configuración → Programas OFF de 05:00 a algo como
+    05:20-05:30 — le da margen a que la PC termine de reiniciarse y la
+    red esté de pie antes de intentar bajar nada de Drive, reduciendo
+    la frecuencia con la que el respaldo de rescate tiene que entrar
+    en juego.
+
+    Probado con `test_sincronizar_pendientes_al_iniciar.py` (nuevo,
+    dedicado, con carpetas reales con `mtime` forzado a hoy/hace 3
+    días): rescata exactamente el programa NO sincronizado hoy (con
+    el comando correcto: mismo script, `--sincronizar --id <id>`), no
+    dispara nada si todos ya están al día, e ignora programas sin
+    `carpeta_local`/`url_carpeta`/`id` — + `py_compile` de los 2
+    archivos tocados + smoke test de arranque completo de `main.py`
+    sin traceback. **Pendiente — Santiago va a pasar el log real de
+    lo que pasó esta madrugada** (`Configuración → Diagnóstico → Ver
+    log`, línea `Programa OFF 'Radio 6': sincronización`) para
+    confirmar al 100% que la causa fue la colisión con el reinicio y
+    no otra cosa; falta también que confirme, tras esta actualización,
+    que un reinicio que se cruce con el horario de descarga ya no deja
+    el programa sin contenido todo el día.
 
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
