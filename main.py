@@ -34,6 +34,7 @@ from core.actualizador import (
     asegurar_tarea_cron_sincronizar_drive, asegurar_tarea_cron_cerrar_zararadio,
     asegurar_tarea_cron_importar_youtube_doc, asegurar_tareas_cron_programas_off,
 )
+from core.off_programa import sincronizar_pendientes_al_iniciar
 
 RUTA_ICONO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icono.png")
 
@@ -200,6 +201,18 @@ def main():
         asegurar_tareas_cron_programas_off()
     except Exception as error:
         registrar_error(f"No se pudieron instalar/refrescar las tareas de Programas OFF (cron): {error}")
+
+    # Respaldo de rescate (pedido explícito tras un caso real: la
+    # sincronización de las 5am de un programa se cortó porque
+    # coincidió con el reinicio diario de la PC a esa misma hora, y el
+    # programa se quedó sin contenido todo el día) -- si algún
+    # programa OFF no quedó sincronizado hoy, lo intenta de nuevo ya
+    # mismo en vez de esperar al próximo horario programado. Mismo
+    # criterio de arriba, nunca debe poder frenar el arranque.
+    try:
+        sincronizar_pendientes_al_iniciar()
+    except Exception as error:
+        registrar_error(f"No se pudo lanzar la sincronización de rescate de Programas OFF: {error}")
 
     registrar_evento("Aplicación iniciada")
 
