@@ -225,6 +225,19 @@ class VentanaProgramador(QDialog):
         # Cambiar de selección corta cualquier pre-escucha en curso —
         # mismo criterio que el ▶ Previo de Ventana 3.
         self.tree.itemSelectionChanged.connect(self._detener_previo)
+        # Pedido explícito de Santiago ("en Programador cuando
+        # selecciono un bloque horario, pueda cambiar la hora de ese
+        # bloque") — la capacidad YA EXISTÍA detrás de "🔁 Reemplazar
+        # Item" (ver _editar_bloque()/_reemplazar_seleccionado()), pero
+        # no era descubrible: el botón no deja ver que, sobre un
+        # bloque, hace otra cosa (editar hora/título en vez de cambiar
+        # un archivo). Dos refuerzos de descubribilidad, sin tocar la
+        # lógica de fondo que ya funcionaba: (a) el texto del botón
+        # cambia solo según qué hay seleccionado, y (b) doble click
+        # directo sobre un bloque abre el editor de hora/título, sin
+        # tener que ir a buscar el botón.
+        self.tree.itemSelectionChanged.connect(self._actualizar_texto_boton_reemplazar)
+        self.tree.itemDoubleClicked.connect(self._on_doble_click_arbol)
         panel_izquierdo.addWidget(self.tree, 1)
 
         splitter_principal.addWidget(contenido_izquierdo)
@@ -305,7 +318,8 @@ class VentanaProgramador(QDialog):
         self.btn_agregar_item.clicked.connect(self._abrir_picker_agregar_item)
         self.btn_reemplazar = QPushButton("🔁 Reemplazar Item")
         self.btn_reemplazar.setToolTip(
-            "Bloque seleccionado: edita su hora/título.\n"
+            "Bloque seleccionado: edita su hora/título (también funciona\n"
+            "con doble click directo sobre el bloque, en el árbol).\n"
             "Ítem seleccionado: cambia el archivo sin mover su posición."
         )
         self.btn_reemplazar.clicked.connect(self._reemplazar_seleccionado)
@@ -556,6 +570,28 @@ class VentanaProgramador(QDialog):
         nodo.setExpanded(True)
         self.tree.setCurrentItem(nodo)
         self.txt_titulo_bloque.clear()
+
+    def _actualizar_texto_boton_reemplazar(self):
+        """Hace visible, en el propio texto del botón, qué va a hacer
+        según la selección actual — antes solo se explicaba en el
+        tooltip, que Santiago nunca llegó a leer ("necesito que no
+        está"... cuando sí estaba, solo que escondido)."""
+        seleccionados = self.tree.selectedItems()
+        if len(seleccionados) == 1 and seleccionados[0].parent() is None:
+            self.btn_reemplazar.setText("✏ Editar Hora/Título del Bloque")
+        else:
+            self.btn_reemplazar.setText("🔁 Reemplazar Item")
+
+    def _on_doble_click_arbol(self, item, columna):
+        """Doble click directo sobre el TÍTULO de un bloque (nodo de
+        nivel superior) abre ya mismo su editor de hora/título — mismo
+        camino que "Reemplazar Item" sobre un bloque, pero sin tener
+        que ir a buscar el botón primero. Doble click sobre una
+        tanda/ítem no hace nada acá a propósito (reemplazar el archivo
+        de un ítem concreto sigue siendo una acción más delicada,
+        mejor con el botón explícito que un doble click accidental)."""
+        if item.parent() is None:
+            self._editar_bloque(item)
 
     def _editar_bloque(self, bloque):
         hora_actual = bloque.data(0, ROL_HORA_BLOQUE) or "00:00:00"

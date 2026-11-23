@@ -77,23 +77,34 @@ class DialogoProgramadorRemoto(QDialog):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._mostrar_menu_contextual)
         self.tree.itemSelectionChanged.connect(self._detener_previo)
+        # Mismo refuerzo de descubribilidad que la versión local
+        # (pedido de Santiago, "en Programador cuando selecciono un
+        # bloque horario, pueda cambiar la hora de ese bloque" — la
+        # capacidad ya existía acá también vía "🔁 Reemplazar", escondida
+        # igual detrás del tooltip): el texto del botón cambia solo
+        # según la selección, y doble click directo sobre un bloque
+        # abre ya mismo su editor de hora/título.
+        self.tree.itemSelectionChanged.connect(self._actualizar_texto_boton_reemplazar)
+        self.tree.itemDoubleClicked.connect(self._on_doble_click_arbol)
         layout.addWidget(self.tree, 1)
 
         fila_edicion = QHBoxLayout()
         btn_agregar_bloque = QPushButton("＋ Bloque horario...")
         btn_agregar_item = QPushButton("➕ Agregar ítem...")
-        btn_reemplazar = QPushButton("🔁 Reemplazar")
-        btn_reemplazar.setToolTip(
-            "Bloque seleccionado: edita su hora/título.\nÍtem seleccionado: cambia el archivo sin mover su posición."
+        self.btn_reemplazar = QPushButton("🔁 Reemplazar")
+        self.btn_reemplazar.setToolTip(
+            "Bloque seleccionado: edita su hora/título (también funciona\n"
+            "con doble click directo sobre el bloque, en el árbol).\n"
+            "Ítem seleccionado: cambia el archivo sin mover su posición."
         )
         btn_quitar = QPushButton("✕ Quitar seleccionado")
         btn_agregar_bloque.clicked.connect(self._agregar_bloque)
         btn_agregar_item.clicked.connect(self._agregar_item)
-        btn_reemplazar.clicked.connect(self._reemplazar_seleccionado)
+        self.btn_reemplazar.clicked.connect(self._reemplazar_seleccionado)
         btn_quitar.clicked.connect(self._quitar_seleccionado)
         fila_edicion.addWidget(btn_agregar_bloque)
         fila_edicion.addWidget(btn_agregar_item)
-        fila_edicion.addWidget(btn_reemplazar)
+        fila_edicion.addWidget(self.btn_reemplazar)
         fila_edicion.addWidget(btn_quitar)
         layout.addLayout(fila_edicion)
 
@@ -471,6 +482,27 @@ class DialogoProgramadorRemoto(QDialog):
     # su posición; Comando/Aleatorio -> avisa (se saca y se agrega uno
     # nuevo, mismo criterio que la versión local).
     # ------------------------------------------------------------------
+    def _actualizar_texto_boton_reemplazar(self):
+        item = self.tree.currentItem()
+        if item is not None:
+            _, i_item = item.data(0, Qt.ItemDataRole.UserRole)
+            if i_item is None:
+                self.btn_reemplazar.setText("✏ Editar Hora/Título del Bloque")
+                return
+        self.btn_reemplazar.setText("🔁 Reemplazar")
+
+    def _on_doble_click_arbol(self, item, columna):
+        """Doble click directo sobre el título de un bloque abre ya
+        mismo su editor de hora/título — mismo camino que
+        "Reemplazar" sobre un bloque, sin tener que ir a buscar el
+        botón primero. Doble click sobre un ítem no hace nada (cambiar
+        el archivo de un ítem sigue siendo una acción más delicada,
+        mejor con el botón explícito que un doble click accidental)."""
+        _, i_item = item.data(0, Qt.ItemDataRole.UserRole)
+        if i_item is None:
+            self.tree.setCurrentItem(item)
+            self._reemplazar_seleccionado()
+
     def _reemplazar_seleccionado(self):
         item = self.tree.currentItem()
         if item is None:
