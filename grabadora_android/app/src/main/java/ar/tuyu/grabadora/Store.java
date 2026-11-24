@@ -10,7 +10,7 @@ import java.util.*;
 
 /** Índice de grabaciones: nombres numéricos 1.m4a, 2.m4a... y renumeración diaria. */
 class Store {
-    static class Rec { String file; long created; long durMs; }
+    static class Rec { String file; long created; long durMs; int proc = 1; /* 0 sin procesar, 1 solo FM, 2 FM + cortina */ }
 
     static final String EXT = ".m4a";
     final File dir;
@@ -41,7 +41,7 @@ class Store {
             for (int i = 0; i < a.length(); i++) {
                 JSONObject o = a.getJSONObject(i);
                 Rec r = new Rec();
-                r.file = o.getString("file"); r.created = o.getLong("created"); r.durMs = o.optLong("dur");
+                r.file = o.getString("file"); r.created = o.getLong("created"); r.durMs = o.optLong("dur"); r.proc = o.optInt("proc", 1);
                 if (fileOf(r).exists()) recs.add(r);
             }
             sort();
@@ -57,7 +57,7 @@ class Store {
             JSONArray a = new JSONArray();
             for (Rec r : recs) {
                 JSONObject o = new JSONObject();
-                o.put("file", r.file); o.put("created", r.created); o.put("dur", r.durMs);
+                o.put("file", r.file); o.put("created", r.created); o.put("dur", r.durMs); o.put("proc", r.proc);
                 a.put(o);
             }
             File tmp = new File(dir, "indice.tmp");
@@ -78,11 +78,11 @@ class Store {
         return n;
     }
 
-    Rec add(File temp, long durMs) {
+    Rec add(File temp, long durMs, int proc) {
         Rec r = new Rec();
         r.file = nextFreeNumber() + EXT;
         r.created = System.currentTimeMillis();
-        r.durMs = durMs;
+        r.durMs = durMs; r.proc = proc;
         File dest = fileOf(r);
         dest.delete();
         temp.renameTo(dest);
@@ -91,11 +91,11 @@ class Store {
     }
 
     /** Reemplaza el audio manteniendo el mismo nombre y el mismo lugar en el orden. */
-    void replace(Rec r, File temp, long durMs) {
+    void replace(Rec r, File temp, long durMs, int proc) {
         File dest = fileOf(r);
         dest.delete();
         temp.renameTo(dest);
-        r.durMs = durMs;
+        r.durMs = durMs; r.proc = proc;
         save();
     }
 

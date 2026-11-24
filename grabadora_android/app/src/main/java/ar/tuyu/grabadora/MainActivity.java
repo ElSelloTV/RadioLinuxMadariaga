@@ -287,39 +287,84 @@ public class MainActivity extends Activity {
             tmp.delete(); toast("Grabación demasiado corta, descartada"); finGrabacion(); return;
         }
         final boolean fm = prefs.getBoolean("fm", true), cortina = prefs.getBoolean("cortina", true);
-        if (!fm && !cortina) { guardarGrabacion(tmp, dur); return; }
+        if (!fm && !cortina) { guardarGrabacion(tmp, dur, Processor.PROC_SIN); return; }
         // Procesado en segundo plano con barra de progreso
+        iniciarProcesado();
+        procesarAsync(tmp, fm, cortina, new Resultado() {
+            @Override public void ok(File sal, long[] info) {
+                tmp.delete();
+                guardarGrabacion(sal, info[0] > 0 ? info[0] : dur, (int) info[1]);
+            }
+            @Override public void fallo(String err) {
+                toast("No se pudo procesar (" + err + "). Se guardó la grabación original.");
+                guardarGrabacion(tmp, dur, Processor.PROC_SIN);
+            }
+        });
+    }
+
+    private interface Resultado { void ok(File sal, long[] info); void fallo(String err); }
+
+    private void iniciarProcesado() {
         procesando = true;
         btnRec.setEnabled(false); btnCancel.setVisibility(View.GONE); btnSubir.setEnabled(false);
         pbProc.setProgress(0); pbProc.setVisibility(View.VISIBLE);
         tvEstado.setText("Procesando… 0%");
         tvEstado.setTextColor(Color.parseColor("#1565C0"));
+    }
+
+    private void procesarAsync(final File entrada, final boolean fm, final boolean cortina, final Resultado res) {
         new Thread(() -> {
             File sal = new File(store.dir, "procesado.tmp");
-            long[] d = new long[1];
-            final String err = Processor.process(tmp, sal, fm, cortina, getAssets(),
-                    (pct, msg) -> ui.post(() -> { pbProc.setProgress(pct); tvEstado.setText(msg + " " + pct + "%"); }), d);
+            long[] info = new long[2];
+            final String err = Processor.process(entrada, sal, fm, cortina, getAssets(),
+                    (pct, msg) -> ui.post(() -> { pbProc.setProgress(pct); tvEstado.setText(msg + " " + pct + "%"); }), info);
             ui.post(() -> {
                 boolean ok = (err == null || err.startsWith("AVISO:")) && sal.exists() && sal.length() > 0;
                 if (ok) {
-                    tmp.delete();
                     if (err != null) toast(err.substring(6).trim());
-                    guardarGrabacion(sal, d[0] > 0 ? d[0] : dur);
-                } else {
-                    sal.delete();
-                    toast("No se pudo procesar (" + err + "). Se guardó la grabación original.");
-                    guardarGrabacion(tmp, dur);
-                }
+                    res.ok(sal, info);
+                } else { sal.delete(); res.fallo(err); }
             });
         }).start();
     }
 
-    private void guardarGrabacion(File f, long dur) {
+    /** Agrega la cortina con ducking a una grabación que se guardó sin ella. */
+    private void agregarCortinaDespues(final Store.Rec r) {
+        if (grabando || procesando || subiendo) return;
+        final boolean fm = r.proc == Processor.PROC_SIN;     // si ya tenía el procesado FM no se repite
+        iniciarProcesado();
+        procesarAsync(store.fileOf(r), fm, true, new Resultado() {
+            @Override public void ok(File sal, long[] info) {
+                if (info[1] != Processor.PROC_CORTINA) {
+                    sal.delete(); toast("No se pudo agregar la cortina. El audio quedó como estaba.");
+                } else {
+                    store.replace(r, sal, info[0], Processor.PROC_CORTINA);
+                    toast("Cortina agregada a " + r.file);
+                }
+                finGrabacion();
+            }
+            @Override public void fallo(String err) {
+                toast("No se pudo agregar la cortina (" + err + "). El audio quedó como estaba.");
+                finGrabacion();
+            }
+        });
+    }
+
+    private void confirmarCortina(final Store.Rec r) {
+        if (grabando || procesando) return;
+        new AlertDialog.Builder(this).setTitle("Agregar cortina a " + r.file + "?")
+                .setMessage("Se mezcla con la cortina musical (la voz entra a los 12 s, con ducking y 3 s finales). "
+                        + "El archivo se reemplaza por la versión con cortina.")
+                .setPositiveButton("Agregar", (d, w) -> agregarCortinaDespues(r))
+                .setNegativeButton("Cancelar", null).show();
+    }
+
+    private void guardarGrabacion(File f, long dur, int proc) {
         if (destino == null) {
-            Store.Rec r = store.add(f, dur);
+            Store.Rec r = store.add(f, dur, proc);
             toast("Guardado como " + r.file);
         } else {
-            store.replace(destino, f, dur);
+            store.replace(destino, f, dur, proc);
             toast("Archivo " + destino.file + " reemplazado");
         }
         finGrabacion();
@@ -386,11 +431,13 @@ public class MainActivity extends Activity {
 
             long s = r.durMs / 1000;
             TextView info = new TextView(MainActivity.this);
-            info.setText(String.format(Locale.US, "%02d:%02d  ·  %d KB", s / 60, s % 60, store.fileOf(r).length() / 1024));
+            info.setText(String.format(Locale.US, "%02d:%02d  ·  %d KB\n%s", s / 60, s % 60, store.fileOf(r).length() / 1024,
+                    r.proc == Processor.PROC_CORTINA ? "con cortina" : "sin cortina  (tocá 🎼 para agregarla)"));
             info.setTextColor(Color.DKGRAY);
             row.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
             row.addView(chico(sonando == r ? "■" : "▶", x -> alternarReproduccion(r)));
+            if (r.proc != Processor.PROC_CORTINA) row.addView(chico("🎼", x -> confirmarCortina(r)));
             row.addView(chico("🎙", x -> confirmarRegrabar(r)));
             row.addView(chico("🗑", x -> confirmarBorrar(r)));
             return row;
