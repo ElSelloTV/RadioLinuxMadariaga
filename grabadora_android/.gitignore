@@ -3,3 +3,4 @@ build/
 local.properties
 *.apk
 firma.keystore
+app/src/main/assets/cortina.mp3
