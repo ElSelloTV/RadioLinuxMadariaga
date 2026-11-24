@@ -44,14 +44,15 @@ public class MainActivity extends Activity {
 
     // micrófonos
     private final List<AudioDeviceInfo> mics = new ArrayList<>();
-    private boolean subiendo = false;
+    private boolean subiendo = false, procesando = false;
+    private ProgressBar pbProc;
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (grabando) {
                 long s = (SystemClock.elapsedRealtime() - t0) / 1000;
                 tvTimer.setText(String.format(Locale.US, "%02d:%02d", s / 60, s % 60));
-            } else if (!subiendo && store.normalizeIfNewDay()) {
+            } else if (!subiendo && !procesando && store.normalizeIfNewDay()) {
                 adapter.notifyDataSetChanged();
                 toast("Nuevo día: las grabaciones se renumeraron en orden.");
             }
@@ -135,6 +136,11 @@ public class MainActivity extends Activity {
         tvEstado = new TextView(this);
         tvEstado.setText("Listo para grabar"); tvEstado.setGravity(Gravity.CENTER); tvEstado.setTextColor(Color.GRAY);
         root.addView(tvEstado);
+        pbProc = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        pbProc.setMax(100); pbProc.setVisibility(View.GONE);
+        LinearLayout.LayoutParams lpp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lpp.setMargins(dp(24), dp(6), dp(24), 0);
+        root.addView(pbProc, lpp);
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -241,7 +247,7 @@ public class MainActivity extends Activity {
     };
 
     private void iniciarGrabacion(Store.Rec reemplazar) {
-        if (subiendo) { toast("Esperá a que termine la subida"); return; }
+        if (subiendo || procesando) { toast("Esperá a que termine la subida o el procesado"); return; }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             pedirPermisos(); return;
         }
@@ -273,23 +279,34 @@ public class MainActivity extends Activity {
 
     private void detenerGrabacion() {
         final long dur = svc != null ? svc.stop() : -1;
+        grabando = false;                                   // el reloj se detiene ya
+        long sg = Math.max(0, dur) / 1000;
+        tvTimer.setText(String.format(Locale.US, "%02d:%02d", sg / 60, sg % 60));
         final File tmp = store.tempFile();
         if (dur < 0 || !tmp.exists() || tmp.length() == 0) {
             tmp.delete(); toast("Grabación demasiado corta, descartada"); finGrabacion(); return;
         }
-        if (!prefs.getBoolean("fm", true)) { guardarGrabacion(tmp, dur); return; }
-        // Procesado para radio FM (ecualización, compresión, nivelado y limitador) en segundo plano
-        btnRec.setEnabled(false);
-        tvEstado.setText("Procesando para radio FM…");
+        final boolean fm = prefs.getBoolean("fm", true), cortina = prefs.getBoolean("cortina", true);
+        if (!fm && !cortina) { guardarGrabacion(tmp, dur); return; }
+        // Procesado en segundo plano con barra de progreso
+        procesando = true;
+        btnRec.setEnabled(false); btnCancel.setVisibility(View.GONE); btnSubir.setEnabled(false);
+        pbProc.setProgress(0); pbProc.setVisibility(View.VISIBLE);
+        tvEstado.setText("Procesando… 0%");
         tvEstado.setTextColor(Color.parseColor("#1565C0"));
         new Thread(() -> {
-            File fm = new File(store.dir, "procesado.tmp");
-            final String err = Processor.process(tmp, fm);
+            File sal = new File(store.dir, "procesado.tmp");
+            long[] d = new long[1];
+            final String err = Processor.process(tmp, sal, fm, cortina, getAssets(),
+                    (pct, msg) -> ui.post(() -> { pbProc.setProgress(pct); tvEstado.setText(msg + " " + pct + "%"); }), d);
             ui.post(() -> {
-                btnRec.setEnabled(true);
-                if (err == null && fm.exists() && fm.length() > 0) { tmp.delete(); guardarGrabacion(fm, dur); }
-                else {
-                    fm.delete();
+                boolean ok = (err == null || err.startsWith("AVISO:")) && sal.exists() && sal.length() > 0;
+                if (ok) {
+                    tmp.delete();
+                    if (err != null) toast(err.substring(6).trim());
+                    guardarGrabacion(sal, d[0] > 0 ? d[0] : dur);
+                } else {
+                    sal.delete();
                     toast("No se pudo procesar (" + err + "). Se guardó la grabación original.");
                     guardarGrabacion(tmp, dur);
                 }
@@ -315,7 +332,9 @@ public class MainActivity extends Activity {
     }
 
     private void finGrabacion() {
-        grabando = false; destino = null;
+        grabando = false; procesando = false; destino = null;
+        pbProc.setVisibility(View.GONE);
+        btnRec.setEnabled(true);
         btnRec.setText("●  GRABAR");
         btnCancel.setVisibility(View.GONE);
         btnSubir.setEnabled(true);
@@ -387,7 +406,7 @@ public class MainActivity extends Activity {
     }
 
     private void confirmarRegrabar(Store.Rec r) {
-        if (grabando) return;
+        if (grabando || procesando) return;
         new AlertDialog.Builder(this).setTitle("Reemplazar archivo " + r.file)
                 .setMessage("Se grabará de nuevo y, al detener, reemplaza el audio actual de " + r.file + ".")
                 .setPositiveButton("Grabar", (d, w) -> iniciarGrabacion(r))
@@ -395,7 +414,7 @@ public class MainActivity extends Activity {
     }
 
     private void confirmarBorrar(Store.Rec r) {
-        if (grabando) return;
+        if (grabando || procesando) return;
         new AlertDialog.Builder(this).setTitle("Borrar " + r.file + "?")
                 .setPositiveButton("Borrar", (d, w) -> {
                     if (sonando == r) detenerReproduccion();
@@ -427,6 +446,10 @@ public class MainActivity extends Activity {
         fm.setText("Ecualizar para radio FM (al terminar de grabar)");
         fm.setChecked(prefs.getBoolean("fm", true));
         l.addView(fm);
+        CheckBox cort = new CheckBox(this);
+        cort.setText("Agregar cortina musical con ducking (la voz entra a los 12 s)");
+        cort.setChecked(prefs.getBoolean("cortina", true));
+        l.addView(cort);
         new AlertDialog.Builder(this).setTitle("Configuración").setView(l)
                 .setPositiveButton("Guardar", (d, w) -> {
                     if (Uploader.folderId(carpeta.getText().toString()).isEmpty()) {
@@ -435,14 +458,14 @@ public class MainActivity extends Activity {
                     prefs.edit().putString("carpeta", carpeta.getText().toString().trim())
                             .putString("script", script.getText().toString().trim())
                             .putString("token", token.getText().toString().trim())
-                            .putBoolean("fm", fm.isChecked()).apply();
+                            .putBoolean("fm", fm.isChecked()).putBoolean("cortina", cort.isChecked()).apply();
                     toast("Configuración guardada");
                 }).setNegativeButton("Cancelar", null).show();
     }
 
     // ------------------------------------------------------------ subida
     private void subirTodo() {
-        if (grabando || subiendo) return;
+        if (grabando || subiendo || procesando) return;
         final String script = prefs.getString("script", "");
         final String token = prefs.getString("token", "");
         final String folder = Uploader.folderId(prefs.getString("carpeta", ""));

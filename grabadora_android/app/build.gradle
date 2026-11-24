@@ -12,6 +12,7 @@ android {
     signingConfigs {
         fija { storeFile file('../firma.keystore'); storePassword 'grabadora123'; keyAlias 'grabadora'; keyPassword 'grabadora123' }
     }
+    androidResources { noCompress 'mp3' }
     buildTypes { release { signingConfig signingConfigs.fija; minifyEnabled false } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
