@@ -14189,6 +14189,77 @@ soltó de una vez.
     que un reinicio que se cruce con el horario de descarga ya no deja
     el programa sin contenido todo el día.
 
+142. ~~Ventana 1: restricción horaria estricta en la franja 12-19hs —
+    "volvió a pasar"~~ — pedido explícito, segunda vuelta del mismo
+    síntoma ya atacado antes con `_redirigir_si_bloque_pasado()`
+    (blindaje contra clickear/Play sobre un bloque de hora YA PASADA,
+    ronda anterior a esta): "el operador volvió a tirar una tanda ya
+    pasada y no se reprodujo el del horario... se fue pasadas las 6
+    de la tarde, puso el automático y se reprodujo una tanda anterior
+    cambiando el FMT." Santiago pidió hacerlo "más estricto", con la
+    regla exacta: "Entre las 12 y las 19 horas, que NO SE PUEDA
+    reproducir un bloque horario de tanda diferente a la hora en
+    curso... si selecciona el de las 4 de la tarde, siendo las 6 y
+    13, al hacer play o apretar el automático, se reproduzca el
+    bloque de la hora en curso (en el ejemplo, el de las 18 horas)".
+
+    **Dos cambios de fondo, ambos en `core/playlist_manager.py`**:
+    - **`_redirigir_si_bloque_pasado()` renombrada a
+      `_redirigir_si_bloque_incorrecto()`** (mismos 2 puntos de
+      entrada de siempre, `_on_doble_click()` y
+      `_reproducir_seleccion_o_actual()`) y ampliada: fuera de la
+      franja 12-19hs (`_restriccion_horaria_estricta_activa()`, nueva,
+      constantes de clase `HORA_INICIO_RESTRICCION_ESTRICTA = 12` /
+      `HORA_FIN_RESTRICCION_ESTRICTA = 19`) se mantiene el criterio
+      viejo (solo bloquea un bloque ESTRICTAMENTE ANTERIOR al
+      vigente, un futuro sigue permitido — de noche, sin operador
+      presente, elegir algo de más adelante a propósito sigue
+      andando igual); DENTRO de la franja, el pedido es literal
+      "diferente a la hora en curso" — así que ahora CUALQUIER
+      diferencia de hora contra el bloque vigente redirige, también
+      uno futuro (ej. a las 18:13, seleccionar el de las 19hs
+      también redirige al de las 18hs) — más estricto a propósito,
+      tal como lo pidió.
+    - **Nuevo cuarto caso en `SchedulerAutomatico._on_automatico_cambiado()`**
+      (que hasta ahora, desde la ronda del "repaso de punta a punta",
+      solo tenía 3 casos: match exacto al segundo dispara, antes de
+      hora no hace nada, después de hora marca agotado): si no hubo
+      match exacto, PERO durante la franja 12-19hs hay un ítem ARMADO
+      en rojo (`ventana.item_reproduciendo()`, ej. seleccionado por
+      error horas antes y nunca corregido) cuyo bloque no es el
+      vigente, activar el Automático dispara YA el bloque VIGENTE en
+      su lugar (`GestorPublicidad._bloque_armado_distinto_del_vigente()`,
+      nuevo helper) — mismo mecanismo de siempre
+      (`_disparar_bloque()`, cede el control si Emisión está sonando,
+      lo toma de inmediato si no), en vez de dejar la tanda vieja
+      armada a la espera de que algo la reproduzca sola. Esto ataca
+      directo el "apretar el automático" del reporte, que el
+      mecanismo viejo (solo exacto-al-segundo) nunca cubría.
+
+    Probado con `test_restriccion_horaria_estricta.py` (nuevo,
+    dedicado, 7 verificaciones, con bloques construidos a horas
+    RELATIVAS a `QTime.currentTime()` real —nunca horas fijas, para
+    no depender de en qué momento del día corra el test— y la franja
+    12-19hs forzada con `patch.object` sobre
+    `_restriccion_horaria_estricta_activa` en vez de jugar con el
+    reloj del sistema): fuera de la franja, un bloque pasado redirige
+    pero uno futuro NO (regresión del criterio viejo, confirmada
+    intacta); dentro de la franja, un bloque futuro TAMBIÉN redirige;
+    el propio bloque vigente nunca se toca; Play real sobre un ítem
+    armado de otra hora termina reproduciendo el vigente; Automático
+    con un ítem armado de otra hora dispara el vigente (y NO lo hace
+    si no hay nada armado, ni fuera de la franja horaria) — + smoke
+    test de arranque completo de `main.py` sin traceback. **Sigue sin
+    poder confirmarse con audio/hardware real** (como todo lo que
+    toca el motor de reproducción de Ventana 1): falta que Santiago
+    actualice la radio (recordatorio ya dado en la ronda anterior:
+    un reinicio NO actualiza el código solo, hace falta el botón de
+    Configuración → Actualizaciones o un `git pull` a mano) y
+    confirme que, entre las 12 y las 19hs, seleccionar/Play sobre un
+    bloque de otra hora ya siempre termina en el bloque correcto, y
+    que activar el Automático con algo armado por error de otra hora
+    ya dispara el bloque vigente en vez de la tanda vieja.
+
 ## Cosas ya resueltas que NO hay que "redescubrir"
 
 - **Crear un objeto que registra un callback LIGADO A SÍ MISMO

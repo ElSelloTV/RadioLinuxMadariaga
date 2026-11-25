@@ -101,6 +101,16 @@ class GestorPublicidad:
     pero SIN sonar solo.
     """
 
+    # Franja horaria con operador en vivo (pedido explícito, "volvió a
+    # pasar": un click/Play sobre un bloque de otra hora terminó
+    # reproduciendo contenido viejo -- ver _redirigir_si_bloque_incorrecto)
+    # en la que la protección se vuelve más estricta: cualquier
+    # DIFERENCIA de hora contra el bloque vigente redirige, no solo una
+    # hora estrictamente anterior. Fuera de esta franja (de noche, sin
+    # operador presente) se mantiene el criterio de siempre.
+    HORA_INICIO_RESTRICCION_ESTRICTA = 12  # inclusive
+    HORA_FIN_RESTRICCION_ESTRICTA = 19  # exclusivo -- "entre las 12 y las 19"
+
     def __init__(
         self,
         ventana_publicidad,
@@ -580,7 +590,48 @@ class GestorPublicidad:
                 mejor_hora, mejor_item = hora, bloque
         return mejor_item
 
-    def _redirigir_si_bloque_pasado(self, item):
+    def _restriccion_horaria_estricta_activa(self, ahora=None) -> bool:
+        """Franja de operador en vivo (ver `HORA_INICIO_RESTRICCION_ESTRICTA`/
+        `_FIN`, pedido explícito de Santiago: "entre las 12 y las 19
+        horas")."""
+        if ahora is None:
+            ahora = QTime.currentTime()
+        return self.HORA_INICIO_RESTRICCION_ESTRICTA <= ahora.hour() < self.HORA_FIN_RESTRICCION_ESTRICTA
+
+    def _bloque_armado_distinto_del_vigente(self):
+        """Durante la franja estricta (12-19hs): si hay un ítem ARMADO
+        en rojo (`ventana.item_reproduciendo()`) cuyo bloque no es el
+        vigente, devuelve el bloque VIGENTE -- para que el llamador lo
+        dispare en su lugar, en vez de dejar sonar lo que quedó
+        armado por error de otra hora. `None` si no hace falta
+        corregir nada (nada armado, coincide con el vigente, o estamos
+        fuera de la franja horaria).
+
+        Pedido explícito, caso real reportado: "se fue pasadas las 6
+        de la tarde, puso el automático y se reprodujo una tanda
+        anterior cambiando el FMT" -- a diferencia de
+        `_redirigir_si_bloque_incorrecto()` (que actúa en el momento
+        de clickear/apretar Play), esto cubre el caso de un ítem que
+        quedó armado ANTES de activar el Automático -- usado por
+        `SchedulerAutomatico._on_automatico_cambiado()`."""
+        if not self._restriccion_horaria_estricta_activa():
+            return None
+        armado = self.ventana.item_reproduciendo()
+        if armado is None:
+            return None
+        bloque_armado = armado if armado.parent() is None else armado.parent()
+        hora_armado = self._hora_valida_de_bloque(bloque_armado)
+        if hora_armado is None:
+            return None
+        bloque_vigente = self._bloque_vigente_ahora()
+        if bloque_vigente is None or bloque_vigente is bloque_armado:
+            return None
+        hora_vigente = self._hora_valida_de_bloque(bloque_vigente)
+        if hora_vigente is None or hora_vigente == hora_armado:
+            return None
+        return bloque_vigente
+
+    def _redirigir_si_bloque_incorrecto(self, item):
         """Blindaje pedido explícito por Santiago, con un caso real
         reportado: a las 18hs, mientras sonaba correctamente el bloque
         de esa hora (con su propio Comando FMT, ej. "FMT FOLCLORE"),
@@ -607,7 +658,18 @@ class GestorPublicidad:
         directo al primer ítem reproducible de ESE, en vez de dejar
         que se arme/reproduzca algo de un horario viejo. Un bloque sin
         hora asignada, el propio bloque vigente, o uno futuro, nunca
-        se tocan -- mismo criterio de "fail-open" de siempre."""
+        se tocan -- mismo criterio de "fail-open" de siempre.
+
+        Pedido explícito posterior ("volvió a pasar" -- el mismo
+        síntoma, de vuelta): entre las 12 y las 19hs
+        (`_restriccion_horaria_estricta_activa`, turno con operador
+        presente), la protección deja de acotarse a "estrictamente
+        anterior" -- durante esa franja CUALQUIER diferencia de hora
+        contra el vigente redirige, también un bloque FUTURO (pedido
+        textual: "que no se pueda reproducir un bloque... diferente a
+        la hora en curso"). Fuera de esa franja (de noche, sin
+        operador) se mantiene el criterio viejo -- un bloque futuro
+        sigue permitido, solo se bloquea uno estrictamente anterior."""
         if item is None:
             return item
         bloque_del_item = item if item.parent() is None else item.parent()
@@ -618,13 +680,19 @@ class GestorPublicidad:
         if bloque_vigente is None or bloque_vigente is bloque_del_item:
             return item
         hora_vigente = self._hora_valida_de_bloque(bloque_vigente)
-        if hora_vigente is None or hora_item >= hora_vigente:
+        if hora_vigente is None:
+            return item
+        if self._restriccion_horaria_estricta_activa():
+            bloquear = hora_item != hora_vigente
+        else:
+            bloquear = hora_item < hora_vigente
+        if not bloquear:
             return item
         primero_vigente = self._primer_item_valido_de(bloque_vigente)
         if primero_vigente is None:
             return item  # el bloque vigente no tiene nada reproducible -- no hay adónde redirigir
         registrar_evento(
-            f"Publicidad: '{bloque_del_item.text(0)}' es de una hora ya pasada -- "
+            f"Publicidad: '{bloque_del_item.text(0)}' no coincide con la hora en curso -- "
             f"redirigido al bloque vigente '{bloque_vigente.text(0)}'"
         )
         return primero_vigente
@@ -1129,12 +1197,12 @@ class GestorPublicidad:
             while item is not None and not self._item_valido(item):
                 item = self.ventana.tree.itemBelow(item)
 
-        # Blindaje (ver _redirigir_si_bloque_pasado): cubre no solo lo
+        # Blindaje (ver _redirigir_si_bloque_incorrecto): cubre no solo lo
         # armado/seleccionado a mano, sino también el fallback de
         # arriba y una selección hecha por teclado (flechas) que nunca
         # pasó por el click -- Play nunca debe arrancar un bloque de
-        # una hora ya pasada por ninguna de las 3 vías.
-        item = self._redirigir_si_bloque_pasado(item)
+        # otra hora por ninguna de las 3 vías.
+        item = self._redirigir_si_bloque_incorrecto(item)
 
         if item is not None and item.parent() is None:
             # Es el TÍTULO de un bloque (nodo de nivel superior), no
@@ -1284,11 +1352,11 @@ class GestorPublicidad:
                 return
             item = primero
 
-        # Blindaje pedido explícito (ver _redirigir_si_bloque_pasado):
-        # clickear una tanda o el título de un bloque de una hora YA
-        # PASADA redirige directo al bloque vigente, en vez de dejar
-        # que se arme/encole y termine reproduciéndose solo.
-        item = self._redirigir_si_bloque_pasado(item)
+        # Blindaje pedido explícito (ver _redirigir_si_bloque_incorrecto):
+        # clickear una tanda o el título de un bloque de otra hora
+        # redirige directo al bloque vigente, en vez de dejar que se
+        # arme/encole y termine reproduciéndose solo.
+        item = self._redirigir_si_bloque_incorrecto(item)
         if item is None:
             return
 
@@ -1485,7 +1553,7 @@ class GestorPublicidad:
             bloque_actual = item_base if item_base.parent() is None else item_base.parent()
             bloque_candidato = candidato.parent()
             if bloque_candidato is not None and bloque_candidato is not bloque_actual:
-                # Segunda capa de blindaje (ver _redirigir_si_bloque_pasado,
+                # Segunda capa de blindaje (ver _redirigir_si_bloque_incorrecto,
                 # la primera capa en el click/Play) -- por si un verde
                 # apuntando a un bloque de hora YA PASADA llegó hasta
                 # acá por cualquier otra vía (ej. restaurado de una
@@ -1855,23 +1923,46 @@ class SchedulerAutomatico:
         verde, mismo significado ya establecido por
         `_marcar_proximo_bloque_en_espera`: "en espera de que llegue
         su hora") el bloque horario que corresponde a continuación,
-        para que se vea de un vistazo qué es lo próximo que viene."""
+        para que se vea de un vistazo qué es lo próximo que viene.
+
+        Pedido explícito posterior ("volvió a pasar... se fue pasadas
+        las 6 de la tarde, puso el automático y se reprodujo una
+        tanda anterior cambiando el FMT"): entre las 12 y las 19hs
+        (`GestorPublicidad._restriccion_horaria_estricta_activa`),
+        se suma un CUARTO caso -- si no hubo match exacto pero quedó
+        ARMADO en rojo (`item_reproduciendo()`) un ítem de un bloque
+        DISTINTO del vigente (ej. seleccionado por error horas antes
+        y nunca corregido), activar el Automático dispara YA el
+        bloque VIGENTE en su lugar (`_bloque_armado_distinto_del_vigente`,
+        mismo mecanismo de siempre -- cede el control si Emisión está
+        sonando, lo toma de inmediato si no), en vez de dejar esa
+        tanda vieja armada a la espera de que algo la reproduzca
+        sola."""
         if not activo:
             return
         ahora = QTime.currentTime()
         bloque_exacto = self._bloque_con_hora_exacta(ahora)
         self._marcar_bloques_pasados_sin_disparar()
+        bloque_a_disparar = bloque_exacto
+        if bloque_a_disparar is None:
+            bloque_a_disparar = self.gestor_publicidad._bloque_armado_distinto_del_vigente()
         disparado = False
         if (
-            bloque_exacto is not None
+            bloque_a_disparar is not None
             and not self._esperando_liberar_emision
             and not self.gestor_publicidad.motor.esta_reproduciendo()
         ):
-            registrar_evento(
-                f"Automático activado justo a la hora del bloque "
-                f"'{bloque_exacto.text(0)}' — lo dispara de inmediato"
-            )
-            self._disparar_bloque(bloque_exacto)
+            if bloque_a_disparar is bloque_exacto:
+                registrar_evento(
+                    f"Automático activado justo a la hora del bloque "
+                    f"'{bloque_exacto.text(0)}' — lo dispara de inmediato"
+                )
+            else:
+                registrar_evento(
+                    f"Automático activado con un ítem armado de otra hora (restricción "
+                    f"12-19hs) -- dispara el bloque vigente '{bloque_a_disparar.text(0)}' en su lugar"
+                )
+            self._disparar_bloque(bloque_a_disparar)
             disparado = True
         if not disparado:
             self._marcar_bloque_correspondiente_en_espera()
